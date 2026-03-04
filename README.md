@@ -68,7 +68,7 @@ The more boring and repetitive the task, the better to migrate it to digital wor
 
 -   WebAssembly (WASM) components (100x smaller than Docker)
 -   WASIp2 sandboxing (100x faster and more secure than Docker)
--   `component@0.6.0` self-describing contracts
+-   Everything is self-describing
 -   Explicit lifecycle (setup / update / remove)
 -   Capability-based security model - you can only do what you were approved to do
 
@@ -83,7 +83,7 @@ The more boring and repetitive the task, the better to migrate it to digital wor
 ## 💬 Messaging & Events
 
 -   Slack, Teams, Webex, WhatsApp, Telegram, WebChat
--   Webhooks, Email & Timers
+-   Webhooks, Email, SMS & Timers
 -   Adaptive Card (=mini-apps) with translation/downscaling
 -   Session-based workflows
 -   Stateless event flows
