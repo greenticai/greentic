@@ -1,11 +1,11 @@
-# Greentic - The Operating System for Digital Workers
+# Greentic - The Digital Workers OS
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![WASM](https://img.shields.io/badge/runtime-WASM%20%7C%20WASIp2-green)]()
 [![Deterministic](https://img.shields.io/badge/model-Deterministic-important)]()
 [![AI](https://img.shields.io/badge/AI-Just--Enough-orange)]()
 
-## Deterministic Digital Workers for Enterprise-Grade Automation
+## Deterministic Digital Workers with 'Just Enough AI' for Enterprise-Grade Automation
 
 ------------------------------------------------------------------------
 
@@ -91,7 +91,8 @@ The more boring and repetitive the task, the better to migrate it to digital wor
 ## 🤖 AI — Controlled & Explicit
 
 -   Chat2Flow (intent → flow routing)
--   Chat2Data (natural language → system dialect) - commercial
+-   Chat2Data (natural language → system dialect like guardrailed SQL and MCP) - commercial
+-   Fast2Flow (<100ms natural language routing with LLM fallback) - commercial
 -   Explicit LLM components
 -   Capability-bound AI
 -   No unbounded autonomous agents
@@ -102,6 +103,7 @@ The more boring and repetitive the task, the better to migrate it to digital wor
 -   No JSON-RPC or SSE (no network server in front of an API server)
 -   Millisecond local execution
 -   Everything remains a component
+-   OpenAPI and Swagger to MCP in seconds - commercial
 
 ## 🔌 Extensible by Design
 
