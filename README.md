@@ -1,6 +1,6 @@
 # Greentic - The Operating System for Digital Workers
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
 [![WASM](https://img.shields.io/badge/runtime-WASM%20%7C%20WASIp2-green)]()
 [![Deterministic](https://img.shields.io/badge/model-Deterministic-important)]()
 [![AI](https://img.shields.io/badge/AI-Just--Enough-orange)]()
