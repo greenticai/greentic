@@ -1,0 +1,39 @@
+# 📂 Detailed Repository Catalog & Connectivity Map
+
+Below is a consolidated table describing the role of each repository and its interaction with the external world (data sources and destinations).
+
+| Repository | Role & Internal Logic | Connectivity (In/Out/Protocols) |
+| :--- | :--- | :--- |
+| **🟢 Core Product** | | |
+| `greentic` | **CLI & Local Execution**: Main user interface. Contains embedded `ToolExecutor` (see `src/executor.rs`) for local Wasm component loading and execution via `wasmtime`, simulating cloud runtime. Manages secrets (`SecretsManager`), logs, and communication channels on the local machine. | **In:** User Commands (Terminal).<br>**Out:**<br>• `greentic-repo` (HTTP/HTTPS) — package download.<br>• Docker Socket — container management.<br>• Local FS — config loading. |
+| `greentic-runner` | **Production Runtime**: Server-side core engine. <br>• **PackRuntime**: Loads and unpacks `.gtpack` archives in memory. <br>• **Wasm Engine**: Uses `wasmtime` for isolation. Executes each component call in a separate thread (`run_on_wasi_thread`) for safety. <br>• **Binding**: Binds abstract resources (secrets, KV-store) to real providers via `gtbind` files. <br>• **HTTP/Axum**: Runs web server for webhooks and API. | **In:**<br>• Webhooks (HTTP/POST) from messengers (Slack/TG).<br>• NATS (Sub) — commands and tasks.<br>**Out:**<br>• `greentic-repo` (HTTP) — updates.<br>• External APIs (HTTP) — calls from components.<br>• Redis/DB — State persistence.<br>• Vault/KMS — Secrets retrieval. |
+| `greentic-dev` | **Dev Orchestrator**: Wrapper around other tools. Has no complex execution logic itself but manages `greentic-flow`, `greentic-component`, and `docker` processes for optimal Developer Experience (hot-reload, scaffolding). | **In:** CLI args.<br>**Out:**<br>• Spawns `greentic-*` binaries.<br>• `greentic-repo` (HTTP) — package publishing (Push). |
+| **🛠️ Tooling** | | |
+| `greentic-component` | **Wasm Builder & Signer**: <br>• **Lifecycle**: Manages Rust -> Wasm build cycle (`wasm32-wasip2`). <br>• **Security**: Signs artifacts and generates manifests (`ComponentManifest`). Verifies hashes and policies before building. <br>• **Preparing**: Optimizes binaries before packing (`prepare.rs`). | **In:** Source code (Rust), wit-interfaces.<br>**Out:**<br>• File System (Wasm files).<br>• Registry (dependency version check). |
+| `greentic-flow` | **YAML Compiler & Validator**: <br>• **Compile**: Transpiles user YAML (`FlowDoc`) into strict execution graph (`Flow` struct). <br>• **Routing**: Calculates transition logic (`Routing::Branch`, `Routing::Next`) and verifies node existence. <br>• **Linting**: Checks data types and links. Used as a library inside `runner` for flow parsing. | **In:** YAML flow files.<br>**Out:** Compiled structure in memory or JSON. Network-agnostic (pure logic). |
+| `greentic-pack` | **Distribution Builder**: Bundles components (Wasm) and flows (YAML) into a single `.gtpack` archive. Generates `manifest.cbor` and distribution index files. Handles dependency resolution. | **In:** Wasm components, YAML flows.<br>**Out:** `.gtpack` archive. |
+| `greentic-mcp-generator` | **Code Gen**: Utility for generating boilerplate code required to create MCP-compatible tools. | **In:** Schemas/Interfaces.<br>**Out:** Source code (Rust). |
+| **🧱 Components** | **Building Blocks (Wasm)**: Implementations of specific business logic. | *Components run inside the Runner's Wasm Sandbox:* |
+| `component-adaptive-card` | Renders Adaptive Card JSON schemas into HTML/JSON specific to various messengers. | **In:** JSON data.<br>**Out:** Card schemas (Slack Block Kit / MS Teams adaptive cards). |
+| `component-flow2flow` | Enables calling sub-flows, passing control and context between different processes. | **Interaction:** Internal Runner call (transfer control to another in-memory process). |
+| `component-llm-openai` | OpenAI API Client. Encapsulates token management, retries, and prompt formatting. | **Out:** OpenAI API (HTTPS, api.openai.com). Uses API Key from runner secrets. |
+| `component-oauth-card` | Generates UI cards with "Log in with..." buttons, handles callback links. | **In:** Authorization data.<br>**Out:** UI element with link. |
+| `component-script-rhai` | Embeds lightweight scripting language **Rhai**. Allows writing simple logic (if/else, mapping) directly in YAML without Wasm recompilation. | **In/Out:** Flow context data (variables) only. No network access. |
+| `component-templates` | Template engine (Handlebars/Jinja). Applies flow context data to text templates (generating emails, messages). | **In:** Template + Data.<br>**Out:** Text string. |
+| **🔌 Features** | | |
+| `greentic-mcp` | **Model Context Protocol**: Bridge between Greentic and the MCP world. Allows connecting any MCP servers as native platform tools. | **In:** JSON-RPC messages.<br>**Out:** Transport stdio or SSE (Server-Sent Events) to MCP server. |
+| `greentic-oauth` | **Auth Broker**: Centralized OAuth 2.0 service. Stores Refresh Tokens, issues Access Tokens on runtime request. Implements Authorization Code exchange protocols. | **In:** User Browser (Redirects).<br>**Out:**<br>• OAuth Provider APIs (Google/Slack/GitHub) — code exchange.<br>• KMS (AWS/GCP) — token encryption.<br>• DB (Postgres) — Refresh token storage. |
+| `greentic-messaging` | Messenger abstraction. Normalizes messages into unified format (text, image, file) before passing to flow. | **Transport:** NATS.<br>**Link:** Connects Ingress adapters (receiving webhooks) and Engine (executing logic). |
+| `greentic-messaging-providers`| Concrete API implementations: Telegram Bot API, Slack Web API, WhatsApp Business API. | **In:** Webhooks from platform.<br>**Out:** HTTP requests to platform APIs (sendMessage). |
+| `greentic-events` | Event processing system (non-chat). Webhooks, timers, system signals. | **In:** Webhooks, Cron schedule.<br>**Out:** Flow initialization. |
+| **🏗️ Infra & Ops** | | |
+| `greentic-repo` | **Secure Registry**: <br>• **Supply Chain**: Scans uploaded packages for vulnerabilities. Signs them with platform cryptographic keys. <br>• **Distributor API**: Distributes updates to runtimes. <br>• **Attestation**: Verifies artifact provenance. | **In:**<br>• HTTP PUT (publish).<br>• HTTP GET (download by runners).<br>**Out:**<br>• S3 / GCS / Local FS — blob storage.<br>• NATS (Pub) — sends tasks to workers (scanning). |
+| `greentic-deployer` | Service that takes `.gtpack` and deploys it to cloud (Kubernetes/Serverless). | **Out:**<br>• Kubernetes API.<br>• Cloud Provider APIs (AWS/Azure/GCP) — resource creation. |
+| `greentic-provision` | Infrastructure as Code (IaC). Creates databases, queues, and other resources required by the package. | **Out:** Terraform / Pulumi / Cloud APIs. |
+| `greentic-config` | Configuration management. Loads settings from files, env vars, and remote sources. Resolves config conflicts. | **In:** Files, ENV, remote config servers (Consul/Etcd). |
+| **📚 Shared Libs** | | |
+| `greentic-types` | Common Rust data structures (DTO) used across all projects. Guarantees type compatibility between Runner, CLI, and Repo. | **Role:** Shared Type Library (Crate). |
+| `greentic-state` | State Store implementation (Redis/Postgres/Memory). Allows flows to persist data between steps (`key-value`). | **Link:** Redis / Postgres / In-Memory HashMap. |
+| `greentic-secrets` | Secrets client (Vault/AWS/Env). Decrypts and caches secrets in process memory. | **Link:** HashiCorp Vault / AWS Secrets Manager. |
+| `greentic-session` | User session management. Stores conversation context (history, current flow step). | **Link:** State Store (Redis). |
+| `greentic-telemetry` | OpenTelemetry integration. Collects metrics, traces, and logs for observability. | **Out:** OTLP Collector (gRPC/HTTP). |

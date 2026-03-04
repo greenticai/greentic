@@ -5,7 +5,7 @@ edition = "2024"
 authors = ["maarten <maarten@greentic.com>"]
 description = "The fastest, most secure and extendable digital workforce platform"
 license = "MIT"
-repository = "https://github.com/greentic-ai/greentic"
+repository = "https://github.com/greenticai/greentic"
 
 [dependencies]
 dashmap = "6.1.0"
@@ -36,3 +36,4 @@ crate-type = ["rlib"]
 
 [dev-dependencies]
 duct = "1.1.0"
+

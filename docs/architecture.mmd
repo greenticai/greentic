@@ -1,0 +1,178 @@
+graph TD
+    %% --- Theme & Styles ---
+    %% Colors: Green (Biz), Blue (Tools), Orange (Infra), Red (Core), Grey (Libs)
+    classDef product fill:#e0f2f1,stroke:#00695c,stroke-width:3px,color:#004d40;
+    classDef runtime fill:#fbe9e7,stroke:#bf360c,stroke-width:2px,color:#bf360c;
+    classDef tool fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#0d47a1;
+    classDef infra fill:#fff8e1,stroke:#ff6f00,stroke-width:2px,color:#ff6f00;
+    classDef comp fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#4a148c;
+    classDef lib fill:#f5f5f5,stroke:#bdbdbd,stroke-width:2px,color:#616161,stroke-dasharray: 5 5;
+    classDef qa fill:#f1f8e9,stroke:#33691e,stroke-width:1px,color:#33691e;
+
+    linkStyle default stroke:#b0bec5,stroke-width:2px;
+
+    %% ==========================================================
+    %% 1. USER & DEV ENTRY POINTS
+    %% ==========================================================
+    subgraph Zone_Entry [🚀 Entry Points]
+        direction TB
+        CLI(greentic):::product
+        DevCLI(greentic-dev):::product
+        GUI(greentic-gui):::tool
+    end
+
+    %% ==========================================================
+    %% 2. DEVELOPER FACTORY (Build & Author)
+    %% ==========================================================
+    subgraph Zone_Factory [🛠️ Development Factory]
+        direction TB
+        GComp(greentic-component):::tool
+        GFlow(greentic-flow):::tool
+        GPack(greentic-pack):::tool
+        GenMCP(greentic-mcp-generator):::tool
+        
+        Cards2Pack(greentic-cards2pack):::tool
+    end
+
+    %% ==========================================================
+    %% 3. COMPONENT LIBRARY (The "Bricks")
+    %% ==========================================================
+    subgraph Zone_Components [🧱 Component Library]
+        direction LR
+        C_LLM(component-llm-openai):::comp
+        C_Card(component-adaptive-card):::comp
+        C_F2F(component-flow2flow):::comp
+        C_OAuth(component-oauth-card):::comp
+        C_Rhai(component-script-rhai):::comp
+        C_Tpl(component-templates):::comp
+        
+        %% Dependency links for visualization context
+        GComp -.->|Builds| C_LLM
+        GComp -.->|Builds| C_Card
+        GComp -.->|Builds| C_F2F
+    end
+
+    %% ==========================================================
+    %% 4. RUNTIME ENVIRONMENT (The "Engine")
+    %% ==========================================================
+    subgraph Zone_Runtime [⚡ Runtime Core]
+        direction TB
+        Runner(greentic-runner):::runtime
+        
+        subgraph Runtime_Modules [Extensions]
+            direction LR
+            MCP(greentic-mcp):::runtime
+            Auth(greentic-oauth):::runtime
+            Events(greentic-events):::runtime
+            WebChat(greentic-webchat):::runtime
+        end
+        
+        subgraph Messaging_System [Messaging]
+            msg_core(greentic-messaging):::runtime
+            msg_prov(greentic-messaging-providers):::runtime
+        end
+        
+        Runner <-->|Bus/NATS| msg_core
+        msg_core -->|Adapters| msg_prov
+        Runner -->|Uses| MCP
+        Runner -->|Auth| Auth
+        Runner -->|Signals| Events
+        WebChat -->|WS| Runner
+    end
+
+    %% ==========================================================
+    %% 5. INFRASTRUCTURE & SUPPLY CHAIN
+    %% ==========================================================
+    subgraph Zone_Infra [🏗️ Infrastructure & Registry]
+        Repo(greentic-repo):::infra
+        Deployer(greentic-deployer):::infra
+        DistAPI(greentic-distributor):::infra
+        DistClient(greentic-distributor-client):::infra
+        Prov(greentic-provision):::infra
+        Op(greentic-operator):::infra
+        Conf(greentic-config):::infra
+        
+        Repo -->|Serves| DistAPI
+        DistClient -->|Calls| DistAPI
+        Deployer -->|Orchestrates| Prov
+        Op -->|Manages| Runner
+    end
+
+    %% ==========================================================
+    %% 6. FOUNDATION (Libs)
+    %% ==========================================================
+    subgraph Zone_Libs [📚 Shared Libraries]
+        direction LR
+        L_Types(greentic-types):::lib
+        L_State(greentic-state):::lib
+        L_Sec(greentic-secrets):::lib
+        L_Sess(greentic-session):::lib
+        L_Tel(greentic-telemetry):::lib
+        L_i18n(greentic-i18n):::lib
+        L_Store(greentic-store):::lib
+        L_Int(greentic-interfaces):::lib
+        L_DW(greentic-dwbase):::lib
+    end
+
+    %% ==========================================================
+    %% 7. QA & ECOSYSTEM
+    %% ==========================================================
+    subgraph Zone_QA [🧪 QA & Ecosystem]
+        QA(greentic-qa):::qa
+        Demo(greentic-demo):::qa
+        Ex(greentic-examples):::qa
+        Conform(greentic-conformance):::qa
+        Integ(greentic-integration):::qa
+        Site(greentic-site):::qa
+    end
+
+    %% ==========================================================
+    %% 🔗 FLOW CONNECTIONS
+    %% ==========================================================
+    
+    %% CLI Flow
+    DevCLI -->|Uses| GComp
+    DevCLI -->|Uses| GFlow
+    DevCLI -->|Uses| GPack
+    CLI -->|Embeds| Runner
+    
+    %% Artifact Flow
+    GPack -->|📦 .gtpack| Repo
+    Repo -->|🚀 Distribute| Runner
+    
+    %% Config Flow
+    Conf -.->|Loads| Runner
+    Conf -.->|Loads| Repo
+    
+    %% Library Dependencies (Simplified)
+    Runner -.-> L_Types
+    Runner -.-> L_State
+    Runner -.-> L_Sec
+    Runner -.-> L_Tel
+    
+    %% QA Flow
+    QA -->|Tests| Runner
+    Conform -->|Checks| Runner
+    
+    %% End User
+    GUI -.->|Admin| Repo
+
+    %% ==========================================================
+    %% LEGEND
+    %% ==========================================================
+    subgraph Legend [ℹ️ Legend]
+        direction LR
+        L1[Service / Container]:::core
+        L2[Tool / Utility]:::tool
+        L3[Infrastructure]:::infra
+        L4[Component / Plugin]:::comp
+        L5[Library / Module]:::lib
+        
+        L_Solid(Data Flow / API Call) --> L_Solid_End( )
+        L_Dotted(Dependency / Config) -.-> L_Dotted_End( )
+        
+        style L_Solid stroke-width:0px,fill:none
+        style L_Solid_End stroke-width:0px,fill:none
+        style L_Dotted stroke-width:0px,fill:none
+        style L_Dotted_End stroke-width:0px,fill:none
+    end
