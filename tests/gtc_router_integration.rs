@@ -150,6 +150,7 @@ fn op_start_routes_to_demo_start_with_default_tenant_team_and_cloudflared_off() 
 fn install_public_mode_calls_greentic_dev_install_tools() {
     let sandbox = TestSandbox::new("install_public_mode_calls_greentic_dev_install_tools");
     let log_file = sandbox.path().join("dev.log");
+    let cargo_log_file = sandbox.path().join("cargo.log");
 
     let dev_script = format!(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
@@ -158,6 +159,11 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
 
     sandbox.write_script("greentic-dev", &dev_script);
     sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    let cargo_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"search\" ]; then\n  echo 'cargo-binstall = \"1.0.0\" # mock'\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\nfi\nexit 0\n",
+        cargo_log_file.display()
+    );
+    sandbox.write_script("cargo", &cargo_script);
 
     let output = sandbox.run_gtc_capture(["install"], HashMap::new());
     assert_eq!(
@@ -170,12 +176,17 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
     assert!(logged.contains("install tools"));
+    let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
+    assert!(cargo_logged.contains("binstall --version"));
+    assert!(cargo_logged.contains("search cargo-binstall --limit 1"));
+    assert!(cargo_logged.contains("binstall -y greentic-dev greentic-operator"));
 }
 
 #[test]
 fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
     let sandbox = TestSandbox::new("install_tenant_mode_uses_env_key_and_installs_artifacts");
     let log_file = sandbox.path().join("dev.log");
+    let cargo_log_file = sandbox.path().join("cargo.log");
 
     let dev_script = format!(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
@@ -184,6 +195,11 @@ fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
 
     sandbox.write_script("greentic-dev", &dev_script);
     sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    let cargo_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"search\" ]; then\n  echo 'cargo-binstall = \"1.0.0\" # mock'\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\nfi\nexit 0\n",
+        cargo_log_file.display()
+    );
+    sandbox.write_script("cargo", &cargo_script);
 
     let mock_root = sandbox.path().join("mock-dist");
     fs::create_dir_all(&mock_root).expect("mock root");
@@ -275,6 +291,8 @@ fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
     assert!(logged.contains("install tools"));
+    let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
+    assert!(cargo_logged.contains("binstall -y greentic-dev greentic-operator"));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("secret-token"));
@@ -283,9 +301,15 @@ fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
 #[test]
 fn install_skips_tenant_when_public_install_fails() {
     let sandbox = TestSandbox::new("install_skips_tenant_when_public_install_fails");
+    let cargo_log_file = sandbox.path().join("cargo.log");
 
     sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 23\n");
     sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    let cargo_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"search\" ]; then\n  echo 'cargo-binstall = \"1.0.0\" # mock'\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\nfi\nexit 0\n",
+        cargo_log_file.display()
+    );
+    sandbox.write_script("cargo", &cargo_script);
 
     let mock_root = sandbox.path().join("mock-dist");
     fs::create_dir_all(&mock_root).expect("mock root");
@@ -300,6 +324,8 @@ fn install_skips_tenant_when_public_install_fails() {
 
     let output = sandbox.run_gtc_capture(["install", "--tenant", "acme"], extra);
     assert_eq!(output.status.code(), Some(23));
+    let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
+    assert!(cargo_logged.contains("binstall -y greentic-dev greentic-operator"));
 }
 
 fn write_tool_zip(path: &Path, file_name: &str, contents: &[u8]) {

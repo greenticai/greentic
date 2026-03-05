@@ -255,6 +255,11 @@ fn locale_from_args(raw_args: &[String]) -> Option<String> {
 fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     println!("{}", t(locale, "gtc.install.public_mode"));
 
+    let preflight_status = ensure_install_prereqs(debug, locale);
+    if preflight_status != 0 {
+        return preflight_status;
+    }
+
     let public_args = vec!["install".to_string(), "tools".to_string()];
     let public_status = passthrough(DEV_BIN, &public_args, debug, locale);
     if public_status != 0 {
@@ -385,6 +390,121 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     } else {
         println!("{}", t(locale, "gtc.install.summary_ok"));
         0
+    }
+}
+
+fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
+    let installed_binstall = detect_binstall_version(debug, locale);
+    let latest_binstall = latest_binstall_version(debug, locale);
+
+    let needs_binstall_install = match (installed_binstall.as_deref(), latest_binstall.as_deref()) {
+        (Some(installed), Some(latest)) => semver_compare(installed, latest).is_lt(),
+        (None, _) => true,
+        (Some(_), None) => true,
+    };
+
+    if needs_binstall_install {
+        let install_binstall_args = vec![
+            "install".to_string(),
+            "cargo-binstall".to_string(),
+            "--locked".to_string(),
+        ];
+        let status = run_cargo(&install_binstall_args, debug, locale);
+        if status != 0 {
+            return status;
+        }
+    }
+
+    let binstall_args = vec![
+        "binstall".to_string(),
+        "-y".to_string(),
+        "greentic-dev".to_string(),
+        "greentic-operator".to_string(),
+    ];
+    run_cargo(&binstall_args, debug, locale)
+}
+
+fn detect_binstall_version(debug: bool, locale: &str) -> Option<String> {
+    let output = run_cargo_capture(&["binstall", "--version"], debug, locale)?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_first_semver(&String::from_utf8_lossy(&output.stdout))
+        .or_else(|| parse_first_semver(&String::from_utf8_lossy(&output.stderr)))
+}
+
+fn latest_binstall_version(debug: bool, locale: &str) -> Option<String> {
+    let output = run_cargo_capture(&["search", "cargo-binstall", "--limit", "1"], debug, locale)?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_first_semver(&String::from_utf8_lossy(&output.stdout))
+}
+
+fn parse_first_semver(text: &str) -> Option<String> {
+    for token in text.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '.' || ch == '-')) {
+        if token.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+            && token.split('.').count() >= 2
+            && token
+                .split('.')
+                .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
+        {
+            return Some(token.to_string());
+        }
+    }
+    None
+}
+
+fn semver_compare(a: &str, b: &str) -> std::cmp::Ordering {
+    let pa = parse_numeric_version(a);
+    let pb = parse_numeric_version(b);
+    let max = pa.len().max(pb.len());
+    for i in 0..max {
+        let av = *pa.get(i).unwrap_or(&0);
+        let bv = *pb.get(i).unwrap_or(&0);
+        match av.cmp(&bv) {
+            std::cmp::Ordering::Equal => continue,
+            other => return other,
+        }
+    }
+    std::cmp::Ordering::Equal
+}
+
+fn parse_numeric_version(raw: &str) -> Vec<u64> {
+    raw.split('.')
+        .map(|part| part.parse::<u64>().unwrap_or(0))
+        .collect()
+}
+
+fn run_cargo_capture(args: &[&str], debug: bool, locale: &str) -> Option<std::process::Output> {
+    if debug {
+        eprintln!("{} cargo {:?}", t(locale, "gtc.debug.exec"), args);
+    }
+    ProcessCommand::new("cargo")
+        .args(args)
+        .env("GREENTIC_LOCALE", locale)
+        .output()
+        .ok()
+}
+
+fn run_cargo(args: &[String], debug: bool, locale: &str) -> i32 {
+    if debug {
+        eprintln!("{} cargo {:?}", t(locale, "gtc.debug.exec"), args);
+    }
+
+    match ProcessCommand::new("cargo")
+        .args(args)
+        .env("GREENTIC_LOCALE", locale)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+    {
+        Ok(status) => status.code().unwrap_or(1),
+        Err(err) => {
+            eprintln!("{}: {err}", t(locale, "gtc.err.exec_failed"));
+            1
+        }
     }
 }
 
