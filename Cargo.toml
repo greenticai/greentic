@@ -40,6 +40,3 @@ pkg-fmt = "zip"
 
 [package.metadata.binstall.overrides.aarch64-pc-windows-msvc]
 pkg-fmt = "zip"
-
-[patch.crates-io]
-greentic-start = { path = "../greentic-start" }
