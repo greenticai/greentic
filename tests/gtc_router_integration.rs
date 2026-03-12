@@ -239,7 +239,7 @@ fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
     .expect("manifest write");
 
     let index = serde_json::json!({
-        "oci://ghcr.io/greentic-biz/acme/install-manifest:latest": "manifest.json",
+        "oci://ghcr.io/greentic-biz/customers-tools/acme:latest": "manifest.json",
         "oci://ghcr.io/greentic-biz/tools/enterprise-tool:1.0.0": "tool.zip",
         "oci://ghcr.io/greentic-biz/packs/enterprise-routing:0.4.0": "pack"
     });
