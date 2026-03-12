@@ -2218,7 +2218,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "0.9.4"
+version = "0.9.5"
 dependencies = [
  "async-trait",
  "clap",
