@@ -2091,6 +2091,8 @@ dependencies = [
 [[package]]
 name = "greentic-start"
 version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ac722d9aa9dff19488bd7601e9f13ebc5e0371987b233020bee684457441e52e"
 dependencies = [
  "anyhow",
  "async-trait",

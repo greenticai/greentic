@@ -711,7 +711,7 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     };
 
     let manifest_ref = format!(
-        "oci://ghcr.io/greentic-biz/{tenant}/install-manifest:latest",
+        "oci://ghcr.io/greentic-biz/customers-tools/{tenant}:latest",
         tenant = tenant
     );
 
