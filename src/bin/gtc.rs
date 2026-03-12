@@ -821,15 +821,21 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         }
     }
 
-    let binstall_args = vec![
-        "binstall".to_string(),
-        "-y".to_string(),
-        "--version".to_string(),
-        "0.4".to_string(),
-        "greentic-dev".to_string(),
-        "greentic-operator".to_string(),
-    ];
-    run_cargo(&binstall_args, debug, locale)
+    for package in [DEV_BIN, OP_BIN] {
+        let binstall_args = vec![
+            "binstall".to_string(),
+            "-y".to_string(),
+            "--version".to_string(),
+            "0.4".to_string(),
+            package.to_string(),
+        ];
+        let status = run_cargo(&binstall_args, debug, locale);
+        if status != 0 {
+            return status;
+        }
+    }
+
+    0
 }
 
 fn detect_binstall_version(debug: bool, locale: &str) -> Option<String> {
