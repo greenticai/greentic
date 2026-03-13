@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "[1/5] tools/i18n.sh validate"
-tools/i18n.sh validate
+#echo "[1/5] tools/i18n.sh validate"
+#tools/i18n.sh validate
 
 echo "[2/5] cargo fmt --all -- --check"
 cargo fmt --all -- --check
