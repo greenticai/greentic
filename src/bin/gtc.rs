@@ -1507,9 +1507,7 @@ impl I18nCatalog {
                     let normalized_key = normalize_locale(locale);
                     // Don't overwrite existing entries - prefer the primary locale (e.g., "en" over "en-GB")
                     // since EMBEDDED_LOCALES is sorted alphabetically, "en" comes before "en-GB"
-                    if !dictionaries.contains_key(&normalized_key) {
-                        dictionaries.insert(normalized_key, map);
-                    }
+                    dictionaries.entry(normalized_key).or_insert(map);
                 }
                 Err(_e) => {
                     // Silently skip invalid JSON files
