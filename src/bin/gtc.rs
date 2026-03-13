@@ -1053,37 +1053,34 @@ fn select_start_target(
     if let Some(target) = explicit_target {
         return Ok(target);
     }
-    let mut targets = vec![StartTarget::Runtime];
-    targets.extend(detect_bundle_deployment_targets(bundle_dir)?);
-    targets.sort_by_key(|value| match value {
-        StartTarget::Runtime => 0,
+    let mut deploy_targets = detect_bundle_deployment_targets(bundle_dir)?;
+    deploy_targets.sort_by_key(|value| match value {
+        StartTarget::Aws => 0,
         StartTarget::SingleVm => 1,
-        StartTarget::Aws => 2,
+        StartTarget::Runtime => 2,
     });
-    targets.dedup();
-    if targets.len() == 1 {
-        return Ok(targets[0]);
+    deploy_targets.dedup();
+    if deploy_targets.is_empty() {
+        return Ok(StartTarget::Runtime);
+    }
+    if deploy_targets.len() == 1 {
+        return Ok(deploy_targets[0]);
     }
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(format!(
             "multiple start targets are available ({}); rerun with --target",
-            targets
+            deploy_targets
                 .iter()
                 .map(|value| value.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
     }
-    prompt_start_target(&targets, locale)
+    prompt_start_target(&deploy_targets, locale)
 }
 
 fn detect_bundle_deployment_targets(bundle_dir: &Path) -> Result<Vec<StartTarget>, String> {
     let mut targets = Vec::new();
-    let deployer_dir = bundle_dir.join("providers").join("deployer");
-    if !deployer_dir.exists() {
-        return Ok(targets);
-    }
-    targets.push(StartTarget::SingleVm);
     if resolve_target_provider_pack(bundle_dir, StartTarget::Aws, None).is_ok() {
         targets.push(StartTarget::Aws);
     }
@@ -1126,15 +1123,8 @@ fn resolve_target_provider_pack(
     if let Some(path) = override_path {
         return Ok(path.clone());
     }
-    let deployer_dir = bundle_dir.join("providers").join("deployer");
-    if !deployer_dir.exists() {
-        return Err(format!(
-            "bundle has no deployer providers directory: {}",
-            deployer_dir.display()
-        ));
-    }
-    let needle = match target {
-        StartTarget::Aws => "aws",
+    let needles: &[&str] = match target {
+        StartTarget::Aws => &["aws", "terraform"],
         StartTarget::SingleVm | StartTarget::Runtime => {
             return Err(format!(
                 "target {} does not use provider pack discovery",
@@ -1143,18 +1133,26 @@ fn resolve_target_provider_pack(
         }
     };
     let mut candidates = Vec::new();
-    for entry in fs::read_dir(&deployer_dir)
-        .map_err(|err| format!("failed to read {}: {err}", deployer_dir.display()))?
-    {
-        let entry = entry.map_err(|err| err.to_string())?;
-        let path = entry.path();
-        let name = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if name.contains(needle) {
-            candidates.push(path);
+    for search_dir in &[
+        bundle_dir.join("providers").join("deployer"),
+        bundle_dir.join("packs"),
+    ] {
+        if !search_dir.exists() {
+            continue;
+        }
+        for entry in fs::read_dir(search_dir)
+            .map_err(|err| format!("failed to read {}: {err}", search_dir.display()))?
+        {
+            let entry = entry.map_err(|err| err.to_string())?;
+            let path = entry.path();
+            let name = path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or_default()
+                .to_ascii_lowercase();
+            if needles.iter().any(|needle| name.contains(needle)) {
+                candidates.push(path);
+            }
         }
     }
     candidates.sort();
@@ -1172,6 +1170,22 @@ fn resolve_app_pack_path(
 ) -> Result<PathBuf, String> {
     if let Some(path) = override_path {
         return Ok(path.clone());
+    }
+    let default_pack_ref = bundle_dir.join("default.gtpack");
+    if default_pack_ref.exists() {
+        let raw = fs::read_to_string(&default_pack_ref).map_err(|err| {
+            format!(
+                "failed to read default pack reference {}: {err}",
+                default_pack_ref.display()
+            )
+        })?;
+        let pack_ref = raw.trim();
+        if !pack_ref.is_empty() {
+            let candidate = bundle_dir.join(pack_ref);
+            if candidate.exists() {
+                return Ok(candidate);
+            }
+        }
     }
     let packs_dir = bundle_dir.join("packs");
     if !packs_dir.exists() {
@@ -2529,5 +2543,67 @@ mod tests {
             options.start_args,
             vec!["--tenant".to_string(), "demo".to_string()]
         );
+    }
+
+    #[test]
+    fn select_start_target_defaults_to_runtime_without_deployer_targets() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let target = select_start_target(dir.path(), None, "en").expect("target");
+        assert_eq!(target.as_str(), "runtime");
+    }
+
+    #[test]
+    fn select_start_target_prefers_single_detected_deployer_target() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let deployer_dir = dir.path().join("providers").join("deployer");
+        std::fs::create_dir_all(&deployer_dir).expect("create deployer dir");
+        std::fs::write(deployer_dir.join("aws-provider.gtpack"), b"fixture")
+            .expect("write provider");
+
+        let target = select_start_target(dir.path(), None, "en").expect("target");
+        assert_eq!(target.as_str(), "aws");
+    }
+
+    #[test]
+    fn select_start_target_detects_deployer_pack_from_bundle_packs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let packs_dir = dir.path().join("packs");
+        std::fs::create_dir_all(&packs_dir).expect("create packs dir");
+        std::fs::write(packs_dir.join("terraform.gtpack"), b"fixture").expect("write provider");
+
+        let target = select_start_target(dir.path(), None, "en").expect("target");
+        assert_eq!(target.as_str(), "aws");
+    }
+
+    #[test]
+    fn resolve_target_provider_pack_falls_back_to_packs_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let packs_dir = dir.path().join("packs");
+        std::fs::create_dir_all(&packs_dir).expect("create packs dir");
+        let expected = packs_dir.join("terraform.gtpack");
+        std::fs::write(&expected, b"fixture").expect("write provider");
+
+        let resolved =
+            resolve_target_provider_pack(dir.path(), StartTarget::Aws, None).expect("provider");
+        assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn resolve_app_pack_path_prefers_default_gtpack_reference() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let packs_dir = dir.path().join("packs");
+        std::fs::create_dir_all(&packs_dir).expect("create packs dir");
+        let app_pack = packs_dir.join("cards-demo.gtpack");
+        let other_pack = packs_dir.join("terraform.gtpack");
+        std::fs::write(&app_pack, b"app").expect("write app pack");
+        std::fs::write(&other_pack, b"provider").expect("write other pack");
+        std::fs::write(
+            dir.path().join("default.gtpack"),
+            "packs/cards-demo.gtpack\n",
+        )
+        .expect("write default ref");
+
+        let resolved = resolve_app_pack_path(dir.path(), None).expect("app pack");
+        assert_eq!(resolved, app_pack);
     }
 }
