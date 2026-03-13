@@ -74,8 +74,8 @@ fn wizard_default_routes_to_greentic_pack_wizard_with_locale() {
 }
 
 #[test]
-fn wizard_with_answers_routes_to_operator_demo_new() {
-    let sandbox = TestSandbox::new("wizard_with_answers_routes_to_operator_demo_new");
+fn wizard_with_answers_routes_to_operator_wizard() {
+    let sandbox = TestSandbox::new("wizard_with_answers_routes_to_operator_wizard");
     let log_file = sandbox.path().join("op.log");
 
     let op_script = format!(
@@ -90,7 +90,7 @@ fn wizard_with_answers_routes_to_operator_demo_new() {
     assert_eq!(status.code(), Some(0));
 
     let logged = fs::read_to_string(log_file).expect("read op log");
-    assert!(logged.contains("demo new myfirst.gtbundle"));
+    assert!(logged.contains("wizard --locale en --answers oci://example"));
 }
 
 #[test]
