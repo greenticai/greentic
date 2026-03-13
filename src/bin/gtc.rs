@@ -2358,8 +2358,9 @@ impl ArtifactKind {
 #[cfg(test)]
 mod tests {
     use super::{
-        build_operator_wizard_args, collect_tail, detect_locale, locale_from_args,
-        parse_start_cli_options, parse_start_request, resolve_tenant_key, tenant_env_var_name,
+        StartTarget, build_operator_wizard_args, collect_tail, detect_locale, locale_from_args,
+        parse_start_cli_options, parse_start_request, resolve_app_pack_path,
+        resolve_target_provider_pack, resolve_tenant_key, select_start_target, tenant_env_var_name,
     };
     use clap::{Arg, ArgMatches, Command};
     use std::path::{Path, PathBuf};

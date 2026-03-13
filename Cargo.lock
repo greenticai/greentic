@@ -1803,9 +1803,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces"
-version = "0.4.108"
+version = "0.4.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b35ae65253420df1d9eea021edc0b6aea5916fde89b3d626160f2cdd379d6f60"
+checksum = "93569e3c142e9b184f28a5a72956c3d612d2523101dfff3be817909b7654bb87"
 dependencies = [
  "anyhow",
  "greentic-types",
@@ -1820,9 +1820,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-guest"
-version = "0.4.108"
+version = "0.4.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "48da74d24435f1cf84a5e20a58679ddd59f539d9a61ac38d64cb9a86dabe5d8c"
+checksum = "7c3b8a5c8eec134ef5ebaa65cc48efff1718e2129009220796b6ba42cfc669b9"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1833,9 +1833,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-host"
-version = "0.4.108"
+version = "0.4.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4987d46d80c372697131c3ba3b7885c9e02fe353ecfd786567a5d9d65ceade0b"
+checksum = "6fd612d44791a1d894aa3c1e15e4de3e8b40a9ddd36779cc9f0e0bf5316b3bae"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -1846,9 +1846,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-wasmtime"
-version = "0.4.108"
+version = "0.4.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "371632e60af407b90519f9e88ea66e3eb27738dff73d4a2cba1b32ef5d3a0cc6"
+checksum = "a67878d5bba90d8b294f0d2e72121ff8cab66e4ad4d499224a13043588b84101"
 dependencies = [
  "anyhow",
  "camino",
@@ -1862,9 +1862,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack-lib"
-version = "0.4.111"
+version = "0.4.112"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7140552243b163650da191200320263aaa85853a736be07e6e07e99a6fbcdfb8"
+checksum = "919fe0c7e503709516770172b0de8d26e20cf444a0dd6240f79bc9c5209a21c1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2218,7 +2218,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "0.9.9"
+version = "0.9.10"
 dependencies = [
  "async-trait",
  "clap",
