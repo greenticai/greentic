@@ -26,7 +26,9 @@ use tempfile::TempDir;
 use crate::dist::build_adapter;
 
 const DEV_BIN: &str = "greentic-dev";
+
 const OP_BIN: &str = "greentic-operator";
+const BUNDLE_BIN: &str = "greentic-bundle";
 const PACK_BIN: &str = "greentic-pack";
 
 const LOCALES_JSON: &str = include_str!("../../assets/i18n/locales.json");
@@ -821,7 +823,7 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         }
     }
 
-    for package in [DEV_BIN, OP_BIN] {
+    for package in [DEV_BIN, OP_BIN, BUNDLE_BIN] {
         let binstall_args = vec![
             "binstall".to_string(),
             "-y".to_string(),

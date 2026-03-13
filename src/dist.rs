@@ -193,6 +193,30 @@ impl TokenRegistryClient {
             inner: Client::new(config),
         }
     }
+
+    fn accepted_layer_media_types<'a>(
+        accepted_manifest_types: &'a [&'a str],
+    ) -> Vec<&'a str> {
+        let mut types = accepted_manifest_types.to_vec();
+        for extra in [
+            "application/json",
+            "application/octet-stream",
+            "application/zip",
+            "application/gzip",
+            "application/x-gzip",
+            "application/tar",
+            "application/x-tar",
+            "application/vnd.oci.image.layer.v1.tar",
+            "application/vnd.oci.image.layer.v1.tar+gzip",
+            "application/vnd.docker.image.rootfs.diff.tar",
+            "application/vnd.docker.image.rootfs.diff.tar.gzip",
+        ] {
+            if !types.contains(&extra) {
+                types.push(extra);
+            }
+        }
+        types
+    }
 }
 
 #[async_trait]
@@ -209,12 +233,13 @@ impl RegistryClient for TokenRegistryClient {
         reference: &Reference,
         accepted_manifest_types: &[&str],
     ) -> Result<PulledImage, OciDistributionError> {
+        let accepted_layer_types = Self::accepted_layer_media_types(accepted_manifest_types);
         let image = self
             .inner
             .pull(
                 reference,
                 &RegistryAuth::Basic("oauth2accesstoken".to_string(), self.token.clone()),
-                accepted_manifest_types.to_vec(),
+                accepted_layer_types,
             )
             .await?;
 
@@ -238,5 +263,31 @@ fn convert_image(image: ImageData) -> PulledImage {
     PulledImage {
         digest: image.digest,
         layers,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::TokenRegistryClient;
+
+    #[test]
+    fn accepted_layer_media_types_include_json_manifest_blobs() {
+        let accepted = TokenRegistryClient::accepted_layer_media_types(&["application/example"]);
+        assert!(accepted.contains(&"application/example"));
+        assert!(accepted.contains(&"application/json"));
+        assert!(accepted.contains(&"application/octet-stream"));
+        assert!(accepted.contains(&"application/zip"));
+        assert!(accepted.contains(&"application/vnd.oci.image.layer.v1.tar+gzip"));
+    }
+
+    #[test]
+    fn accepted_layer_media_types_do_not_duplicate_json() {
+        let accepted = TokenRegistryClient::accepted_layer_media_types(&["application/json"]);
+        let json_count = accepted
+            .iter()
+            .filter(|media_type| **media_type == "application/json")
+            .count();
+
+        assert_eq!(json_count, 1);
     }
 }
