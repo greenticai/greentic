@@ -28,6 +28,7 @@ use crate::dist::build_adapter;
 const DEV_BIN: &str = "greentic-dev";
 const OP_BIN: &str = "greentic-operator";
 const PACK_BIN: &str = "greentic-pack";
+const SETUP_BIN: &str = "greentic-setup";
 
 const LOCALES_JSON: &str = include_str!("../../assets/i18n/locales.json");
 include!(concat!(env!("OUT_DIR"), "/embedded_i18n.rs"));
@@ -88,6 +89,10 @@ fn run(raw_args: Vec<String>) -> i32 {
             }
             forwarded.extend(tail);
             passthrough(DEV_BIN, &forwarded, debug, &locale)
+        }
+        Some(("setup", sub_matches)) => {
+            let tail = collect_tail(sub_matches);
+            passthrough(SETUP_BIN, &tail, debug, &locale)
         }
         _ => 2,
     }
@@ -166,6 +171,11 @@ fn build_cli(locale: &str) -> Command {
         .subcommand(
             Command::new("wizard")
                 .about(t(locale, "gtc.cmd.wizard.about").into_owned())
+                .arg(cmd_args.clone()),
+        )
+        .subcommand(
+            Command::new("setup")
+                .about(t(locale, "gtc.cmd.setup.about").into_owned())
                 .arg(cmd_args),
         )
 }
@@ -1373,6 +1383,7 @@ fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 
                 match binary {
                     DEV_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_dev")),
                     OP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_op")),
+                    SETUP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_setup")),
                     _ => eprintln!("{}", t(locale, "gtc.err.exec_failed")),
                 }
             } else {
@@ -1386,7 +1397,7 @@ fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 
 fn run_doctor(locale: &str) -> i32 {
     let mut failed = false;
 
-    for binary in [DEV_BIN, OP_BIN] {
+    for binary in [DEV_BIN, OP_BIN, SETUP_BIN] {
         match ProcessCommand::new(binary).arg("--version").output() {
             Ok(output) => {
                 let status_label = if output.status.success() {
@@ -1405,6 +1416,7 @@ fn run_doctor(locale: &str) -> i32 {
                 match binary {
                     DEV_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_dev")),
                     OP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_op")),
+                    SETUP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_setup")),
                     _ => {}
                 }
             }
@@ -1490,8 +1502,18 @@ impl I18nCatalog {
 
         let mut dictionaries = HashMap::new();
         for (locale, raw_json) in EMBEDDED_LOCALES {
-            if let Ok(map) = parse_flat_json_map(raw_json) {
-                dictionaries.insert(normalize_locale(locale), map);
+            match parse_flat_json_map(raw_json) {
+                Ok(map) => {
+                    let normalized_key = normalize_locale(locale);
+                    // Don't overwrite existing entries - prefer the primary locale (e.g., "en" over "en-GB")
+                    // since EMBEDDED_LOCALES is sorted alphabetically, "en" comes before "en-GB"
+                    if !dictionaries.contains_key(&normalized_key) {
+                        dictionaries.insert(normalized_key, map);
+                    }
+                }
+                Err(_e) => {
+                    // Silently skip invalid JSON files
+                }
             }
         }
 
