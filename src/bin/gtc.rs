@@ -30,7 +30,6 @@ const DEV_BIN: &str = "greentic-dev";
 
 const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
-const PACK_BIN: &str = "greentic-pack";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
 
@@ -45,6 +44,7 @@ fn main() {
 
 fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
+    let cli_locale = locale_from_args(&raw_args);
     let locale = detect_locale(&raw_args, i18n.default_locale());
 
     let cli = build_cli(&locale);
@@ -76,12 +76,12 @@ fn run(raw_args: Vec<String>) -> i32 {
             passthrough(OP_BIN, &rewritten, debug, &locale)
         }
         Some(("wizard", sub_matches)) => {
-            let tail = collect_tail(sub_matches);
-            if tail.is_empty() {
-                return run_wizard_menu(debug, &locale);
+            let mut forwarded = vec!["wizard".to_string()];
+            forwarded.extend(collect_tail(sub_matches));
+            if cli_locale.is_some() && !has_flag(&forwarded, "locale") {
+                ensure_flag_value(&mut forwarded, "locale", &locale);
             }
-            let forwarded = build_operator_wizard_args(&tail, &locale);
-            passthrough(OP_BIN, &forwarded, debug, &locale)
+            passthrough(DEV_BIN, &forwarded, debug, &locale)
         }
         Some(("setup", sub_matches)) => {
             let tail = collect_tail(sub_matches);
@@ -210,15 +210,6 @@ fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
         }
         _ => args.to_vec(),
     }
-}
-
-fn build_operator_wizard_args(args: &[String], locale: &str) -> Vec<String> {
-    let mut forwarded = vec!["wizard".to_string()];
-    if !has_flag(args, "locale") {
-        ensure_flag_value(&mut forwarded, "locale", locale);
-    }
-    forwarded.extend_from_slice(args);
-    forwarded
 }
 
 fn ensure_flag_value(args: &mut Vec<String>, flag: &str, value: &str) {
@@ -757,7 +748,8 @@ fn run_binary_capture(
     if debug {
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
     }
-    let output = ProcessCommand::new(binary)
+    let command = resolve_binary_command(binary);
+    let output = ProcessCommand::new(&command)
         .args(args)
         .env("GREENTIC_LOCALE", locale)
         .output()
@@ -784,7 +776,8 @@ fn run_binary_status(
     if debug {
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
     }
-    ProcessCommand::new(binary)
+    let command = resolve_binary_command(binary);
+    ProcessCommand::new(&command)
         .args(args)
         .env("GREENTIC_LOCALE", locale)
         .stdin(Stdio::inherit())
@@ -1674,120 +1667,6 @@ fn run_cargo(args: &[String], debug: bool, locale: &str) -> i32 {
     }
 }
 
-fn run_wizard_menu(debug: bool, locale: &str) -> i32 {
-    println!(
-        "{}",
-        t_or(locale, "gtc.wizard.title", "Greentic Developer Wizard")
-    );
-    println!();
-    println!(
-        "1) {}",
-        t_or(
-            locale,
-            "gtc.wizard.option.pack",
-            "Build / Update a Pack (flows + components)"
-        )
-    );
-    println!(
-        "2) {}",
-        t_or(
-            locale,
-            "gtc.wizard.option.bundle",
-            "Build / Update a Production Bundle"
-        )
-    );
-    println!("0) {}", t_or(locale, "gtc.wizard.option.exit", "Exit"));
-    println!();
-
-    loop {
-        print!(
-            "{} ",
-            t_or(locale, "gtc.wizard.prompt.select", "Select option:")
-        );
-        if io::stdout().flush().is_err() {
-            return 1;
-        }
-
-        let mut input = String::new();
-        if io::stdin().read_line(&mut input).is_err() {
-            return 1;
-        }
-
-        match input.trim() {
-            "1" => {
-                let args = vec![
-                    "wizard".to_string(),
-                    "--locale".to_string(),
-                    locale.to_string(),
-                ];
-                return passthrough(PACK_BIN, &args, debug, locale);
-            }
-            "2" => {
-                let bundle = loop {
-                    let Some(path) = prompt_bundle_path(locale) else {
-                        continue;
-                    };
-                    if Path::new(&path).exists() {
-                        eprintln!(
-                            "{}",
-                            tf(
-                                locale,
-                                "gtc.wizard.err.bundle_exists",
-                                &[("path", path.as_str())]
-                            )
-                        );
-                        continue;
-                    }
-                    break path;
-                };
-                let args = vec![
-                    "demo".to_string(),
-                    "new".to_string(),
-                    bundle,
-                    "--locale".to_string(),
-                    locale.to_string(),
-                ];
-                return passthrough(OP_BIN, &args, debug, locale);
-            }
-            "0" => return 0,
-            _ => {}
-        }
-    }
-}
-
-fn prompt_bundle_path(locale: &str) -> Option<String> {
-    print!(
-        "{} ",
-        t_or(
-            locale,
-            "gtc.wizard.prompt.bundle_path",
-            "Bundle directory (e.g. ./mybundle):"
-        )
-    );
-    if io::stdout().flush().is_err() {
-        return None;
-    }
-
-    let mut input = String::new();
-    if io::stdin().read_line(&mut input).is_err() {
-        return None;
-    }
-
-    let value = input.trim().to_string();
-    if value.is_empty() {
-        eprintln!(
-            "{}",
-            t_or(
-                locale,
-                "gtc.wizard.err.bundle_path_required",
-                "Bundle path is required."
-            )
-        );
-        return None;
-    }
-    Some(value)
-}
-
 fn install_manifest_item(
     adapter: &dyn dist::DistAdapter,
     key: &str,
@@ -2111,7 +1990,9 @@ fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
     }
 
-    match ProcessCommand::new(binary)
+    let command = resolve_binary_command(binary);
+
+    match ProcessCommand::new(&command)
         .args(args)
         .env("GREENTIC_LOCALE", locale)
         .stdin(Stdio::inherit())
@@ -2123,7 +2004,7 @@ fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 
         Err(err) => {
             if err.kind() == std::io::ErrorKind::NotFound {
                 match binary {
-                    DEV_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_dev")),
+                    DEV_BIN => print_missing_dev_message(locale),
                     OP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_op")),
                     SETUP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_setup")),
                     _ => eprintln!("{}", t(locale, "gtc.err.exec_failed")),
@@ -2140,7 +2021,8 @@ fn run_doctor(locale: &str) -> i32 {
     let mut failed = false;
 
     for binary in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN] {
-        match ProcessCommand::new(binary).arg("--version").output() {
+        let command = resolve_binary_command(binary);
+        match ProcessCommand::new(&command).arg("--version").output() {
             Ok(output) => {
                 let status_label = if output.status.success() {
                     t(locale, "gtc.doctor.ok")
@@ -2156,7 +2038,7 @@ fn run_doctor(locale: &str) -> i32 {
                 failed = true;
                 println!("{binary}: {}", t(locale, "gtc.doctor.missing"));
                 match binary {
-                    DEV_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_dev")),
+                    DEV_BIN => print_missing_dev_message(locale),
                     OP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_op")),
                     BUNDLE_BIN => eprintln!(
                         "{}",
@@ -2185,6 +2067,25 @@ fn first_non_empty_line(text: &str) -> Option<String> {
         .map(str::trim)
         .find(|line| !line.is_empty())
         .map(ToOwned::to_owned)
+}
+
+fn print_missing_dev_message(locale: &str) {
+    eprintln!("{}", t(locale, "gtc.err.bin_missing_dev"));
+    eprintln!(
+        "{}",
+        t_or(
+            locale,
+            "gtc.err.bin_missing_dev_install_hint",
+            "Run `gtc install` first."
+        )
+    );
+}
+
+fn resolve_binary_command(binary: &str) -> String {
+    match binary {
+        DEV_BIN => env::var("GREENTIC_DEV_BIN").unwrap_or_else(|_| binary.to_string()),
+        _ => binary.to_string(),
+    }
 }
 
 fn t(locale: &str, key: &'static str) -> Cow<'static, str> {
@@ -2358,9 +2259,9 @@ impl ArtifactKind {
 #[cfg(test)]
 mod tests {
     use super::{
-        StartTarget, build_operator_wizard_args, collect_tail, detect_locale, locale_from_args,
-        parse_start_cli_options, parse_start_request, resolve_app_pack_path,
-        resolve_target_provider_pack, resolve_tenant_key, select_start_target, tenant_env_var_name,
+        StartTarget, collect_tail, detect_locale, locale_from_args, parse_start_cli_options,
+        parse_start_request, resolve_app_pack_path, resolve_target_provider_pack,
+        resolve_tenant_key, select_start_target, tenant_env_var_name,
     };
     use clap::{Arg, ArgMatches, Command};
     use std::path::{Path, PathBuf};
@@ -2472,45 +2373,6 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.contains("--bundle is managed by gtc start"));
-    }
-
-    #[test]
-    fn build_operator_wizard_args_prepends_wizard_and_locale() {
-        let args =
-            build_operator_wizard_args(&["--answers".to_string(), "a.json".to_string()], "en");
-        assert_eq!(
-            args,
-            vec![
-                "wizard".to_string(),
-                "--locale".to_string(),
-                "en".to_string(),
-                "--answers".to_string(),
-                "a.json".to_string()
-            ]
-        );
-    }
-
-    #[test]
-    fn build_operator_wizard_args_preserves_explicit_locale() {
-        let args = build_operator_wizard_args(
-            &[
-                "--locale".to_string(),
-                "fr".to_string(),
-                "--answers".to_string(),
-                "a.json".to_string(),
-            ],
-            "en",
-        );
-        assert_eq!(
-            args,
-            vec![
-                "wizard".to_string(),
-                "--locale".to_string(),
-                "fr".to_string(),
-                "--answers".to_string(),
-                "a.json".to_string()
-            ]
-        );
     }
 
     #[test]

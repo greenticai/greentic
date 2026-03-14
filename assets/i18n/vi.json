@@ -18,6 +18,7 @@
   "gtc.doctor.version_unavailable": "(không có đầu ra phiên bản)",
   "gtc.doctor.warn": "CẢNH BÁO",
   "gtc.err.bin_missing_dev": "Không tìm thấy greentic-dev trong PATH.",
+  "gtc.err.bin_missing_dev_install_hint": "Chạy `gtc install` trước.",
   "gtc.err.bin_missing_op": "Không tìm thấy greentic-operator trong PATH.",
   "gtc.err.bin_missing_setup": "Không tìm thấy greentic-setup trong PATH. Cài đặt bằng: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Client phân phối không khả dụng.",

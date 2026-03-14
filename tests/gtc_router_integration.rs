@@ -6,7 +6,7 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -31,66 +31,151 @@ fn passthrough_dev_preserves_exit_code() {
 }
 
 #[test]
-fn wizard_default_routes_to_greentic_pack_wizard_with_locale() {
-    let sandbox = TestSandbox::new("wizard_default_routes_to_greentic_pack_wizard_with_locale");
-    let log_file = sandbox.path().join("pack.log");
-    let op_log_file = sandbox.path().join("op.log");
+fn wizard_missing_greentic_dev_prints_install_guidance() {
+    let sandbox = TestSandbox::new("wizard_missing_greentic_dev_prints_install_guidance");
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
 
-    let pack_script = format!(
-        "#!/bin/sh\nprintf 'args:%s\\n' \"$*\" >> '{}'\nprintf 'locale:%s\\n' \"$GREENTIC_LOCALE\" >> '{}'\nexit 0\n",
-        log_file.display(),
-        log_file.display()
-    );
+    let output = sandbox.run_gtc_capture(["wizard"], HashMap::new());
+    assert_eq!(output.status.code(), Some(1));
 
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-pack", &pack_script);
-    let op_script = format!(
-        "#!/bin/sh\nprintf 'args:%s\\n' \"$*\" >> '{}'\nprintf 'locale:%s\\n' \"$GREENTIC_LOCALE\" >> '{}'\nexit 0\n",
-        op_log_file.display(),
-        op_log_file.display()
-    );
-    sandbox.write_script("greentic-operator", &op_script);
-
-    let status = sandbox.run_gtc(["wizard", "foo", "--bar"], HashMap::new());
-    assert_eq!(
-        status.code(),
-        Some(0),
-        "wizard should still route via dev when args are present"
-    );
-
-    let default_output = sandbox.run_gtc_capture_with_input(["wizard"], HashMap::new(), "1\n");
-    assert_eq!(default_output.status.code(), Some(0));
-
-    let logged = fs::read_to_string(log_file).expect("read pack log");
-    assert!(logged.contains("args:wizard --locale en"));
-    assert!(logged.contains("locale:en"));
-
-    let operator_output =
-        sandbox.run_gtc_capture_with_input(["wizard"], HashMap::new(), "2\ncustom.gtbundle\n");
-    assert_eq!(operator_output.status.code(), Some(0));
-    let op_logged = fs::read_to_string(op_log_file).expect("read operator log");
-    assert!(op_logged.contains("args:demo new custom.gtbundle --locale en"));
-    assert!(op_logged.contains("locale:en"));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("greentic-dev not found in PATH."));
+    assert!(stderr.contains("gtc install"));
 }
 
 #[test]
-fn wizard_with_answers_routes_to_operator_wizard() {
-    let sandbox = TestSandbox::new("wizard_with_answers_routes_to_operator_wizard");
-    let log_file = sandbox.path().join("op.log");
+fn passthrough_dev_uses_greentic_dev_bin_override() {
+    let sandbox = TestSandbox::new("passthrough_dev_uses_greentic_dev_bin_override");
+    let log_file = sandbox.path().join("override-dev.log");
+    let override_bin = sandbox.path().join("bin").join("greentic-dev-local");
+    fs::create_dir_all(override_bin.parent().expect("override parent")).expect("override dir");
 
-    let op_script = format!(
+    let override_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+        log_file.display()
+    );
+    fs::write(&override_bin, override_script).expect("write override dev");
+    fs::set_permissions(&override_bin, fs::Permissions::from_mode(0o755))
+        .expect("chmod override dev");
+
+    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 91\n");
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GREENTIC_DEV_BIN".to_string(),
+        override_bin.display().to_string(),
+    );
+
+    let status = sandbox.run_gtc(["dev", "flow", "list"], extra);
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read override dev log");
+    assert!(logged.contains("flow list"));
+}
+
+#[test]
+fn wizard_passthrough_routes_to_greentic_dev_with_all_args() {
+    let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_dev_with_all_args");
+    let log_file = sandbox.path().join("dev.log");
+
+    let dev_script = format!(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
         log_file.display()
     );
 
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", &op_script);
+    sandbox.write_script("greentic-dev", &dev_script);
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
 
-    let status = sandbox.run_gtc(["wizard", "--answers", "oci://example"], HashMap::new());
+    let status = sandbox.run_gtc(
+        ["wizard", "--locale", "fr", "--answers", "oci://example"],
+        HashMap::new(),
+    );
     assert_eq!(status.code(), Some(0));
 
-    let logged = fs::read_to_string(log_file).expect("read op log");
-    assert!(logged.contains("wizard --locale en --answers oci://example"));
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(logged.contains("wizard --answers oci://example --locale fr"));
+}
+
+#[test]
+fn wizard_passthrough_preserves_global_locale_for_greentic_dev() {
+    let sandbox = TestSandbox::new("wizard_passthrough_preserves_global_locale_for_greentic_dev");
+    let log_file = sandbox.path().join("dev.log");
+
+    let dev_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+        log_file.display()
+    );
+
+    sandbox.write_script("greentic-dev", &dev_script);
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+
+    let status = sandbox.run_gtc(
+        ["--locale", "fr", "wizard", "--answers", "oci://example"],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(logged.contains("wizard --answers oci://example --locale fr"));
+}
+
+#[test]
+fn wizard_passthrough_routes_to_greentic_dev_without_args() {
+    let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_dev_without_args");
+    let log_file = sandbox.path().join("dev.log");
+
+    let dev_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+        log_file.display()
+    );
+
+    sandbox.write_script("greentic-dev", &dev_script);
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+
+    let status = sandbox.run_gtc(["wizard"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(logged.contains("wizard"));
+}
+
+#[test]
+fn doctor_uses_greentic_dev_bin_override() {
+    let sandbox = TestSandbox::new("doctor_uses_greentic_dev_bin_override");
+    let override_bin = sandbox.path().join("bin").join("greentic-dev-local");
+    fs::create_dir_all(override_bin.parent().expect("override parent")).expect("override dir");
+
+    fs::write(
+        &override_bin,
+        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'greentic-dev local-test'\n  exit 0\nfi\nexit 0\n",
+    )
+    .expect("write override dev");
+    fs::set_permissions(&override_bin, fs::Permissions::from_mode(0o755))
+        .expect("chmod override dev");
+
+    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 92\n");
+    sandbox.write_script(
+        "greentic-operator",
+        "#!/bin/sh\necho 'greentic-operator 0.0.0'\n",
+    );
+    sandbox.write_script(
+        "greentic-bundle",
+        "#!/bin/sh\necho 'greentic-bundle 0.0.0'\n",
+    );
+    sandbox.write_script("greentic-setup", "#!/bin/sh\necho 'greentic-setup 0.0.0'\n");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GREENTIC_DEV_BIN".to_string(),
+        override_bin.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["doctor"], extra);
+    assert_eq!(output.status.code(), Some(0));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("greentic-dev: OK (greentic-dev local-test)"));
 }
 
 #[test]
@@ -398,35 +483,6 @@ impl TestSandbox {
         }
 
         cmd.output().expect("run gtc")
-    }
-
-    fn run_gtc_capture_with_input<const N: usize>(
-        &self,
-        args: [&str; N],
-        extra_env: HashMap<String, String>,
-        input: &str,
-    ) -> std::process::Output {
-        let current_path = env::var("PATH").unwrap_or_default();
-        let merged_path = format!("{}:{}", self.root.display(), current_path);
-
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_gtc"));
-        cmd.args(args)
-            .env("PATH", merged_path)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-
-        for (k, v) in extra_env {
-            cmd.env(k, v);
-        }
-
-        let mut child = cmd.spawn().expect("spawn gtc");
-        let mut stdin = child.stdin.take().expect("stdin");
-        stdin
-            .write_all(input.as_bytes())
-            .expect("write stdin to gtc");
-        drop(stdin);
-        child.wait_with_output().expect("wait gtc")
     }
 }
 

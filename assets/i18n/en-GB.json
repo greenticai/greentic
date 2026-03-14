@@ -18,6 +18,7 @@
   "gtc.doctor.version_unavailable": "(version output unavailable)",
   "gtc.doctor.warn": "WARN",
   "gtc.err.bin_missing_dev": "greentic-dev not found in PATH.",
+  "gtc.err.bin_missing_dev_install_hint": "Run `gtc install` first.",
   "gtc.err.bin_missing_op": "greentic-operator not found in PATH.",
   "gtc.err.bin_missing_setup": "greentic-setup not found in PATH. Install with: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribution client unavailable.",
