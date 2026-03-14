@@ -35,7 +35,17 @@ fn wizard_missing_greentic_dev_prints_install_guidance() {
     let sandbox = TestSandbox::new("wizard_missing_greentic_dev_prints_install_guidance");
     sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
 
-    let output = sandbox.run_gtc_capture(["wizard"], HashMap::new());
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GREENTIC_DEV_BIN".to_string(),
+        sandbox
+            .path()
+            .join("missing-greentic-dev")
+            .display()
+            .to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["wizard"], extra);
     assert_eq!(output.status.code(), Some(1));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -138,6 +148,47 @@ fn wizard_passthrough_routes_to_greentic_dev_without_args() {
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
     assert!(logged.contains("wizard"));
+}
+
+#[test]
+fn setup_help_passthrough_routes_to_greentic_setup() {
+    let sandbox = TestSandbox::new("setup_help_passthrough_routes_to_greentic_setup");
+    let log_file = sandbox.path().join("setup.log");
+
+    let setup_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+        log_file.display()
+    );
+
+    sandbox.write_script("greentic-setup", &setup_script);
+    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+
+    let status = sandbox.run_gtc(["setup", "--help"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    assert!(logged.contains("--help"));
+}
+
+#[test]
+fn op_help_passthrough_routes_to_greentic_operator() {
+    let sandbox = TestSandbox::new("op_help_passthrough_routes_to_greentic_operator");
+    let log_file = sandbox.path().join("op.log");
+
+    let op_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+        log_file.display()
+    );
+
+    sandbox.write_script("greentic-operator", &op_script);
+    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
+
+    let status = sandbox.run_gtc(["op", "--help"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read op log");
+    assert!(logged.contains("--help"));
 }
 
 #[test]

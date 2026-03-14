@@ -46,6 +46,14 @@ fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
     let cli_locale = locale_from_args(&raw_args);
     let locale = detect_locale(&raw_args, i18n.default_locale());
+    let raw_passthrough = parse_raw_passthrough(&raw_args);
+
+    if let Some((binary, args)) =
+        passthrough_help_request(raw_passthrough.as_ref(), &cli_locale, &locale)
+    {
+        let debug = raw_args.iter().any(|arg| arg == "--debug-router");
+        return passthrough(binary, &args, debug, &locale);
+    }
 
     let cli = build_cli(&locale);
     let matches = match cli.try_get_matches_from(raw_args) {
@@ -185,6 +193,64 @@ fn collect_tail(matches: &ArgMatches) -> Vec<String> {
         .get_many::<String>("args")
         .map(|vals| vals.cloned().collect())
         .unwrap_or_default()
+}
+
+#[derive(Debug, Clone)]
+struct RawPassthrough {
+    subcommand: String,
+    tail: Vec<String>,
+}
+
+fn parse_raw_passthrough(raw_args: &[String]) -> Option<RawPassthrough> {
+    let mut iter = raw_args.iter().skip(1).peekable();
+
+    while let Some(arg) = iter.next() {
+        if arg == "--locale" {
+            iter.next();
+            continue;
+        }
+        if arg == "--debug-router" {
+            continue;
+        }
+        if arg.starts_with("--locale=") {
+            continue;
+        }
+        if arg.starts_with('-') {
+            continue;
+        }
+
+        let subcommand = arg.to_string();
+        let tail = iter.cloned().collect();
+        return Some(RawPassthrough { subcommand, tail });
+    }
+
+    None
+}
+
+fn passthrough_help_request(
+    raw: Option<&RawPassthrough>,
+    cli_locale: &Option<String>,
+    locale: &str,
+) -> Option<(&'static str, Vec<String>)> {
+    let raw = raw?;
+    if !raw.tail.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return None;
+    }
+
+    match raw.subcommand.as_str() {
+        "dev" => Some((DEV_BIN, raw.tail.clone())),
+        "op" => Some((OP_BIN, rewrite_legacy_op_args(&raw.tail))),
+        "setup" => Some((SETUP_BIN, raw.tail.clone())),
+        "wizard" => {
+            let mut forwarded = vec!["wizard".to_string()];
+            forwarded.extend(raw.tail.clone());
+            if cli_locale.is_some() && !has_flag(&forwarded, "locale") {
+                ensure_flag_value(&mut forwarded, "locale", locale);
+            }
+            Some((DEV_BIN, forwarded))
+        }
+        _ => None,
+    }
 }
 
 fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
