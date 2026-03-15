@@ -1722,9 +1722,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-distributor-client"
-version = "0.4.35"
+version = "0.4.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "14e55258dbfbb1caef1fdfcc9970020082eae60dcb2219ac6916e8a1025b0852"
+checksum = "d83083dcb2f3a9581a6d734dcf45ab3680ab21eab23f0bd166b58fe9c0113521"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2091,9 +2091,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-start"
-version = "0.4.6"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4f4cd4614e5cb8b08cba52ee7c361598a5dfda2b69a1da0796d67418a7346ad"
+checksum = "d599051bceda7ebfb3e4b5bcc23fcdbd053cf9369336fc3651c0c6c0b5a1ca8d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2219,7 +2219,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "0.9.13"
+version = "0.9.14"
 dependencies = [
  "async-trait",
  "clap",
