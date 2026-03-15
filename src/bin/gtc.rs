@@ -1414,7 +1414,7 @@ fn resolve_archive_bundle_path(
 }
 
 fn detect_bundle_root(extracted_root: &Path) -> PathBuf {
-    if extracted_root.join("greentic.demo.yaml").exists() {
+    if is_runtime_bundle_root(extracted_root) {
         return extracted_root.to_path_buf();
     }
     let mut dirs = Vec::new();
@@ -1426,10 +1426,18 @@ fn detect_bundle_root(extracted_root: &Path) -> PathBuf {
             }
         }
     }
-    if dirs.len() == 1 && dirs[0].join("greentic.demo.yaml").exists() {
+    if dirs.len() == 1 && is_runtime_bundle_root(&dirs[0]) {
         return dirs.remove(0);
     }
     extracted_root.to_path_buf()
+}
+
+fn is_runtime_bundle_root(path: &Path) -> bool {
+    path.join("greentic.demo.yaml").exists()
+        || path.join("greentic.operator.yaml").exists()
+        || path.join("demo").join("demo.yaml").exists()
+        || (path.join("bundle.yaml").exists()
+            && (path.join("bundle-manifest.json").exists() || path.join("resolved").is_dir()))
 }
 
 fn map_remote_bundle_ref(reference: &str) -> Result<String, String> {
@@ -1864,6 +1872,11 @@ fn expand_into_target(source_dir: &Path, target_dir: &Path) -> Result<(), String
     for file in files {
         let data = fs::read(&file).map_err(|e| e.to_string())?;
 
+        if looks_like_squashfs(&data) {
+            extract_squashfs_file(&file, target_dir)?;
+            continue;
+        }
+
         if looks_like_zip(&data) {
             extract_zip_bytes(&data, target_dir)?;
             continue;
@@ -1892,6 +1905,36 @@ fn looks_like_zip(data: &[u8]) -> bool {
 
 fn looks_like_gzip(data: &[u8]) -> bool {
     data.len() >= 2 && data[0] == 0x1F && data[1] == 0x8B
+}
+
+fn looks_like_squashfs(data: &[u8]) -> bool {
+    data.len() >= 4 && &data[0..4] == b"hsqs"
+}
+
+fn extract_squashfs_file(path: &Path, out_dir: &Path) -> Result<(), String> {
+    let output = ProcessCommand::new("unsquashfs")
+        .arg("-no-progress")
+        .arg("-dest")
+        .arg(out_dir)
+        .arg(path)
+        .output()
+        .map_err(|e| format!("failed to run unsquashfs for {}: {e}", path.display()))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    Err(format!(
+        "failed to extract squashfs bundle {}: {}{}{}",
+        path.display(),
+        stdout.trim(),
+        if !stdout.trim().is_empty() && !stderr.trim().is_empty() {
+            " "
+        } else {
+            ""
+        },
+        stderr.trim()
+    ))
 }
 
 fn extract_zip_bytes(data: &[u8], out_dir: &Path) -> Result<(), String> {
@@ -2325,9 +2368,9 @@ impl ArtifactKind {
 #[cfg(test)]
 mod tests {
     use super::{
-        StartTarget, collect_tail, detect_locale, locale_from_args, parse_start_cli_options,
-        parse_start_request, resolve_app_pack_path, resolve_target_provider_pack,
-        resolve_tenant_key, select_start_target, tenant_env_var_name,
+        StartTarget, collect_tail, detect_bundle_root, detect_locale, locale_from_args,
+        parse_start_cli_options, parse_start_request, resolve_app_pack_path,
+        resolve_target_provider_pack, resolve_tenant_key, select_start_target, tenant_env_var_name,
     };
     use clap::{Arg, ArgMatches, Command};
     use std::path::{Path, PathBuf};
@@ -2534,5 +2577,24 @@ mod tests {
 
         let resolved = resolve_app_pack_path(dir.path(), None).expect("app pack");
         assert_eq!(resolved, app_pack);
+    }
+
+    #[test]
+    fn detect_bundle_root_accepts_normalized_bundle_at_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::write(dir.path().join("bundle.yaml"), "bundle_id: demo\n").expect("bundle");
+        std::fs::create_dir_all(dir.path().join("resolved")).expect("resolved");
+
+        assert_eq!(detect_bundle_root(dir.path()), dir.path());
+    }
+
+    #[test]
+    fn detect_bundle_root_accepts_single_nested_normalized_bundle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bundle_root = dir.path().join("squashfs-root");
+        std::fs::create_dir_all(bundle_root.join("resolved")).expect("resolved");
+        std::fs::write(bundle_root.join("bundle.yaml"), "bundle_id: demo\n").expect("bundle");
+
+        assert_eq!(detect_bundle_root(dir.path()), bundle_root);
     }
 }

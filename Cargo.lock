@@ -1722,9 +1722,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-distributor-client"
-version = "0.4.32"
+version = "0.4.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74e562e01667fa1fcdb72c427cdb3b630e6d10f30570a40908acb54882675de5"
+checksum = "14e55258dbfbb1caef1fdfcc9970020082eae60dcb2219ac6916e8a1025b0852"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1732,9 +1732,11 @@ dependencies = [
  "dirs-next",
  "greentic-config-types",
  "greentic-interfaces-guest",
+ "greentic-secrets-lib",
  "greentic-types",
  "oci-distribution",
  "reqwest 0.13.2",
+ "rpassword",
  "semver",
  "serde",
  "serde_json",
@@ -2089,9 +2091,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-start"
-version = "0.4.5"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7960e19029cfb2e53785ae07c5b6618b03d23d6c5f735d0393f18f5ac6e2a438"
+checksum = "e4f4cd4614e5cb8b08cba52ee7c361598a5dfda2b69a1da0796d67418a7346ad"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2217,7 +2219,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "0.9.12"
+version = "0.9.13"
 dependencies = [
  "async-trait",
  "clap",
@@ -4935,9 +4937,9 @@ dependencies = [
 
 [[package]]
 name = "tinyvec"
-version = "1.10.0"
+version = "1.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa5fdc3bce6191a1dbc8c02d5c8bffcf557bafa17c124c5264a458f1b0613fa"
+checksum = "3e61e67053d25a4e82c844e8424039d9745781b3fc4f32b8d55ed50f5f667ef3"
 dependencies = [
  "tinyvec_macros",
 ]
