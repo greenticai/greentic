@@ -494,7 +494,7 @@ fn ensure_bundle_deployed(
     let previous_state = load_deployment_state(&state_path)?;
     let deploy_needed = previous_state
         .as_ref()
-        .map(|state| state.bundle_fingerprint != fingerprint)
+        .map(|state| normalize_bundle_fingerprint(&state.bundle_fingerprint) != fingerprint)
         .unwrap_or(true);
     match target {
         StartTarget::SingleVm => {
@@ -525,9 +525,10 @@ fn ensure_bundle_deployed(
             Ok(())
         }
         StartTarget::Aws => {
-            if !deploy_needed && previous_state.is_some() {
-                return Ok(());
-            }
+            // For AWS, local deployment state is not authoritative enough to prove
+            // the remote infrastructure still exists (for example, ECS resources
+            // may have been deleted out-of-band). Re-apply on each start so the
+            // demo flow reliably converges remote state.
             run_multi_target_deployer_apply(
                 bundle_ref,
                 resolved,
@@ -857,7 +858,7 @@ fn fingerprint_bundle_dir(bundle_dir: &Path) -> Result<String, String> {
     let mut files = Vec::new();
     collect_bundle_entries(bundle_dir, bundle_dir, &mut files)?;
     files.sort();
-    Ok(files.join("\n"))
+    Ok(normalize_bundle_fingerprint(&files.join("\n")))
 }
 
 fn collect_bundle_entries(root: &Path, dir: &Path, out: &mut Vec<String>) -> Result<(), String> {
@@ -886,6 +887,50 @@ fn collect_bundle_entries(root: &Path, dir: &Path, out: &mut Vec<String>) -> Res
         out.push(format!("file:{relative}:{}:{modified}", metadata.len()));
     }
     Ok(())
+}
+
+fn normalize_bundle_fingerprint(raw: &str) -> String {
+    raw.lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| {
+            if let Some(path) = line.strip_prefix("dir:") {
+                if should_ignore_fingerprint_path(Path::new(path)) {
+                    return None;
+                }
+                return Some(format!("dir:{path}"));
+            }
+            if let Some(rest) = line.strip_prefix("file:") {
+                let mut parts = rest.splitn(3, ':');
+                let path = parts.next().unwrap_or_default();
+                let size = parts.next().unwrap_or_default();
+                if should_ignore_fingerprint_path(Path::new(path)) {
+                    return None;
+                }
+                return Some(format!("file:{path}:{size}"));
+            }
+            None
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn should_ignore_fingerprint_path(path: &Path) -> bool {
+    let mut components = path.components();
+    let first = components.next();
+    let second = components.next();
+
+    matches!(
+        (first, second),
+        (
+            Some(Component::Normal(first)),
+            Some(Component::Normal(second))
+        ) if (first == ".greentic" && second == "dev")
+            || (first == "state"
+                && (second == "logs"
+                    || second == "pids"
+                    || second == "runtime"
+                    || second == "runs"))
+    ) || matches!(first, Some(Component::Normal(first)) if first == "logs")
 }
 
 fn sanitize_identifier(value: &str) -> String {
@@ -2368,9 +2413,12 @@ impl ArtifactKind {
 #[cfg(test)]
 mod tests {
     use super::{
-        StartTarget, collect_tail, detect_bundle_root, detect_locale, locale_from_args,
+        StartTarget, build_operator_wizard_args, collect_tail, detect_locale,
+        fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
+        detect_bundle_root,
         parse_start_cli_options, parse_start_request, resolve_app_pack_path,
-        resolve_target_provider_pack, resolve_tenant_key, select_start_target, tenant_env_var_name,
+        resolve_target_provider_pack, resolve_tenant_key, select_start_target,
+        tenant_env_var_name,
     };
     use clap::{Arg, ArgMatches, Command};
     use std::path::{Path, PathBuf};
@@ -2596,5 +2644,70 @@ mod tests {
         std::fs::write(bundle_root.join("bundle.yaml"), "bundle_id: demo\n").expect("bundle");
 
         assert_eq!(detect_bundle_root(dir.path()), bundle_root);
+    }
+
+    #[test]
+    fn normalize_bundle_fingerprint_ignores_runtime_noise() {
+        let normalized = normalize_bundle_fingerprint(
+            "dir:.greentic\n\
+             dir:.greentic/dev\n\
+             file:.greentic/dev/.dev.secrets.env:1009:1773411510\n\
+             dir:logs\n\
+             file:logs/operator.log:0:1773411782\n\
+             dir:state\n\
+             dir:state/logs\n\
+             file:state/logs/runtime.log:123:1773411782\n\
+             dir:state/pids\n\
+             file:state/pids/operator.pid:5:1773411782\n\
+             dir:packs\n\
+             file:packs/cards-demo.gtpack:5267324:1773411414\n\
+             file:state/config/platform/static-routes.json:206:1773411510",
+        );
+
+        assert_eq!(
+            normalized,
+            "dir:.greentic\n\
+dir:state\n\
+dir:packs\n\
+file:packs/cards-demo.gtpack:5267324\n\
+file:state/config/platform/static-routes.json:206"
+        );
+    }
+
+    #[test]
+    fn fingerprint_bundle_dir_ignores_runtime_noise_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(dir.path().join(".greentic/dev")).expect("create dev dir");
+        std::fs::create_dir_all(dir.path().join("logs")).expect("create logs dir");
+        std::fs::create_dir_all(dir.path().join("state/logs")).expect("create state logs dir");
+        std::fs::create_dir_all(dir.path().join("packs")).expect("create packs dir");
+        std::fs::write(
+            dir.path().join(".greentic/dev/.dev.secrets.env"),
+            "SECRET=demo\n",
+        )
+        .expect("write dev secrets");
+        std::fs::write(dir.path().join("logs/operator.log"), "").expect("write operator log");
+        std::fs::write(dir.path().join("state/logs/runtime.log"), "runtime\n")
+            .expect("write runtime log");
+        std::fs::write(dir.path().join("packs/cards-demo.gtpack"), "fixture")
+            .expect("write app pack");
+
+        let fingerprint = fingerprint_bundle_dir(dir.path()).expect("fingerprint");
+
+        assert!(fingerprint.contains("file:packs/cards-demo.gtpack"));
+        assert!(!fingerprint.contains(".greentic/dev/.dev.secrets.env"));
+        assert!(!fingerprint.contains("logs/operator.log"));
+        assert!(!fingerprint.contains("state/logs/runtime.log"));
+    }
+
+    #[test]
+    fn normalize_bundle_fingerprint_ignores_file_mtime() {
+        let before = "file:packs/cards-demo.gtpack:5267324:1773411414";
+        let after = "file:packs/cards-demo.gtpack:5267324:1773516076";
+
+        assert_eq!(
+            normalize_bundle_fingerprint(before),
+            normalize_bundle_fingerprint(after)
+        );
     }
 }

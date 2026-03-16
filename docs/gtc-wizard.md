@@ -15,7 +15,7 @@ gtc install <args...>
 
 - `gtc dev ...` -> `greentic-dev ...`
 - `gtc dev wizard ...` -> `greentic-dev wizard ...`
-- `gtc wizard ...` -> `greentic-dev wizard ...` (always)
+- `gtc wizard ...` -> `greentic-operator wizard ...` (always)
 - `gtc op ...` -> `greentic-operator ...`
 - `gtc install ...` -> `greentic-dev install tools ...`
 
@@ -25,6 +25,8 @@ PR-GTC-01 uses PATH-only discovery:
 
 - `greentic-dev` must be present in PATH
 - `greentic-operator` must be present in PATH
+- `greentic-setup` must be present in PATH for `gtc setup`
+- `terraform` must be present in PATH for `gtc start` when the bundle includes the Terraform deployer
 
 If missing, `gtc` prints install guidance.
 
