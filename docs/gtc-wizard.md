@@ -15,7 +15,7 @@ gtc install <args...>
 
 - `gtc dev ...` -> `greentic-dev ...`
 - `gtc dev wizard ...` -> `greentic-dev wizard ...`
-- `gtc wizard ...` -> `greentic-operator wizard ...` (always)
+- `gtc wizard ...` -> `greentic-dev wizard ...`
 - `gtc op ...` -> `greentic-operator ...`
 - `gtc install ...` -> `greentic-dev install tools ...`
 

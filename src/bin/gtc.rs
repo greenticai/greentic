@@ -18,7 +18,8 @@ use greentic_distributor_client::{
 };
 use greentic_i18n::{normalize_locale, select_locale_with_sources};
 use greentic_start::{
-    CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, run_start_request,
+    CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
+    run_start_request, run_stop_request,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -73,7 +74,10 @@ fn run(raw_args: Vec<String>) -> i32 {
         }
         Some(("doctor", _)) => run_doctor(&locale),
         Some(("install", sub_matches)) => run_install(sub_matches, debug, &locale),
+        Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
+        Some(("remove-admin", sub_matches)) => run_remove_admin(sub_matches, &locale),
         Some(("start", sub_matches)) => run_start(sub_matches, debug, &locale),
+        Some(("stop", sub_matches)) => run_stop(sub_matches, debug, &locale),
         Some(("dev", sub_matches)) => {
             let tail = collect_tail(sub_matches);
             passthrough(DEV_BIN, &tail, debug, &locale)
@@ -84,11 +88,8 @@ fn run(raw_args: Vec<String>) -> i32 {
             passthrough(OP_BIN, &rewritten, debug, &locale)
         }
         Some(("wizard", sub_matches)) => {
-            let mut forwarded = vec!["wizard".to_string()];
-            forwarded.extend(collect_tail(sub_matches));
-            if cli_locale.is_some() && !has_flag(&forwarded, "locale") {
-                ensure_flag_value(&mut forwarded, "locale", &locale);
-            }
+            let tail = collect_tail(sub_matches);
+            let forwarded = build_dev_wizard_args(&tail, &locale);
             passthrough(DEV_BIN, &forwarded, debug, &locale)
         }
         Some(("setup", sub_matches)) => {
@@ -141,11 +142,89 @@ fn build_cli(locale: &str) -> Command {
                 ),
         )
         .subcommand(
+            Command::new("add-admin")
+                .about("Register an admin client certificate identity for a local bundle.")
+                .arg(
+                    Arg::new("bundle-ref")
+                        .value_name("BUNDLE_REF")
+                        .required(true)
+                        .help("Local bundle directory to update."),
+                )
+                .arg(
+                    Arg::new("cn")
+                        .long("cn")
+                        .value_name("CLIENT_CN")
+                        .required(true)
+                        .num_args(1)
+                        .help("Client certificate Common Name allowed to access the admin API."),
+                )
+                .arg(
+                    Arg::new("name")
+                        .long("name")
+                        .value_name("ADMIN_NAME")
+                        .num_args(1)
+                        .help("Optional human-readable admin label."),
+                )
+                .arg(
+                    Arg::new("public-key-file")
+                        .long("public-key-file")
+                        .value_name("PATH")
+                        .required(true)
+                        .num_args(1)
+                        .help("PEM/OpenSSH public key file for this admin."),
+                ),
+        )
+        .subcommand(
+            Command::new("remove-admin")
+                .about("Remove an admin client certificate identity from a local bundle.")
+                .arg(
+                    Arg::new("bundle-ref")
+                        .value_name("BUNDLE_REF")
+                        .required(true)
+                        .help("Local bundle directory to update."),
+                )
+                .arg(
+                    Arg::new("cn")
+                        .long("cn")
+                        .value_name("CLIENT_CN")
+                        .num_args(1)
+                        .conflicts_with("name")
+                        .help("Client certificate Common Name to remove."),
+                )
+                .arg(
+                    Arg::new("name")
+                        .long("name")
+                        .value_name("ADMIN_NAME")
+                        .num_args(1)
+                        .conflicts_with("cn")
+                        .help("Admin label to remove."),
+                ),
+        )
+        .subcommand(
             Command::new("start")
                 .about(t_or(
                     locale,
                     "gtc.cmd.start.about",
                     "Start a bundle from local or remote reference.",
+                ))
+                .arg(
+                    Arg::new("bundle-ref")
+                        .value_name("BUNDLE_REF")
+                        .required(true)
+                        .help(t_or(
+                            locale,
+                            "gtc.arg.bundle_ref.help",
+                            "Bundle path/ref: local path, file://, oci://, repo://, store://",
+                        )),
+                )
+                .arg(cmd_args.clone()),
+        )
+        .subcommand(
+            Command::new("stop")
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.stop.about",
+                    "Stop a bundle runtime or destroy a deployed environment.",
                 ))
                 .arg(
                     Arg::new("bundle-ref")
@@ -229,7 +308,7 @@ fn parse_raw_passthrough(raw_args: &[String]) -> Option<RawPassthrough> {
 
 fn passthrough_help_request(
     raw: Option<&RawPassthrough>,
-    cli_locale: &Option<String>,
+    _cli_locale: &Option<String>,
     locale: &str,
 ) -> Option<(&'static str, Vec<String>)> {
     let raw = raw?;
@@ -241,14 +320,7 @@ fn passthrough_help_request(
         "dev" => Some((DEV_BIN, raw.tail.clone())),
         "op" => Some((OP_BIN, rewrite_legacy_op_args(&raw.tail))),
         "setup" => Some((SETUP_BIN, raw.tail.clone())),
-        "wizard" => {
-            let mut forwarded = vec!["wizard".to_string()];
-            forwarded.extend(raw.tail.clone());
-            if cli_locale.is_some() && !has_flag(&forwarded, "locale") {
-                ensure_flag_value(&mut forwarded, "locale", locale);
-            }
-            Some((DEV_BIN, forwarded))
-        }
+        "wizard" => Some((DEV_BIN, build_dev_wizard_args(&raw.tail, locale))),
         _ => None,
     }
 }
@@ -276,6 +348,15 @@ fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
         }
         _ => args.to_vec(),
     }
+}
+
+fn build_dev_wizard_args(args: &[String], locale: &str) -> Vec<String> {
+    let mut forwarded = vec!["wizard".to_string()];
+    if !has_flag(args, "locale") {
+        ensure_flag_value(&mut forwarded, "locale", locale);
+    }
+    forwarded.extend_from_slice(args);
+    forwarded
 }
 
 fn ensure_flag_value(args: &mut Vec<String>, flag: &str, value: &str) {
@@ -334,6 +415,8 @@ enum StartTarget {
     Runtime,
     SingleVm,
     Aws,
+    Gcp,
+    Azure,
 }
 
 impl StartTarget {
@@ -342,8 +425,22 @@ impl StartTarget {
             StartTarget::Runtime => "runtime",
             StartTarget::SingleVm => "single-vm",
             StartTarget::Aws => "aws",
+            StartTarget::Gcp => "gcp",
+            StartTarget::Azure => "azure",
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct DeploymentTargetsDocument {
+    targets: Vec<DeploymentTargetRecord>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeploymentTargetRecord {
+    target: String,
+    provider_pack: Option<String>,
+    default: Option<bool>,
 }
 
 #[derive(Debug)]
@@ -355,6 +452,16 @@ struct StartCliOptions {
     app_pack: Option<PathBuf>,
 }
 
+#[derive(Debug)]
+struct StopCliOptions {
+    stop_args: Vec<String>,
+    explicit_target: Option<StartTarget>,
+    environment: Option<String>,
+    provider_pack: Option<PathBuf>,
+    app_pack: Option<PathBuf>,
+    destroy: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct StartDeploymentState {
     target: String,
@@ -362,6 +469,19 @@ struct StartDeploymentState {
     bundle_ref: String,
     deployed_at_epoch_s: u64,
     artifact_path: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+struct AdminRegistryDocument {
+    admins: Vec<AdminRegistryEntry>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
+struct AdminRegistryEntry {
+    name: Option<String>,
+    client_cn: String,
+    public_key: String,
+    added_at_epoch_s: u64,
 }
 
 fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
@@ -480,6 +600,252 @@ fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     }
 }
 
+fn run_add_admin(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!("missing bundle ref");
+        return 2;
+    };
+    let Some(client_cn) = sub_matches.get_one::<String>("cn") else {
+        eprintln!("missing --cn");
+        return 2;
+    };
+    let Some(public_key_file) = sub_matches.get_one::<String>("public-key-file") else {
+        eprintln!("missing --public-key-file");
+        return 2;
+    };
+
+    let bundle_dir = match resolve_local_mutable_bundle_dir(bundle_ref) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let public_key = match fs::read_to_string(public_key_file) {
+        Ok(value) => value.trim().to_string(),
+        Err(err) => {
+            eprintln!("failed to read public key file {}: {err}", public_key_file);
+            return 1;
+        }
+    };
+    if public_key.is_empty() {
+        eprintln!("public key file is empty: {}", public_key_file);
+        return 1;
+    }
+
+    let mut registry = match load_admin_registry(&bundle_dir) {
+        Ok(doc) => doc,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let name = sub_matches.get_one::<String>("name").cloned();
+    upsert_admin_registry_entry(&mut registry, name.clone(), client_cn.clone(), public_key);
+    if let Err(err) = save_admin_registry(&bundle_dir, &registry) {
+        eprintln!("{err}");
+        return 1;
+    }
+
+    println!(
+        "admin added: cn={} name={} bundle={}",
+        client_cn,
+        name.as_deref().unwrap_or(""),
+        bundle_dir.display()
+    );
+    0
+}
+
+fn run_remove_admin(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!("missing bundle ref");
+        return 2;
+    };
+    let selector_cn = sub_matches.get_one::<String>("cn").cloned();
+    let selector_name = sub_matches.get_one::<String>("name").cloned();
+    if selector_cn.is_none() && selector_name.is_none() {
+        eprintln!("either --cn or --name is required");
+        return 2;
+    }
+
+    let bundle_dir = match resolve_local_mutable_bundle_dir(bundle_ref) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let mut registry = match load_admin_registry(&bundle_dir) {
+        Ok(doc) => doc,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let removed = remove_admin_registry_entry(
+        &mut registry,
+        selector_cn.as_deref(),
+        selector_name.as_deref(),
+    );
+    if !removed {
+        eprintln!("no matching admin entry found");
+        return 1;
+    }
+    if let Err(err) = save_admin_registry(&bundle_dir, &registry) {
+        eprintln!("{err}");
+        return 1;
+    }
+
+    println!(
+        "admin removed: cn={} name={} bundle={}",
+        selector_cn.as_deref().unwrap_or(""),
+        selector_name.as_deref().unwrap_or(""),
+        bundle_dir.display()
+    );
+    0
+}
+
+fn run_stop(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!(
+            "{}",
+            t_or(
+                locale,
+                "gtc.stop.err.bundle_required",
+                "bundle ref is required"
+            )
+        );
+        return 2;
+    };
+    let tail = collect_tail(sub_matches);
+    let cli_options = match parse_stop_cli_options(&tail) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.stop.err.invalid_args",
+                    "invalid stop arguments"
+                )
+            );
+            return 2;
+        }
+    };
+    let resolved = match resolve_bundle_reference(bundle_ref) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.stop.err.resolve_failed",
+                    "failed to resolve bundle"
+                )
+            );
+            return 1;
+        }
+    };
+    let request = match parse_stop_request(&cli_options.stop_args, resolved.bundle_dir.clone()) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.stop.err.invalid_args",
+                    "invalid stop arguments"
+                )
+            );
+            return 2;
+        }
+    };
+    let target =
+        match select_start_target(&resolved.bundle_dir, cli_options.explicit_target, locale) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(
+                        locale,
+                        "gtc.stop.err.target_select_failed",
+                        "failed to choose deployment target"
+                    )
+                );
+                return 2;
+            }
+        };
+    match target {
+        StartTarget::Runtime => {
+            if cli_options.destroy {
+                eprintln!(
+                    "{}",
+                    t_or(
+                        locale,
+                        "gtc.stop.err.runtime_destroy_unsupported",
+                        "--destroy is not supported for runtime target"
+                    )
+                );
+                return 2;
+            }
+            if debug {
+                eprintln!(
+                    "{} gtc-stop-lib bundle={:?} tenant={} team={}",
+                    t(locale, "gtc.debug.exec"),
+                    request.bundle,
+                    request.tenant,
+                    request.team
+                );
+            }
+            match run_stop_request(request) {
+                Ok(()) => 0,
+                Err(err) => {
+                    eprintln!(
+                        "{}: {err}",
+                        t_or(locale, "gtc.stop.err.run_failed", "failed to stop bundle")
+                    );
+                    1
+                }
+            }
+        }
+        _ => {
+            if !cli_options.destroy {
+                eprintln!(
+                    "{}",
+                    t_or(
+                        locale,
+                        "gtc.stop.err.destroy_required",
+                        "deployed targets currently require --destroy; stop without destroy is not implemented"
+                    )
+                );
+                return 2;
+            }
+            match destroy_bundle_deployment(
+                bundle_ref,
+                &resolved,
+                &request,
+                &cli_options,
+                target,
+                debug,
+                locale,
+            ) {
+                Ok(()) => 0,
+                Err(err) => {
+                    eprintln!(
+                        "{}: {err}",
+                        t_or(
+                            locale,
+                            "gtc.stop.err.destroy_failed",
+                            "failed to destroy deployed bundle"
+                        )
+                    );
+                    1
+                }
+            }
+        }
+    }
+}
+
 fn ensure_bundle_deployed(
     bundle_ref: &str,
     resolved: &StartBundleResolution,
@@ -524,11 +890,10 @@ fn ensure_bundle_deployed(
             save_deployment_state(&state_path, &state)?;
             Ok(())
         }
-        StartTarget::Aws => {
-            // For AWS, local deployment state is not authoritative enough to prove
-            // the remote infrastructure still exists (for example, ECS resources
-            // may have been deleted out-of-band). Re-apply on each start so the
-            // demo flow reliably converges remote state.
+        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
+            // For cloud targets, local deployment state is not authoritative
+            // enough to prove the remote infrastructure still exists. Re-apply
+            // on each start so the deployer reconciles remote state.
             run_multi_target_deployer_apply(
                 bundle_ref,
                 resolved,
@@ -632,6 +997,89 @@ fn save_deployment_state(path: &Path, state: &StartDeploymentState) -> Result<()
         .map_err(|err| format!("failed to write deployment state {}: {err}", path.display()))
 }
 
+fn admin_registry_path(bundle_dir: &Path) -> PathBuf {
+    bundle_dir
+        .join(".greentic")
+        .join("admin")
+        .join("admins.json")
+}
+
+fn load_admin_registry(bundle_dir: &Path) -> Result<AdminRegistryDocument, String> {
+    let path = admin_registry_path(bundle_dir);
+    if !path.exists() {
+        return Ok(AdminRegistryDocument { admins: Vec::new() });
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read admin registry {}: {err}", path.display()))?;
+    serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse admin registry {}: {err}", path.display()))
+}
+
+fn save_admin_registry(bundle_dir: &Path, registry: &AdminRegistryDocument) -> Result<(), String> {
+    let path = admin_registry_path(bundle_dir);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create admin registry dir {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    let raw = serde_json::to_vec_pretty(registry)
+        .map_err(|err| format!("failed to serialize admin registry: {err}"))?;
+    fs::write(&path, raw)
+        .map_err(|err| format!("failed to write admin registry {}: {err}", path.display()))
+}
+
+fn upsert_admin_registry_entry(
+    registry: &mut AdminRegistryDocument,
+    name: Option<String>,
+    client_cn: String,
+    public_key: String,
+) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|value| value.as_secs())
+        .unwrap_or(0);
+    if let Some(existing) = registry
+        .admins
+        .iter_mut()
+        .find(|entry| entry.client_cn == client_cn)
+    {
+        existing.name = name;
+        existing.public_key = public_key;
+        existing.added_at_epoch_s = now;
+        return;
+    }
+    registry.admins.push(AdminRegistryEntry {
+        name,
+        client_cn,
+        public_key,
+        added_at_epoch_s: now,
+    });
+    registry
+        .admins
+        .sort_by(|left, right| left.client_cn.cmp(&right.client_cn));
+}
+
+fn remove_admin_registry_entry(
+    registry: &mut AdminRegistryDocument,
+    client_cn: Option<&str>,
+    name: Option<&str>,
+) -> bool {
+    let before = registry.admins.len();
+    registry.admins.retain(|entry| {
+        if let Some(client_cn) = client_cn {
+            return entry.client_cn != client_cn;
+        }
+        if let Some(name) = name {
+            return entry.name.as_deref() != Some(name);
+        }
+        true
+    });
+    before != registry.admins.len()
+}
+
 fn write_single_vm_spec(
     bundle_ref: &str,
     resolved: &StartBundleResolution,
@@ -653,10 +1101,10 @@ fn write_single_vm_spec(
         "apiVersion: greentic.ai/v1alpha1\nkind: Deployment\nmetadata:\n  name: {name}\nspec:\n  target: single-vm\n  bundle:\n    source: {bundle}\n    format: squashfs\n  runtime:\n    image: {image}\n    arch: x86_64\n    admin:\n      bind: 127.0.0.1:8433\n      mtls:\n        caFile: {ca}\n        certFile: {cert}\n        keyFile: {key}\n  storage:\n    stateDir: {state_dir}\n    cacheDir: {cache_dir}\n    logDir: {log_dir}\n    tempDir: {temp_dir}\n  service:\n    manager: systemd\n    user: greentic\n    group: greentic\n  health:\n    readinessPath: /ready\n    livenessPath: /health\n    startupTimeoutSeconds: 120\n  rollout:\n    strategy: recreate\n",
         name = deployment_name,
         bundle = yaml_string(&format!("file://{}", artifact_path.display())),
-        image = yaml_string("ghcr.io/greenticai/greentic-runtime:0.1.0"),
+        image = yaml_string("ghcr.io/greentic-ai/operator-distroless:0.1.0-distroless"),
         ca = yaml_string(&cert_dir.join("ca.crt").display().to_string()),
-        cert = yaml_string(&cert_dir.join("client.crt").display().to_string()),
-        key = yaml_string(&cert_dir.join("client.key").display().to_string()),
+        cert = yaml_string(&cert_dir.join("server.crt").display().to_string()),
+        key = yaml_string(&cert_dir.join("server.key").display().to_string()),
         state_dir = yaml_string(&state_root.join("state").display().to_string()),
         cache_dir = yaml_string(&state_root.join("cache").display().to_string()),
         log_dir = yaml_string(&state_root.join("log").display().to_string()),
@@ -672,12 +1120,16 @@ fn write_single_vm_spec(
 }
 
 fn resolve_admin_cert_dir(bundle_dir: &Path) -> PathBuf {
-    let bundle_certs = bundle_dir.join("certs");
-    if bundle_certs.join("ca.crt").exists()
-        && bundle_certs.join("client.crt").exists()
-        && bundle_certs.join("client.key").exists()
-    {
-        return bundle_certs;
+    for candidate in [
+        bundle_dir.join(".greentic").join("admin").join("certs"),
+        bundle_dir.join("certs"),
+    ] {
+        if candidate.join("ca.crt").exists()
+            && candidate.join("server.crt").exists()
+            && candidate.join("server.key").exists()
+        {
+            return candidate;
+        }
     }
     PathBuf::from("/etc/greentic/admin")
 }
@@ -723,6 +1175,156 @@ fn run_multi_target_deployer_apply(
         locale,
         "multi-target deploy apply",
     )
+}
+
+fn destroy_bundle_deployment(
+    bundle_ref: &str,
+    resolved: &StartBundleResolution,
+    request: &StopRequest,
+    cli_options: &StopCliOptions,
+    target: StartTarget,
+    debug: bool,
+    locale: &str,
+) -> Result<(), String> {
+    match target {
+        StartTarget::SingleVm => {
+            let artifact_path =
+                load_or_prepare_single_vm_artifact(resolved, request, debug, locale)?;
+            let start_request = stop_request_to_start_request(request, resolved, &artifact_path);
+            let spec_path =
+                write_single_vm_spec(bundle_ref, resolved, &start_request, &artifact_path)?;
+            run_single_vm_destroy(&spec_path, debug, locale)?;
+            remove_deployment_state_file(&resolved.deployment_key, target)?;
+            Ok(())
+        }
+        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
+            run_multi_target_deployer_destroy(
+                resolved,
+                request,
+                cli_options,
+                target,
+                debug,
+                locale,
+            )?;
+            remove_deployment_state_file(&resolved.deployment_key, target)?;
+            Ok(())
+        }
+        StartTarget::Runtime => Err("runtime target cannot be destroyed via deployer".to_string()),
+    }
+}
+
+fn stop_request_to_start_request(
+    request: &StopRequest,
+    resolved: &StartBundleResolution,
+    artifact_path: &Path,
+) -> StartRequest {
+    StartRequest {
+        bundle: Some(resolved.bundle_dir.display().to_string()),
+        tenant: Some(request.tenant.clone()),
+        team: Some(request.team.clone()),
+        no_nats: false,
+        nats: NatsModeArg::Off,
+        nats_url: None,
+        config: None,
+        cloudflared: CloudflaredModeArg::Off,
+        cloudflared_binary: None,
+        ngrok: NgrokModeArg::Off,
+        ngrok_binary: None,
+        runner_binary: Some(artifact_path.to_path_buf()),
+        restart: Vec::new(),
+        log_dir: None,
+        verbose: false,
+        quiet: false,
+        admin: false,
+        admin_port: 8443,
+        admin_certs_dir: None,
+        admin_allowed_clients: Vec::new(),
+    }
+}
+
+fn load_or_prepare_single_vm_artifact(
+    resolved: &StartBundleResolution,
+    request: &StopRequest,
+    debug: bool,
+    locale: &str,
+) -> Result<PathBuf, String> {
+    let state_path = deployment_state_path(&resolved.deployment_key, StartTarget::SingleVm)?;
+    if let Some(state) = load_deployment_state(&state_path)?
+        && let Some(path) = state.artifact_path
+    {
+        let artifact = PathBuf::from(path);
+        if artifact.exists() {
+            return Ok(artifact);
+        }
+    }
+    let _ = request;
+    prepare_deployable_bundle_artifact(resolved, debug, locale)
+}
+
+fn run_multi_target_deployer_destroy(
+    resolved: &StartBundleResolution,
+    request: &StopRequest,
+    cli_options: &StopCliOptions,
+    target: StartTarget,
+    debug: bool,
+    locale: &str,
+) -> Result<(), String> {
+    let app_pack = resolve_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
+    let provider_pack = resolve_target_provider_pack(
+        &resolved.bundle_dir,
+        target,
+        cli_options.provider_pack.as_ref(),
+    )?;
+    let mut args = vec![
+        target.as_str().to_string(),
+        "destroy".to_string(),
+        "--tenant".to_string(),
+        request.tenant.clone(),
+        "--pack".to_string(),
+        app_pack.display().to_string(),
+        "--provider-pack".to_string(),
+        provider_pack.display().to_string(),
+        "--execute".to_string(),
+        "--output".to_string(),
+        "json".to_string(),
+    ];
+    if let Some(environment) = cli_options.environment.as_deref() {
+        args.push("--environment".to_string());
+        args.push(environment.to_string());
+    }
+    run_binary_checked(
+        DEPLOYER_BIN,
+        &args,
+        debug,
+        locale,
+        "multi-target deploy destroy",
+    )
+}
+
+fn run_single_vm_destroy(spec_path: &Path, debug: bool, locale: &str) -> Result<(), String> {
+    let args = vec![
+        "single-vm".to_string(),
+        "destroy".to_string(),
+        "--spec".to_string(),
+        spec_path.display().to_string(),
+        "--execute".to_string(),
+        "--output".to_string(),
+        "json".to_string(),
+    ];
+    run_binary_checked(DEPLOYER_BIN, &args, debug, locale, "single-vm destroy")
+}
+
+fn remove_deployment_state_file(deployment_key: &str, target: StartTarget) -> Result<(), String> {
+    let path = deployment_state_path(deployment_key, target)?;
+    if !path.exists() {
+        return Ok(());
+    }
+    fs::remove_file(&path).map_err(|err| {
+        format!(
+            "failed to remove deployment state {}: {err}",
+            path.display()
+        )
+    })
 }
 
 fn deployment_runtime_root(deployment_key: &str) -> Result<PathBuf, String> {
@@ -970,6 +1572,10 @@ fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> Result<StartRequ
         log_dir: None,
         verbose: false,
         quiet: false,
+        admin: false,
+        admin_port: 8443,
+        admin_certs_dir: None,
+        admin_allowed_clients: Vec::new(),
     };
 
     let mut idx = 0usize;
@@ -1037,6 +1643,31 @@ fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> Result<StartRequ
             }
             "--verbose" => request.verbose = true,
             "--quiet" => request.quiet = true,
+            "--admin" => request.admin = true,
+            "--admin-port" => {
+                idx += 1;
+                request.admin_port = required_value(tail, idx, "--admin-port")?
+                    .parse()
+                    .map_err(|_| "invalid --admin-port value".to_string())?;
+            }
+            "--admin-certs-dir" => {
+                idx += 1;
+                request.admin_certs_dir = Some(PathBuf::from(required_value(
+                    tail,
+                    idx,
+                    "--admin-certs-dir",
+                )?));
+            }
+            "--admin-allowed-clients" => {
+                idx += 1;
+                let value = required_value(tail, idx, "--admin-allowed-clients")?;
+                request.admin_allowed_clients.extend(
+                    value
+                        .split(',')
+                        .filter(|part| !part.is_empty())
+                        .map(|part| part.to_string()),
+                );
+            }
             "--bundle" => {
                 return Err(
                     "--bundle is managed by gtc start; pass the bundle ref as the main argument"
@@ -1070,6 +1701,21 @@ fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> Result<StartRequ
                     }
                 } else if let Some(value) = other.strip_prefix("--log-dir=") {
                     request.log_dir = Some(PathBuf::from(value));
+                } else if other == "--admin" {
+                    request.admin = true;
+                } else if let Some(value) = other.strip_prefix("--admin-port=") {
+                    request.admin_port = value
+                        .parse()
+                        .map_err(|_| "invalid --admin-port value".to_string())?;
+                } else if let Some(value) = other.strip_prefix("--admin-certs-dir=") {
+                    request.admin_certs_dir = Some(PathBuf::from(value));
+                } else if let Some(value) = other.strip_prefix("--admin-allowed-clients=") {
+                    request.admin_allowed_clients.extend(
+                        value
+                            .split(',')
+                            .filter(|part| !part.is_empty())
+                            .map(|part| part.to_string()),
+                    );
                 } else if other.starts_with("--bundle=") {
                     return Err(
                         "--bundle is managed by gtc start; pass the bundle ref as the main argument"
@@ -1077,6 +1723,59 @@ fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> Result<StartRequ
                     );
                 } else {
                     return Err(format!("unsupported start argument: {other}"));
+                }
+            }
+        }
+        idx += 1;
+    }
+
+    Ok(request)
+}
+
+fn parse_stop_request(tail: &[String], bundle_dir: PathBuf) -> Result<StopRequest, String> {
+    let mut request = StopRequest {
+        bundle: Some(bundle_dir.display().to_string()),
+        state_dir: None,
+        tenant: "demo".to_string(),
+        team: "default".to_string(),
+    };
+
+    let mut idx = 0usize;
+    while idx < tail.len() {
+        let arg = &tail[idx];
+        match arg.as_str() {
+            "--tenant" => {
+                idx += 1;
+                request.tenant = required_value(tail, idx, "--tenant")?;
+            }
+            "--team" => {
+                idx += 1;
+                request.team = required_value(tail, idx, "--team")?;
+            }
+            "--state-dir" => {
+                idx += 1;
+                request.state_dir = Some(PathBuf::from(required_value(tail, idx, "--state-dir")?));
+            }
+            "--bundle" => {
+                return Err(
+                    "--bundle is managed by gtc stop; pass the bundle ref as the main argument"
+                        .to_string(),
+                );
+            }
+            other => {
+                if let Some(value) = other.strip_prefix("--tenant=") {
+                    request.tenant = value.to_string();
+                } else if let Some(value) = other.strip_prefix("--team=") {
+                    request.team = value.to_string();
+                } else if let Some(value) = other.strip_prefix("--state-dir=") {
+                    request.state_dir = Some(PathBuf::from(value));
+                } else if other.starts_with("--bundle=") {
+                    return Err(
+                        "--bundle is managed by gtc stop; pass the bundle ref as the main argument"
+                            .to_string(),
+                    );
+                } else {
+                    return Err(format!("unsupported stop argument: {other}"));
                 }
             }
         }
@@ -1138,13 +1837,70 @@ fn parse_start_cli_options(tail: &[String]) -> Result<StartCliOptions, String> {
     })
 }
 
+fn parse_stop_cli_options(tail: &[String]) -> Result<StopCliOptions, String> {
+    let mut stop_args = Vec::new();
+    let mut explicit_target = None;
+    let mut environment = None;
+    let mut provider_pack = None;
+    let mut app_pack = None;
+    let mut destroy = false;
+    let mut idx = 0usize;
+    while idx < tail.len() {
+        let arg = &tail[idx];
+        match arg.as_str() {
+            "--target" => {
+                idx += 1;
+                explicit_target =
+                    Some(parse_start_target(&required_value(tail, idx, "--target")?)?);
+            }
+            "--environment" => {
+                idx += 1;
+                environment = Some(required_value(tail, idx, "--environment")?);
+            }
+            "--provider-pack" => {
+                idx += 1;
+                provider_pack = Some(PathBuf::from(required_value(tail, idx, "--provider-pack")?));
+            }
+            "--app-pack" => {
+                idx += 1;
+                app_pack = Some(PathBuf::from(required_value(tail, idx, "--app-pack")?));
+            }
+            "--destroy" => destroy = true,
+            _ => {
+                if let Some(value) = arg.strip_prefix("--target=") {
+                    explicit_target = Some(parse_start_target(value)?);
+                } else if let Some(value) = arg.strip_prefix("--environment=") {
+                    environment = Some(value.to_string());
+                } else if let Some(value) = arg.strip_prefix("--provider-pack=") {
+                    provider_pack = Some(PathBuf::from(value));
+                } else if let Some(value) = arg.strip_prefix("--app-pack=") {
+                    app_pack = Some(PathBuf::from(value));
+                } else {
+                    stop_args.push(arg.clone());
+                }
+            }
+        }
+        idx += 1;
+    }
+    Ok(StopCliOptions {
+        stop_args,
+        explicit_target,
+        environment,
+        provider_pack,
+        app_pack,
+        destroy,
+    })
+}
+
 fn parse_start_target(value: &str) -> Result<StartTarget, String> {
     match value.trim() {
         "runtime" | "local" => Ok(StartTarget::Runtime),
         "single-vm" | "single_vm" => Ok(StartTarget::SingleVm),
         "aws" => Ok(StartTarget::Aws),
+        "gcp" => Ok(StartTarget::Gcp),
+        "azure" => Ok(StartTarget::Azure),
         other => Err(format!(
-            "unsupported --target value {other}; expected runtime, single-vm, or aws"
+            "unsupported --target value {other}; expected runtime, single-vm, aws, gcp, or azure"
         )),
     }
 }
@@ -1157,11 +1913,16 @@ fn select_start_target(
     if let Some(target) = explicit_target {
         return Ok(target);
     }
+    if let Some(default_target) = load_default_deployment_target(bundle_dir)? {
+        return Ok(default_target);
+    }
     let mut deploy_targets = detect_bundle_deployment_targets(bundle_dir)?;
     deploy_targets.sort_by_key(|value| match value {
         StartTarget::Aws => 0,
-        StartTarget::SingleVm => 1,
-        StartTarget::Runtime => 2,
+        StartTarget::Gcp => 1,
+        StartTarget::Azure => 2,
+        StartTarget::SingleVm => 3,
+        StartTarget::Runtime => 4,
     });
     deploy_targets.dedup();
     if deploy_targets.is_empty() {
@@ -1184,11 +1945,48 @@ fn select_start_target(
 }
 
 fn detect_bundle_deployment_targets(bundle_dir: &Path) -> Result<Vec<StartTarget>, String> {
-    let mut targets = Vec::new();
-    if resolve_target_provider_pack(bundle_dir, StartTarget::Aws, None).is_ok() {
-        targets.push(StartTarget::Aws);
+    if let Some(explicit_targets) = load_explicit_deployment_targets(bundle_dir)? {
+        return Ok(explicit_targets);
     }
-    Ok(targets)
+    Ok(Vec::new())
+}
+
+fn load_explicit_deployment_targets(bundle_dir: &Path) -> Result<Option<Vec<StartTarget>>, String> {
+    let Some(doc) = load_deployment_targets_document(bundle_dir)? else {
+        return Ok(None);
+    };
+    let mut targets = Vec::new();
+    for record in doc.targets {
+        let target = parse_start_target(&record.target)?;
+        targets.push(target);
+    }
+    Ok(Some(targets))
+}
+
+fn load_default_deployment_target(bundle_dir: &Path) -> Result<Option<StartTarget>, String> {
+    let Some(doc) = load_deployment_targets_document(bundle_dir)? else {
+        return Ok(None);
+    };
+    for record in doc.targets {
+        if record.default.unwrap_or(false) {
+            return Ok(Some(parse_start_target(&record.target)?));
+        }
+    }
+    Ok(None)
+}
+
+fn load_deployment_targets_document(
+    bundle_dir: &Path,
+) -> Result<Option<DeploymentTargetsDocument>, String> {
+    let path = bundle_dir.join(".greentic").join("deployment-targets.json");
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let doc: DeploymentTargetsDocument = serde_json::from_str(&raw)
+        .map_err(|err| format!("failed to parse {}: {err}", path.display()))?;
+    Ok(Some(doc))
 }
 
 fn prompt_start_target(targets: &[StartTarget], locale: &str) -> Result<StartTarget, String> {
@@ -1227,45 +2025,34 @@ fn resolve_target_provider_pack(
     if let Some(path) = override_path {
         return Ok(path.clone());
     }
-    let needles: &[&str] = match target {
-        StartTarget::Aws => &["aws", "terraform"],
-        StartTarget::SingleVm | StartTarget::Runtime => {
-            return Err(format!(
-                "target {} does not use provider pack discovery",
-                target.as_str()
-            ));
-        }
+    if let Some(path) = resolve_target_provider_pack_from_metadata(bundle_dir, target)? {
+        return Ok(path);
+    }
+    Err(format!(
+        "no explicit deployer provider pack configured for target {}; rerun setup and define deployment_targets",
+        target.as_str()
+    ))
+}
+
+fn resolve_target_provider_pack_from_metadata(
+    bundle_dir: &Path,
+    target: StartTarget,
+) -> Result<Option<PathBuf>, String> {
+    let Some(doc) = load_deployment_targets_document(bundle_dir)? else {
+        return Ok(None);
     };
-    let mut candidates = Vec::new();
-    for search_dir in &[
-        bundle_dir.join("providers").join("deployer"),
-        bundle_dir.join("packs"),
-    ] {
-        if !search_dir.exists() {
+    for record in doc.targets {
+        let parsed_target = parse_start_target(&record.target)?;
+        if parsed_target != target {
             continue;
         }
-        for entry in fs::read_dir(search_dir)
-            .map_err(|err| format!("failed to read {}: {err}", search_dir.display()))?
-        {
-            let entry = entry.map_err(|err| err.to_string())?;
-            let path = entry.path();
-            let name = path
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            if needles.iter().any(|needle| name.contains(needle)) {
-                candidates.push(path);
-            }
-        }
+        let Some(provider_pack) = record.provider_pack else {
+            return Ok(None);
+        };
+        let candidate = bundle_dir.join(provider_pack);
+        return Ok(Some(candidate));
     }
-    candidates.sort();
-    candidates.into_iter().next().ok_or_else(|| {
-        format!(
-            "no deployer provider pack found for target {}",
-            target.as_str()
-        )
-    })
+    Ok(None)
 }
 
 fn resolve_app_pack_path(
@@ -1386,6 +2173,22 @@ fn resolve_bundle_reference(reference: &str) -> Result<StartBundleResolution, St
         .block_on(fetcher.fetch_pack_to_cache(&mapped))
         .map_err(|e| format!("failed to fetch remote bundle {trimmed}: {e}"))?;
     resolve_archive_bundle_path(fetched.path, sanitize_identifier(&mapped))
+}
+
+fn resolve_local_mutable_bundle_dir(reference: &str) -> Result<PathBuf, String> {
+    let Some(path) = parse_local_bundle_ref(reference) else {
+        return Err("admin registry updates require a local bundle directory path".to_string());
+    };
+    if !path.exists() {
+        return Err(format!("bundle path does not exist: {}", path.display()));
+    }
+    if !path.is_dir() {
+        return Err(format!(
+            "admin registry updates require a local bundle directory, got: {}",
+            path.display()
+        ));
+    }
+    Ok(path)
 }
 
 fn parse_local_bundle_ref(reference: &str) -> Option<PathBuf> {
@@ -1685,7 +2488,7 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         }
     }
 
-    for package in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN] {
+    for package in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN, DEPLOYER_BIN] {
         let binstall_args = vec![
             "binstall".to_string(),
             "-y".to_string(),
@@ -2174,7 +2977,7 @@ fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 
 fn run_doctor(locale: &str) -> i32 {
     let mut failed = false;
 
-    for binary in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN] {
+    for binary in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN, DEPLOYER_BIN] {
         let command = resolve_binary_command(binary);
         match ProcessCommand::new(&command).arg("--version").output() {
             Ok(output) => {
@@ -2186,11 +2989,15 @@ fn run_doctor(locale: &str) -> i32 {
                 let version = first_non_empty_line(&String::from_utf8_lossy(&output.stdout))
                     .or_else(|| first_non_empty_line(&String::from_utf8_lossy(&output.stderr)))
                     .unwrap_or_else(|| t(locale, "gtc.doctor.version_unavailable").into_owned());
-                println!("{binary}: {status_label} ({version})");
+                println!("{binary}: {status_label} ({version}) [{}]", command);
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 failed = true;
-                println!("{binary}: {}", t(locale, "gtc.doctor.missing"));
+                println!(
+                    "{binary}: {} [{}]",
+                    t(locale, "gtc.doctor.missing"),
+                    command
+                );
                 match binary {
                     DEV_BIN => print_missing_dev_message(locale),
                     OP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_op")),
@@ -2203,12 +3010,24 @@ fn run_doctor(locale: &str) -> i32 {
                         )
                     ),
                     SETUP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_setup")),
+                    DEPLOYER_BIN => eprintln!(
+                        "{}",
+                        t_or(
+                            locale,
+                            "gtc.err.bin_missing_deployer",
+                            "greentic-deployer not found in PATH. Install with: cargo install greentic-deployer",
+                        )
+                    ),
                     _ => {}
                 }
             }
             Err(err) => {
                 failed = true;
-                println!("{binary}: {} ({err})", t(locale, "gtc.doctor.missing"));
+                println!(
+                    "{binary}: {} ({err}) [{}]",
+                    t(locale, "gtc.doctor.missing"),
+                    command
+                );
             }
         }
     }
@@ -2236,9 +3055,68 @@ fn print_missing_dev_message(locale: &str) {
 }
 
 fn resolve_binary_command(binary: &str) -> String {
+    if let Some(path) = resolve_companion_binary(binary) {
+        return path.display().to_string();
+    }
     match binary {
         DEV_BIN => env::var("GREENTIC_DEV_BIN").unwrap_or_else(|_| binary.to_string()),
         _ => binary.to_string(),
+    }
+}
+
+fn resolve_companion_binary(binary: &str) -> Option<PathBuf> {
+    resolve_companion_binary_from(env::current_exe().ok().as_deref(), binary)
+}
+
+fn resolve_companion_binary_from(current_exe: Option<&Path>, binary: &str) -> Option<PathBuf> {
+    let env_override = companion_binary_env_override(binary);
+    if let Some(path) = env_override {
+        return Some(PathBuf::from(path));
+    }
+
+    let current_exe = current_exe?;
+    let exe_dir = current_exe.parent()?;
+    let sibling = exe_dir.join(binary);
+    if sibling.is_file() {
+        return Some(sibling);
+    }
+
+    if let Some(workspace_candidate) = resolve_workspace_local_binary(current_exe, binary) {
+        return Some(workspace_candidate);
+    }
+    None
+}
+
+fn resolve_workspace_local_binary(current_exe: &Path, binary: &str) -> Option<PathBuf> {
+    let repo_dir = current_exe.parent()?.parent()?.parent()?;
+    let workspace_root = repo_dir.parent()?;
+    let repo_name = match binary {
+        DEV_BIN => "greentic-dev",
+        OP_BIN => "greentic-operator",
+        BUNDLE_BIN => "greentic-bundle",
+        DEPLOYER_BIN => "greentic-deployer",
+        SETUP_BIN => "greentic-setup",
+        _ => return None,
+    };
+    let candidate = workspace_root
+        .join(repo_name)
+        .join("target")
+        .join("debug")
+        .join(binary);
+    if candidate.is_file() {
+        return Some(candidate);
+    }
+    None
+}
+
+fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
+    match binary {
+        DEV_BIN => env::var_os("GREENTIC_DEV_BIN"),
+        OP_BIN => env::var_os("GREENTIC_OPERATOR_BIN"),
+        BUNDLE_BIN => env::var_os("GREENTIC_BUNDLE_BIN"),
+        DEPLOYER_BIN => env::var_os("GREENTIC_DEPLOYER_BIN"),
+        SETUP_BIN => env::var_os("GREENTIC_SETUP_BIN"),
+        _ => None,
     }
 }
 
@@ -2413,15 +3291,18 @@ impl ArtifactKind {
 #[cfg(test)]
 mod tests {
     use super::{
-        StartTarget, build_operator_wizard_args, collect_tail, detect_locale,
+        AdminRegistryDocument, DEV_BIN, StartBundleResolution, StartTarget, admin_registry_path,
+        build_dev_wizard_args, collect_tail, detect_bundle_root, detect_locale,
         fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
-        detect_bundle_root,
-        parse_start_cli_options, parse_start_request, resolve_app_pack_path,
-        resolve_target_provider_pack, resolve_tenant_key, select_start_target,
-        tenant_env_var_name,
+        parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
+        remove_admin_registry_entry, resolve_admin_cert_dir, resolve_app_pack_path,
+        resolve_companion_binary_from, resolve_local_mutable_bundle_dir,
+        resolve_target_provider_pack, resolve_tenant_key, save_admin_registry, select_start_target,
+        tenant_env_var_name, upsert_admin_registry_entry, write_single_vm_spec,
     };
     use clap::{Arg, ArgMatches, Command};
     use std::path::{Path, PathBuf};
+    use tempfile::tempdir;
 
     #[test]
     fn locale_arg_is_detected_from_equals_flag() {
@@ -2495,6 +3376,44 @@ mod tests {
     }
 
     #[test]
+    fn build_dev_wizard_args_prepends_wizard_and_locale() {
+        let args = build_dev_wizard_args(&["--answers".to_string(), "a.json".to_string()], "en");
+        assert_eq!(
+            args,
+            vec![
+                "wizard".to_string(),
+                "--locale".to_string(),
+                "en".to_string(),
+                "--answers".to_string(),
+                "a.json".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn build_dev_wizard_args_preserves_explicit_locale() {
+        let args = build_dev_wizard_args(
+            &[
+                "--locale".to_string(),
+                "fr".to_string(),
+                "--answers".to_string(),
+                "a.json".to_string(),
+            ],
+            "en",
+        );
+        assert_eq!(
+            args,
+            vec![
+                "wizard".to_string(),
+                "--locale".to_string(),
+                "fr".to_string(),
+                "--answers".to_string(),
+                "a.json".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn parse_start_request_maps_common_flags() {
         let request = parse_start_request(
             &[
@@ -2520,6 +3439,85 @@ mod tests {
             request.runner_binary.as_deref(),
             Some(Path::new("/tmp/runner"))
         );
+    }
+
+    #[test]
+    fn parse_start_request_maps_admin_flags() {
+        let request = parse_start_request(
+            &[
+                "--admin".to_string(),
+                "--admin-port".to_string(),
+                "9443".to_string(),
+                "--admin-certs-dir=/tmp/admin-certs".to_string(),
+                "--admin-allowed-clients".to_string(),
+                "CN=alice,CN=bob".to_string(),
+            ],
+            PathBuf::from("/tmp/bundle"),
+        )
+        .expect("request");
+
+        assert!(request.admin);
+        assert_eq!(request.admin_port, 9443);
+        assert_eq!(
+            request.admin_certs_dir.as_deref(),
+            Some(Path::new("/tmp/admin-certs"))
+        );
+        assert_eq!(
+            request.admin_allowed_clients,
+            vec!["CN=alice".to_string(), "CN=bob".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolve_companion_binary_uses_env_override() {
+        unsafe {
+            std::env::set_var("GREENTIC_DEV_BIN", "/tmp/custom-dev");
+        }
+        let resolved =
+            resolve_companion_binary_from(Some(Path::new("/tmp/gtc")), DEV_BIN).expect("path");
+        assert_eq!(resolved, PathBuf::from("/tmp/custom-dev"));
+        unsafe {
+            std::env::remove_var("GREENTIC_DEV_BIN");
+        }
+    }
+
+    #[test]
+    fn resolve_companion_binary_falls_back_to_sibling_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let exe_dir = temp.path().join("bin");
+        std::fs::create_dir_all(&exe_dir).expect("mkdir");
+        let current_exe = exe_dir.join("gtc");
+        let sibling = exe_dir.join(DEV_BIN);
+        std::fs::write(&current_exe, b"").expect("write gtc");
+        std::fs::write(&sibling, b"").expect("write companion");
+
+        let resolved =
+            resolve_companion_binary_from(Some(current_exe.as_path()), DEV_BIN).expect("path");
+        assert_eq!(resolved, sibling);
+    }
+
+    #[test]
+    fn resolve_companion_binary_falls_back_to_workspace_local_binary() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let workspace = temp.path();
+        let current_exe = workspace
+            .join("greentic")
+            .join("target")
+            .join("debug")
+            .join("gtc");
+        let companion = workspace
+            .join("greentic-dev")
+            .join("target")
+            .join("debug")
+            .join(DEV_BIN);
+        std::fs::create_dir_all(current_exe.parent().expect("gtc dir")).expect("mkdir gtc");
+        std::fs::create_dir_all(companion.parent().expect("dev dir")).expect("mkdir dev");
+        std::fs::write(&current_exe, b"").expect("write gtc");
+        std::fs::write(&companion, b"").expect("write companion");
+
+        let resolved =
+            resolve_companion_binary_from(Some(current_exe.as_path()), DEV_BIN).expect("path");
+        assert_eq!(resolved, companion);
     }
 
     #[test]
@@ -2566,6 +3564,61 @@ mod tests {
     }
 
     #[test]
+    fn parse_stop_request_maps_common_flags() {
+        let request = parse_stop_request(
+            &[
+                "--tenant".to_string(),
+                "demo".to_string(),
+                "--team=default".to_string(),
+                "--state-dir".to_string(),
+                "/tmp/state".to_string(),
+            ],
+            PathBuf::from("/tmp/bundle"),
+        )
+        .expect("request");
+
+        assert_eq!(request.bundle.as_deref(), Some("/tmp/bundle"));
+        assert_eq!(request.tenant, "demo");
+        assert_eq!(request.team, "default");
+        assert_eq!(request.state_dir.as_deref(), Some(Path::new("/tmp/state")));
+    }
+
+    #[test]
+    fn parse_stop_cli_options_strips_destroy_flags() {
+        let options = parse_stop_cli_options(&[
+            "--destroy".to_string(),
+            "--target".to_string(),
+            "aws".to_string(),
+            "--environment=prod".to_string(),
+            "--provider-pack".to_string(),
+            "/tmp/provider.gtpack".to_string(),
+            "--app-pack=/tmp/app.gtpack".to_string(),
+            "--tenant".to_string(),
+            "demo".to_string(),
+        ])
+        .expect("options");
+
+        assert!(options.destroy);
+        assert_eq!(
+            options.explicit_target.map(|value| value.as_str()),
+            Some("aws")
+        );
+        assert_eq!(options.environment.as_deref(), Some("prod"));
+        assert_eq!(
+            options.provider_pack.as_deref(),
+            Some(Path::new("/tmp/provider.gtpack"))
+        );
+        assert_eq!(
+            options.app_pack.as_deref(),
+            Some(Path::new("/tmp/app.gtpack"))
+        );
+        assert_eq!(
+            options.stop_args,
+            vec!["--tenant".to_string(), "demo".to_string()]
+        );
+    }
+
+    #[test]
     fn select_start_target_defaults_to_runtime_without_deployer_targets() {
         let dir = tempfile::tempdir().expect("tempdir");
         let target = select_start_target(dir.path(), None, "en").expect("target");
@@ -2573,39 +3626,125 @@ mod tests {
     }
 
     #[test]
-    fn select_start_target_prefers_single_detected_deployer_target() {
+    fn select_start_target_prefers_single_explicit_deployer_target() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let deployer_dir = dir.path().join("providers").join("deployer");
-        std::fs::create_dir_all(&deployer_dir).expect("create deployer dir");
-        std::fs::write(deployer_dir.join("aws-provider.gtpack"), b"fixture")
-            .expect("write provider");
+        let greentic_dir = dir.path().join(".greentic");
+        std::fs::create_dir_all(&greentic_dir).expect("create .greentic");
+        std::fs::write(
+            greentic_dir.join("deployment-targets.json"),
+            r#"{"targets":[{"target":"aws","provider_pack":"packs/aws.gtpack","default":true}]}"#,
+        )
+        .expect("write targets");
 
         let target = select_start_target(dir.path(), None, "en").expect("target");
         assert_eq!(target.as_str(), "aws");
     }
 
     #[test]
-    fn select_start_target_detects_deployer_pack_from_bundle_packs() {
+    fn select_start_target_uses_default_from_metadata() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let packs_dir = dir.path().join("packs");
-        std::fs::create_dir_all(&packs_dir).expect("create packs dir");
-        std::fs::write(packs_dir.join("terraform.gtpack"), b"fixture").expect("write provider");
+        let greentic_dir = dir.path().join(".greentic");
+        std::fs::create_dir_all(&greentic_dir).expect("create .greentic");
+        std::fs::write(
+            greentic_dir.join("deployment-targets.json"),
+            r#"{"targets":[
+                {"target":"aws","provider_pack":"packs/aws.gtpack"},
+                {"target":"gcp","provider_pack":"packs/gcp.gtpack","default":true}
+            ]}"#,
+        )
+        .expect("write targets");
 
         let target = select_start_target(dir.path(), None, "en").expect("target");
-        assert_eq!(target.as_str(), "aws");
+        assert_eq!(target.as_str(), "gcp");
     }
 
     #[test]
-    fn resolve_target_provider_pack_falls_back_to_packs_dir() {
+    fn resolve_target_provider_pack_reads_metadata() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let packs_dir = dir.path().join("packs");
-        std::fs::create_dir_all(&packs_dir).expect("create packs dir");
-        let expected = packs_dir.join("terraform.gtpack");
+        let greentic_dir = dir.path().join(".greentic");
+        std::fs::create_dir_all(&greentic_dir).expect("create .greentic");
+        let expected = dir.path().join("packs").join("gcp.gtpack");
+        std::fs::create_dir_all(expected.parent().expect("parent")).expect("mkdir");
         std::fs::write(&expected, b"fixture").expect("write provider");
+        std::fs::write(
+            greentic_dir.join("deployment-targets.json"),
+            r#"{"targets":[{"target":"gcp","provider_pack":"packs/gcp.gtpack","default":true}]}"#,
+        )
+        .expect("write targets");
 
         let resolved =
-            resolve_target_provider_pack(dir.path(), StartTarget::Aws, None).expect("provider");
+            resolve_target_provider_pack(dir.path(), StartTarget::Gcp, None).expect("provider");
         assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn resolve_admin_cert_dir_prefers_bundle_local_admin_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join(".greentic").join("admin").join("certs");
+        std::fs::create_dir_all(&certs).expect("mkdir");
+        std::fs::write(certs.join("ca.crt"), b"ca").expect("ca");
+        std::fs::write(certs.join("server.crt"), b"cert").expect("cert");
+        std::fs::write(certs.join("server.key"), b"key").expect("key");
+
+        let resolved = resolve_admin_cert_dir(dir.path());
+        assert_eq!(resolved, certs);
+    }
+
+    #[test]
+    fn resolve_admin_cert_dir_falls_back_to_bundle_certs_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("certs");
+        std::fs::create_dir_all(&certs).expect("mkdir");
+        std::fs::write(certs.join("ca.crt"), b"ca").expect("ca");
+        std::fs::write(certs.join("server.crt"), b"cert").expect("cert");
+        std::fs::write(certs.join("server.key"), b"key").expect("key");
+
+        let resolved = resolve_admin_cert_dir(dir.path());
+        assert_eq!(resolved, certs);
+    }
+
+    #[test]
+    fn write_single_vm_spec_uses_bundle_local_server_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bundle_dir = dir.path().join("bundle");
+        let certs = bundle_dir.join(".greentic").join("admin").join("certs");
+        std::fs::create_dir_all(&certs).expect("mkdir certs");
+        std::fs::write(certs.join("ca.crt"), b"ca").expect("ca");
+        std::fs::write(certs.join("server.crt"), b"server cert").expect("server cert");
+        std::fs::write(certs.join("server.key"), b"server key").expect("server key");
+
+        let artifact_path = dir.path().join("bundle.gtbundle");
+        std::fs::write(&artifact_path, b"fixture").expect("artifact");
+
+        let resolved = StartBundleResolution {
+            bundle_dir: bundle_dir.clone(),
+            deployment_key: "demo-deploy".to_string(),
+            deploy_artifact: Some(artifact_path.clone()),
+            _hold: None,
+        };
+        let request = parse_start_request(
+            &[
+                "--tenant".to_string(),
+                "demo".to_string(),
+                "--team".to_string(),
+                "default".to_string(),
+            ],
+            bundle_dir.clone(),
+        )
+        .expect("request");
+
+        let spec_path =
+            write_single_vm_spec("demo-bundle", &resolved, &request, &artifact_path).expect("spec");
+        let spec = std::fs::read_to_string(&spec_path).expect("read spec");
+
+        assert!(spec.contains("source: 'file://"));
+        assert!(spec.contains(&artifact_path.display().to_string()));
+        assert!(spec.contains("certFile: '"));
+        assert!(spec.contains(".greentic/admin/certs/server.crt"));
+        assert!(spec.contains("keyFile: '"));
+        assert!(spec.contains(".greentic/admin/certs/server.key"));
+        assert!(!spec.contains("client.crt"));
+        assert!(!spec.contains("client.key"));
     }
 
     #[test]
@@ -2709,5 +3848,38 @@ file:state/config/platform/static-routes.json:206"
             normalize_bundle_fingerprint(before),
             normalize_bundle_fingerprint(after)
         );
+    }
+
+    #[test]
+    fn admin_registry_roundtrip_and_remove_by_cn() {
+        let dir = tempdir().expect("tempdir");
+        let mut registry = AdminRegistryDocument { admins: Vec::new() };
+
+        upsert_admin_registry_entry(
+            &mut registry,
+            Some("alice".to_string()),
+            "CN=alice".to_string(),
+            "ssh-ed25519 AAAA alice".to_string(),
+        );
+        assert_eq!(registry.admins.len(), 1);
+        assert_eq!(registry.admins[0].name.as_deref(), Some("alice"));
+
+        save_admin_registry(dir.path(), &registry).expect("save registry");
+        let raw = std::fs::read_to_string(admin_registry_path(dir.path())).expect("read registry");
+        assert!(raw.contains("CN=alice"));
+
+        let removed = remove_admin_registry_entry(&mut registry, Some("CN=alice"), None);
+        assert!(removed);
+        assert!(registry.admins.is_empty());
+    }
+
+    #[test]
+    fn resolve_local_mutable_bundle_dir_rejects_archive_paths() {
+        let dir = tempdir().expect("tempdir");
+        let archive = dir.path().join("bundle.gtbundle");
+        std::fs::write(&archive, b"fixture").expect("archive");
+
+        let err = resolve_local_mutable_bundle_dir(archive.to_str().expect("utf8")).unwrap_err();
+        assert!(err.contains("local bundle directory"));
     }
 }

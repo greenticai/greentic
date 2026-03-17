@@ -104,7 +104,7 @@ fn wizard_passthrough_routes_to_greentic_dev_with_all_args() {
     assert_eq!(status.code(), Some(0));
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
-    assert!(logged.contains("wizard --answers oci://example --locale fr"));
+    assert!(logged.contains("wizard --locale fr --answers oci://example"));
 }
 
 #[test]
@@ -127,7 +127,7 @@ fn wizard_passthrough_preserves_global_locale_for_greentic_dev() {
     assert_eq!(status.code(), Some(0));
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
-    assert!(logged.contains("wizard --answers oci://example --locale fr"));
+    assert!(logged.contains("wizard --locale fr --answers oci://example"));
 }
 
 #[test]
@@ -528,6 +528,19 @@ impl TestSandbox {
 
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_gtc"));
         cmd.args(args).env("PATH", merged_path);
+
+        for (binary, env_key) in [
+            ("greentic-dev", "GREENTIC_DEV_BIN"),
+            ("greentic-operator", "GREENTIC_OPERATOR_BIN"),
+            ("greentic-setup", "GREENTIC_SETUP_BIN"),
+            ("greentic-bundle", "GREENTIC_BUNDLE_BIN"),
+            ("greentic-deployer", "GREENTIC_DEPLOYER_BIN"),
+        ] {
+            let path = self.root.join(binary);
+            if path.is_file() {
+                cmd.env(env_key, path);
+            }
+        }
 
         for (k, v) in extra_env {
             cmd.env(k, v);
