@@ -215,6 +215,10 @@ fn doctor_uses_greentic_dev_bin_override() {
         "#!/bin/sh\necho 'greentic-bundle 0.0.0'\n",
     );
     sandbox.write_script("greentic-setup", "#!/bin/sh\necho 'greentic-setup 0.0.0'\n");
+    sandbox.write_script(
+        "greentic-deployer",
+        "#!/bin/sh\necho 'greentic-deployer 0.0.0'\n",
+    );
 
     let mut extra = HashMap::new();
     extra.insert(
