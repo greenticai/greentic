@@ -324,8 +324,8 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
 }
 
 #[test]
-fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
-    let sandbox = TestSandbox::new("install_tenant_mode_uses_env_key_and_installs_artifacts");
+fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
+    let sandbox = TestSandbox::new("install_tenant_mode_uses_env_key_and_installs_tools_and_docs");
     let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
 
@@ -352,25 +352,84 @@ fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
         b"#!/bin/sh\necho tool\n",
     );
 
-    let pack_dir = mock_root.join("pack");
-    fs::create_dir_all(&pack_dir).expect("pack dir");
-    fs::write(pack_dir.join("README.txt"), b"enterprise pack").expect("pack write");
+    let doc_path = mock_root.join("guide.md");
+    fs::write(&doc_path, b"# enterprise guide\n").expect("doc write");
+
+    let tool_manifest = serde_json::json!({
+        "$schema": "https://raw.githubusercontent.com/greentic-biz/customers-tools/main/schemas/tool.schema.json",
+        "schema_version": "1",
+        "id": "greentic-enterprise-tool",
+        "name": "Enterprise Tool",
+        "description": "fixture",
+        "install": {
+            "type": "release-binary",
+            "binary_name": "greentic-enterprise-tool",
+            "targets": [
+                {
+                    "os": "macos",
+                    "arch": "x86_64",
+                    "url": format!("file://{}", tool_zip.display()),
+                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                },
+                {
+                    "os": "macos",
+                    "arch": "aarch64",
+                    "url": format!("file://{}", tool_zip.display()),
+                    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                },
+                {
+                    "os": "linux",
+                    "arch": "x86_64",
+                    "url": format!("file://{}", tool_zip.display()),
+                    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                }
+            ]
+        },
+        "docs": []
+    });
+
+    let doc_manifest = serde_json::json!({
+        "$schema": "https://raw.githubusercontent.com/greentic-biz/customers-tools/main/schemas/doc.schema.json",
+        "schema_version": "1",
+        "id": "enterprise-guide",
+        "title": "Enterprise Guide",
+        "source": {
+            "type": "download",
+            "url": format!("file://{}", doc_path.display())
+        },
+        "download_file_name": "enterprise-guide.md",
+        "default_relative_path": "guides"
+    });
 
     let manifest = serde_json::json!({
-        "schema": "greentic.install.manifest.v1",
-        "items": [
+        "$schema": "https://raw.githubusercontent.com/greentic-biz/customers-tools/main/schemas/tenant-tools.schema.json",
+        "schema_version": "1",
+        "tenant": "acme",
+        "tools": [
             {
-                "kind": "tool",
-                "name": "greentic-enterprise-tool",
-                "oci": "oci://ghcr.io/greentic-biz/tools/enterprise-tool:1.0.0"
-            },
+                "id": "greentic-enterprise-tool",
+                "url": format!("file://{}", mock_root.join("tool-manifest.json").display())
+            }
+        ],
+        "docs": [
             {
-                "kind": "pack",
-                "name": "enterprise-routing",
-                "oci": "oci://ghcr.io/greentic-biz/packs/enterprise-routing:0.4.0"
+                "id": "enterprise-guide",
+                "url": format!("file://{}", mock_root.join("doc-manifest.json").display())
             }
         ]
     });
+
+    fs::write(
+        mock_root.join("tool-manifest.json"),
+        serde_json::to_vec_pretty(&tool_manifest).expect("tool manifest json"),
+    )
+    .expect("tool manifest write");
+
+    fs::write(
+        mock_root.join("doc-manifest.json"),
+        serde_json::to_vec_pretty(&doc_manifest).expect("doc manifest json"),
+    )
+    .expect("doc manifest write");
 
     let manifest_path = mock_root.join("manifest.json");
     fs::write(
@@ -379,17 +438,6 @@ fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
     )
     .expect("manifest write");
 
-    let index = serde_json::json!({
-        "oci://ghcr.io/greentic-biz/customers-tools/acme:latest": "manifest.json",
-        "oci://ghcr.io/greentic-biz/tools/enterprise-tool:1.0.0": "tool.zip",
-        "oci://ghcr.io/greentic-biz/packs/enterprise-routing:0.4.0": "pack"
-    });
-    fs::write(
-        mock_root.join("index.json"),
-        serde_json::to_vec_pretty(&index).expect("index json"),
-    )
-    .expect("index write");
-
     let cargo_home = sandbox.path().join("cargo-home");
     let home = sandbox.path().join("home");
     fs::create_dir_all(&cargo_home).expect("cargo_home");
@@ -397,8 +445,8 @@ fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
 
     let mut extra = HashMap::new();
     extra.insert(
-        "GTC_DIST_MOCK_ROOT".to_string(),
-        mock_root.display().to_string(),
+        "GTC_TENANT_MANIFEST_URL_TEMPLATE".to_string(),
+        format!("file://{}", manifest_path.display()),
     );
     extra.insert("GREENTIC_ACME_KEY".to_string(), "secret-token".to_string());
     extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
@@ -419,15 +467,15 @@ fn install_tenant_mode_uses_env_key_and_installs_artifacts() {
         "tool should be installed to cargo bin"
     );
 
-    let installed_pack = home
+    let installed_doc = home
         .join(".greentic")
         .join("artifacts")
-        .join("packs")
-        .join("enterprise-routing")
-        .join("README.txt");
+        .join("docs")
+        .join("guides")
+        .join("enterprise-guide.md");
     assert!(
-        installed_pack.exists(),
-        "pack should be installed to artifacts root"
+        installed_doc.exists(),
+        "doc should be installed to artifacts root"
     );
 
     let logged = fs::read_to_string(log_file).expect("read dev log");

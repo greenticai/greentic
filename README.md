@@ -134,8 +134,14 @@ cargo binstall gtc
 gtc install
 ```
 
-Why the explicit version? Current `gtc` release on crates.io is pre-release
-(`1.0.0-alpha1`), and `cargo-binstall gtc` (without `--version`) may fail with
+Windows notes:
+
+- Install Rust first from the official Rust installer page: https://www.rust-lang.org/tools/install
+- On Windows, download and run `rustup-init.exe`, then follow the installer prompts.
+- After Rust is installed, open a new terminal so `cargo` is available on `PATH`.
+- When you run `cargo binstall gtc`, Windows may show a security confirmation popup for the downloaded binary. You must allow/confirm it. If you dismiss or block that prompt, `gtc install` can fail later because the required binary was not allowed to run correctly.
+
+Why the explicit version? Current `gtc` release on crates.io is pre-release, and `cargo-binstall gtc` (without `--version`) may fail with
 `no version matching requirement '*'`.
 
 If you still prefer to install from source:
@@ -159,11 +165,11 @@ Install modes:
 gtc install
 
 # Tenant-authorized install (key via env)
-export GREENTIC_ACME_KEY=ghp_xxxxxx
+export GREENTIC_ACME_KEY=xxxxxx
 gtc install --tenant acme
 
 # Tenant-authorized install (key via flag)
-gtc install --tenant acme --key ghp_xxxxxx
+gtc install --tenant acme --key xxxxxx
 ```
 
 Tenant key env var format:
@@ -196,6 +202,16 @@ rustup toolchain install 1.91.0
 rustup target add wasm32-wasip2
 cargo install cargo-binstall
 ```
+
+Windows:
+
+- Go to https://www.rust-lang.org/tools/install
+- Download and run `rustup-init.exe`
+- Install Rust 1.91 or newer
+- Open a fresh PowerShell or Command Prompt
+- Install `cargo-binstall`
+- When Windows shows a security popup during `cargo binstall gtc`, confirm it
+- If that popup is blocked or dismissed, rerun `cargo binstall gtc` and allow it before running `gtc install`
 
 Confirm installation:
 

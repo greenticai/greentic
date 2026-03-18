@@ -13,19 +13,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 use directories::BaseDirs;
-use greentic_distributor_client::{
-    OciPackFetcher, PackFetchOptions, oci_packs::DefaultRegistryClient,
-};
+use greentic_distributor_client::{DistClient, DistOptions, save_login_default};
 use greentic_i18n::{normalize_locale, select_locale_with_sources};
 use greentic_start::{
     CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
     run_start_request, run_stop_request,
 };
+use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tempfile::TempDir;
-
-use crate::dist::build_adapter;
 
 const DEV_BIN: &str = "greentic-dev";
 
@@ -34,7 +31,10 @@ const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
 
-const LOCALES_JSON: &str = include_str!("../../assets/i18n/locales.json");
+const LOCALES_JSON: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/i18n/locales.json"
+));
 include!(concat!(env!("OUT_DIR"), "/embedded_i18n.rs"));
 
 fn main() {
@@ -1641,14 +1641,12 @@ fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> Result<StartRequ
                 idx += 1;
                 request.log_dir = Some(PathBuf::from(required_value(tail, idx, "--log-dir")?));
             }
-            "--verbose" => request.verbose = true,
-            "--quiet" => request.quiet = true,
             "--admin" => request.admin = true,
             "--admin-port" => {
                 idx += 1;
                 request.admin_port = required_value(tail, idx, "--admin-port")?
                     .parse()
-                    .map_err(|_| "invalid --admin-port value".to_string())?;
+                    .map_err(|_| "invalid --admin-port".to_string())?;
             }
             "--admin-certs-dir" => {
                 idx += 1;
@@ -1668,6 +1666,8 @@ fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> Result<StartRequ
                         .map(|part| part.to_string()),
                 );
             }
+            "--verbose" => request.verbose = true,
+            "--quiet" => request.quiet = true,
             "--bundle" => {
                 return Err(
                     "--bundle is managed by gtc start; pass the bundle ref as the main argument"
@@ -2160,19 +2160,9 @@ fn resolve_bundle_reference(reference: &str) -> Result<StartBundleResolution, St
     }
 
     let mapped = map_remote_bundle_ref(trimmed)?;
-    let rt = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .map_err(|e| format!("failed to build tokio runtime: {e}"))?;
-    let fetcher: OciPackFetcher<DefaultRegistryClient> = OciPackFetcher::new(PackFetchOptions {
-        allow_tags: true,
-        offline: false,
-        ..PackFetchOptions::default()
-    });
-    let fetched = rt
-        .block_on(fetcher.fetch_pack_to_cache(&mapped))
+    let fetched = dist::pull_oci_reference_to_tempfile(&mapped, None)
         .map_err(|e| format!("failed to fetch remote bundle {trimmed}: {e}"))?;
-    resolve_archive_bundle_path(fetched.path, sanitize_identifier(&mapped))
+    resolve_archive_bundle_path(fetched, sanitize_identifier(&mapped))
 }
 
 fn resolve_local_mutable_bundle_dir(reference: &str) -> Result<PathBuf, String> {
@@ -2366,23 +2356,15 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
         }
     };
 
-    let adapter = match build_adapter() {
-        Ok(adapter) => adapter,
+    let manifest_url = match resolve_tenant_manifest_url(&tenant, &key, locale) {
+        Ok(url) => url,
         Err(err) => {
-            eprintln!(
-                "{}: {err}",
-                t(locale, "gtc.err.distribution_client_missing")
-            );
+            eprintln!("{}: {err}", t(locale, "gtc.err.pull_failed"));
             return 1;
         }
     };
 
-    let manifest_ref = format!(
-        "oci://ghcr.io/greentic-biz/customers-tools/{tenant}:latest",
-        tenant = tenant
-    );
-
-    let manifest_bytes = match adapter.pull_bytes(&manifest_ref, &key) {
+    let manifest_bytes = match fetch_download_bytes_with_auth(&manifest_url, &key, locale) {
         Ok(bytes) => bytes,
         Err(err) => {
             eprintln!(
@@ -2390,20 +2372,39 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
                 tf(
                     locale,
                     "gtc.err.pull_failed",
-                    &[("oci", manifest_ref.as_str())]
+                    &[("oci", manifest_url.as_str())]
                 )
             );
             return 1;
         }
     };
 
-    let manifest: InstallManifest = match serde_json::from_slice(&manifest_bytes) {
+    let manifest: TenantInstallManifest = match serde_json::from_slice(&manifest_bytes) {
         Ok(manifest) => manifest,
         Err(err) => {
             eprintln!("{}: {err}", t(locale, "gtc.err.invalid_manifest"));
             return 1;
         }
     };
+
+    if manifest.schema_version != "1" {
+        eprintln!(
+            "{}: unsupported schema_version '{}'",
+            t(locale, "gtc.err.invalid_manifest"),
+            manifest.schema_version
+        );
+        return 1;
+    }
+
+    if manifest.tenant != tenant {
+        eprintln!(
+            "{}: tenant '{}' does not match requested tenant '{}'",
+            t(locale, "gtc.err.invalid_manifest"),
+            manifest.tenant,
+            tenant
+        );
+        return 1;
+    }
 
     let cargo_bin_dir = match resolve_cargo_bin_dir() {
         Ok(path) => path,
@@ -2422,14 +2423,23 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     };
 
     let mut any_failed = false;
+    let current_os = match current_install_os() {
+        Ok(value) => value,
+        Err(code) => return code,
+    };
+    let current_arch = match current_install_arch() {
+        Ok(value) => value,
+        Err(code) => return code,
+    };
 
-    for item in manifest.items {
-        let result = install_manifest_item(
-            adapter.as_ref(),
+    for tool in manifest.tools {
+        let result = install_tenant_tool_reference(
+            &tool,
+            &tenant,
             &key,
-            &item,
+            &current_os,
+            &current_arch,
             &cargo_bin_dir,
-            &artifacts_root,
             locale,
         );
         match result {
@@ -2439,7 +2449,7 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
                     tf(
                         locale,
                         "gtc.install.item_ok",
-                        &[("kind", item.kind.as_str()), ("name", item.name.as_str())]
+                        &[("kind", "tool"), ("name", tool.id.as_str())]
                     )
                 );
             }
@@ -2450,7 +2460,67 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
                     tf(
                         locale,
                         "gtc.install.item_fail",
-                        &[("kind", item.kind.as_str()), ("name", item.name.as_str())]
+                        &[("kind", "tool"), ("name", tool.id.as_str())]
+                    )
+                );
+            }
+        }
+    }
+
+    for doc in manifest.docs {
+        let result = install_tenant_doc_reference(&doc, &tenant, &key, &artifacts_root, locale);
+        match result {
+            Ok(paths) => {
+                println!(
+                    "{}",
+                    tf(
+                        locale,
+                        "gtc.install.item_ok",
+                        &[("kind", "doc"), ("name", doc.id.as_str())]
+                    )
+                );
+                for path in paths {
+                    println!("  -> {}", path.display());
+                }
+            }
+            Err(err) => {
+                any_failed = true;
+                eprintln!(
+                    "{}: {err}",
+                    tf(
+                        locale,
+                        "gtc.install.item_fail",
+                        &[("kind", "doc"), ("name", doc.id.as_str())]
+                    )
+                );
+            }
+        }
+    }
+
+    for asset in manifest.store_assets {
+        let result = install_store_asset_reference(&asset, &tenant, &key, &artifacts_root, locale);
+        match result {
+            Ok(paths) => {
+                println!(
+                    "{}",
+                    tf(
+                        locale,
+                        "gtc.install.item_ok",
+                        &[("kind", "store asset"), ("name", asset.id.as_str())]
+                    )
+                );
+                for path in paths {
+                    println!("  -> {}", path.display());
+                }
+            }
+            Err(err) => {
+                any_failed = true;
+                eprintln!(
+                    "{}: {err}",
+                    tf(
+                        locale,
+                        "gtc.install.item_fail",
+                        &[("kind", "store asset"), ("name", asset.id.as_str())]
                     )
                 );
             }
@@ -2589,44 +2659,433 @@ fn run_cargo(args: &[String], debug: bool, locale: &str) -> i32 {
     }
 }
 
-fn install_manifest_item(
-    adapter: &dyn dist::DistAdapter,
+fn install_tenant_tool_reference(
+    tool_ref: &TenantManifestReference,
+    _tenant: &str,
     key: &str,
-    item: &ManifestItem,
+    current_os: &str,
+    current_arch: &str,
     cargo_bin_dir: &Path,
-    artifacts_root: &Path,
     locale: &str,
 ) -> Result<(), String> {
+    let tool: ToolManifest = fetch_json_with_auth(&tool_ref.url, key, locale)?;
+    let target = tool
+        .install
+        .targets
+        .iter()
+        .find(|target| target.os == current_os && target.arch == current_arch)
+        .ok_or_else(|| {
+            format!(
+                "no install target for tool '{}' on {current_os}/{current_arch}",
+                tool.id
+            )
+        })?;
+
     let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
     let staged = temp.path().join("staged");
     fs::create_dir_all(&staged).map_err(|e| e.to_string())?;
+    download_url_into_dir(
+        &target.url,
+        key,
+        &staged,
+        Some(&tool.install.binary_name),
+        locale,
+    )?;
+    install_tool_artifact(&staged, cargo_bin_dir, &tool.install.binary_name)
+}
 
-    adapter
-        .pull_to_dir(&item.oci, key, &staged)
-        .map_err(|e| format!("{}: {e}", t(locale, "gtc.err.pull_failed")))?;
-
-    match item.kind {
-        ArtifactKind::Tool => install_tool_artifact(&staged, cargo_bin_dir, &item.name),
-        ArtifactKind::Component => {
-            install_non_tool_artifact(artifacts_root, "components", item, &staged)
+fn install_tenant_doc_reference(
+    doc_ref: &TenantManifestReference,
+    _tenant: &str,
+    key: &str,
+    artifacts_root: &Path,
+    locale: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let manifest: DocManifest = fetch_json_with_auth(&doc_ref.url, key, locale)?;
+    let mut installed = Vec::new();
+    for doc in manifest.entries()? {
+        if doc.download_file_name.contains('/')
+            || doc.download_file_name.contains('\\')
+            || doc.download_file_name.is_empty()
+        {
+            return Err(format!(
+                "invalid doc file name '{}'",
+                doc.download_file_name
+            ));
         }
-        ArtifactKind::Pack => install_non_tool_artifact(artifacts_root, "packs", item, &staged),
-        ArtifactKind::Bundle => install_non_tool_artifact(artifacts_root, "bundles", item, &staged),
+
+        let docs_root = artifacts_root.join("docs");
+        fs::create_dir_all(&docs_root).map_err(|e| e.to_string())?;
+        let target = safe_join(&docs_root, Path::new(&doc.default_relative_path))?
+            .join(&doc.download_file_name);
+        download_url_to_path(&doc.source.url, key, &target, locale)?;
+        installed.push(target);
+    }
+    Ok(installed)
+}
+
+fn install_store_asset_reference(
+    asset_ref: &TenantManifestReference,
+    tenant: &str,
+    key: &str,
+    artifacts_root: &Path,
+    locale: &str,
+) -> Result<Vec<PathBuf>, String> {
+    let manifest: StoreAssetManifest = fetch_json_with_auth(&asset_ref.url, key, locale)?;
+    let mut installed = Vec::new();
+
+    for item in manifest.items {
+        let resolved = rewrite_store_tenant_placeholder(&item, tenant);
+        installed.push(install_store_asset_item(
+            &resolved,
+            tenant,
+            key,
+            artifacts_root,
+            locale,
+        )?);
+    }
+    Ok(installed)
+}
+
+fn install_store_asset_item(
+    store_url: &str,
+    tenant: &str,
+    key: &str,
+    artifacts_root: &Path,
+    locale: &str,
+) -> Result<PathBuf, String> {
+    save_store_login(tenant, key)?;
+    let client = DistClient::new(DistOptions::default());
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to build tokio runtime: {e}"))?;
+    let artifact = rt
+        .block_on(client.download_store_artifact(store_url))
+        .map_err(|e| format!("{}: {e}", t(locale, "gtc.err.pull_failed")))?;
+    let file_name = store_asset_file_name(store_url)
+        .ok_or_else(|| format!("unable to derive filename from {store_url}"))?;
+    let target = store_asset_target_path(artifacts_root, &file_name)?;
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    fs::write(&target, artifact.bytes)
+        .map_err(|e| format!("failed to write {}: {e}", target.display()))?;
+    Ok(target)
+}
+
+fn download_url_into_dir(
+    url: &str,
+    key: &str,
+    target_dir: &Path,
+    fallback_name: Option<&str>,
+    locale: &str,
+) -> Result<PathBuf, String> {
+    let file_name = url_file_name(url)
+        .filter(|value| !value.is_empty())
+        .or_else(|| fallback_name.map(|value| value.to_string()))
+        .ok_or_else(|| format!("unable to derive file name from {url}"))?;
+    let target = target_dir.join(file_name);
+    download_url_to_path(url, key, &target, locale)?;
+    Ok(target)
+}
+
+fn download_url_to_path(url: &str, key: &str, target: &Path, locale: &str) -> Result<(), String> {
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let bytes = fetch_download_bytes_with_auth(url, key, locale)?;
+    let mut file = fs::File::create(target).map_err(|e| e.to_string())?;
+    file.write_all(&bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+fn fetch_json_with_auth<T: serde::de::DeserializeOwned>(
+    url: &str,
+    key: &str,
+    locale: &str,
+) -> Result<T, String> {
+    let bytes = fetch_json_bytes_with_auth(url, key, locale)?;
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
+
+fn fetch_json_bytes_with_auth(url: &str, key: &str, locale: &str) -> Result<Vec<u8>, String> {
+    if let Some(path) = file_url_path(url) {
+        return fs::read(&path).map_err(|e| format!("failed to read {}: {e}", path.display()));
+    }
+
+    match url.split_once("://").map(|(scheme, _)| scheme) {
+        Some("http") | Some("https") => {
+            if let Some(asset_url) = resolve_github_release_asset_api_url(url, key, locale)? {
+                fetch_asset_bytes(&asset_url, key, locale)
+            } else {
+                fetch_https_json_or_file_bytes(url, key, locale)
+            }
+        }
+        _ => Err(format!("unsupported download URL scheme for {url}")),
     }
 }
 
-fn install_non_tool_artifact(
-    artifacts_root: &Path,
-    folder: &str,
-    item: &ManifestItem,
-    staged: &Path,
-) -> Result<(), String> {
-    let target = artifacts_root.join(folder).join(&item.name);
-    if target.exists() {
-        fs::remove_dir_all(&target).map_err(|e| e.to_string())?;
+fn fetch_download_bytes_with_auth(url: &str, key: &str, locale: &str) -> Result<Vec<u8>, String> {
+    if let Some(path) = file_url_path(url) {
+        return fs::read(&path).map_err(|e| format!("failed to read {}: {e}", path.display()));
     }
-    fs::create_dir_all(&target).map_err(|e| e.to_string())?;
-    expand_into_target(staged, &target)
+
+    match url.split_once("://").map(|(scheme, _)| scheme) {
+        Some("http") | Some("https") => {
+            if let Some(asset_url) = resolve_github_release_asset_api_url(url, key, locale)? {
+                fetch_asset_bytes(&asset_url, key, locale)
+            } else {
+                fetch_https_bytes(url, key, locale, "application/octet-stream")
+            }
+        }
+        _ => Err(format!("unsupported download URL scheme for {url}")),
+    }
+}
+
+fn fetch_https_json_or_file_bytes(url: &str, key: &str, locale: &str) -> Result<Vec<u8>, String> {
+    fetch_https_bytes(url, key, locale, "application/vnd.github+json")
+}
+
+fn fetch_asset_bytes(url: &str, key: &str, locale: &str) -> Result<Vec<u8>, String> {
+    fetch_https_bytes(url, key, locale, "application/octet-stream")
+}
+
+fn fetch_https_bytes(url: &str, key: &str, locale: &str, accept: &str) -> Result<Vec<u8>, String> {
+    let client = Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("failed to create HTTP client: {e}"))?;
+
+    let mut current = reqwest::Url::parse(url).map_err(|e| format!("invalid URL {url}: {e}"))?;
+    for _ in 0..10 {
+        let response = client
+            .get(current.clone())
+            .header("Accept", accept)
+            .header("Authorization", format!("Bearer {key}"))
+            .header("X-GitHub-Api-Version", "2022-11-28")
+            .header("User-Agent", format!("gtc/{}", env!("CARGO_PKG_VERSION")))
+            .send()
+            .map_err(|e| format!("{}: {e}", t(locale, "gtc.err.pull_failed")))?;
+
+        if response.status().is_redirection() {
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .ok_or_else(|| format!("redirect missing Location header for {}", current))?
+                .to_str()
+                .map_err(|e| format!("invalid redirect Location for {}: {e}", current))?;
+            current = current
+                .join(location)
+                .map_err(|e| format!("invalid redirect target {location}: {e}"))?;
+            continue;
+        }
+
+        if !response.status().is_success() {
+            return Err(format!(
+                "{}: HTTP {} for {}",
+                t(locale, "gtc.err.pull_failed"),
+                response.status(),
+                current
+            ));
+        }
+
+        return response
+            .bytes()
+            .map(|bytes| bytes.to_vec())
+            .map_err(|e| e.to_string());
+    }
+
+    Err(format!("too many redirects while fetching {url}"))
+}
+
+fn save_store_login(tenant: &str, token: &str) -> Result<(), String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to build tokio runtime: {e}"))?;
+    rt.block_on(save_login_default(tenant, token))
+        .map_err(|e| e.to_string())
+}
+
+fn rewrite_store_tenant_placeholder(url: &str, tenant: &str) -> String {
+    url.replace("/{tenant}/", &format!("/{tenant}/"))
+}
+
+fn resolve_tenant_manifest_url(tenant: &str, key: &str, locale: &str) -> Result<String, String> {
+    if let Ok(template) = env::var("GTC_TENANT_MANIFEST_URL_TEMPLATE") {
+        return Ok(template.replace("{tenant}", tenant));
+    }
+    let release = fetch_github_release("greentic-biz", "customers-tools", "latest", key, locale)?;
+    let asset_name = format!("{tenant}.json");
+    release
+        .assets
+        .into_iter()
+        .find(|asset| asset.name == asset_name)
+        .map(|asset| asset.url)
+        .ok_or_else(|| format!("tenant manifest asset '{asset_name}' not found in latest release"))
+}
+
+fn resolve_github_release_asset_api_url(
+    url: &str,
+    key: &str,
+    locale: &str,
+) -> Result<Option<String>, String> {
+    let parsed = match reqwest::Url::parse(url) {
+        Ok(parsed) => parsed,
+        Err(_) => return Ok(None),
+    };
+    if parsed.scheme() != "https" || parsed.host_str() != Some("github.com") {
+        return Ok(None);
+    }
+
+    let segments = match parsed.path_segments() {
+        Some(segments) => segments.collect::<Vec<_>>(),
+        None => return Ok(None),
+    };
+    if segments.len() != 6 || segments[2] != "releases" {
+        return Ok(None);
+    }
+
+    let owner = segments[0];
+    let repo = segments[1];
+    let asset_name = segments[5];
+
+    let tag = match (segments[3], segments[4]) {
+        ("latest", "download") => "latest",
+        ("download", tag) => tag,
+        _ => return Ok(None),
+    };
+
+    let release = fetch_github_release(owner, repo, tag, key, locale)?;
+    Ok(release
+        .assets
+        .into_iter()
+        .find(|asset| asset.name == asset_name)
+        .map(|asset| asset.url))
+}
+
+fn fetch_github_release(
+    owner: &str,
+    repo: &str,
+    tag: &str,
+    key: &str,
+    locale: &str,
+) -> Result<GithubRelease, String> {
+    let url = if tag == "latest" {
+        format!("https://api.github.com/repos/{owner}/{repo}/releases/latest")
+    } else {
+        format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}")
+    };
+    let bytes = fetch_https_json_or_file_bytes(&url, key, locale)?;
+    serde_json::from_slice(&bytes).map_err(|e| e.to_string())
+}
+
+fn store_asset_file_name(store_url: &str) -> Option<String> {
+    let trimmed = store_url.trim_start_matches("store://");
+    let last = trimmed.rsplit('/').next()?;
+    Some(last.split(':').next().unwrap_or(last).to_string())
+}
+
+fn store_asset_target_path(artifacts_root: &Path, file_name: &str) -> Result<PathBuf, String> {
+    let rel = if file_name.ends_with(".gtpack") {
+        PathBuf::from("packs").join(file_name)
+    } else if file_name.ends_with(".gtbundle") {
+        PathBuf::from("bundles").join(file_name)
+    } else if file_name.ends_with(".wasm") {
+        PathBuf::from("components").join(file_name)
+    } else {
+        PathBuf::from("store_assets").join(file_name)
+    };
+    safe_join(artifacts_root, &rel)
+}
+
+fn url_file_name(url: &str) -> Option<String> {
+    let trimmed = url.trim_end_matches('/');
+    trimmed
+        .rsplit('/')
+        .next()
+        .map(|segment| segment.split('?').next().unwrap_or(segment))
+        .filter(|segment| !segment.is_empty())
+        .map(|segment| segment.to_string())
+}
+
+fn current_install_os() -> Result<String, i32> {
+    match env::consts::OS {
+        "linux" | "macos" | "windows" => Ok(env::consts::OS.to_string()),
+        other => {
+            eprintln!("unsupported install OS '{other}'");
+            Err(1)
+        }
+    }
+}
+
+fn current_install_arch() -> Result<String, i32> {
+    if let Some(runtime) = detect_runtime_install_arch()
+        && let Some(normalized) = normalize_install_arch(&runtime)
+    {
+        return Ok(normalized.to_string());
+    }
+
+    if let Some(normalized) = normalize_install_arch(env::consts::ARCH) {
+        return Ok(normalized.to_string());
+    }
+
+    eprintln!(
+        "unsupported install architecture '{}' (runtime) / '{}' (build)",
+        detect_runtime_install_arch().unwrap_or_else(|| "unknown".to_string()),
+        env::consts::ARCH
+    );
+    Err(1)
+}
+
+fn detect_runtime_install_arch() -> Option<String> {
+    if cfg!(target_os = "macos")
+        && let Some(value) = query_command_trimmed("sysctl", &["-n", "hw.optional.arm64"])
+    {
+        match value.as_str() {
+            "1" => return Some("arm64".to_string()),
+            "0" => return Some("x86_64".to_string()),
+            _ => {}
+        }
+    }
+
+    if cfg!(windows) {
+        return env::var("PROCESSOR_ARCHITEW6432")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| env::var("PROCESSOR_ARCHITECTURE").ok())
+            .map(|v| v.trim().to_string());
+    }
+
+    query_command_trimmed("uname", &["-m"])
+}
+
+fn query_command_trimmed(command: &str, args: &[&str]) -> Option<String> {
+    ProcessCommand::new(command)
+        .args(args)
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn file_url_path(url: &str) -> Option<PathBuf> {
+    let path = url.strip_prefix("file://")?;
+    if path.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(path))
+}
+
+fn normalize_install_arch(raw: &str) -> Option<&'static str> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "x86_64" | "amd64" => Some("x86_64"),
+        "aarch64" | "arm64" => Some("aarch64"),
+        _ => None,
+    }
 }
 
 fn install_tool_artifact(
@@ -2916,11 +3375,13 @@ fn resolve_tenant_key(
     }
 
     let prompt = tf(locale, "gtc.install.prompt_key", &[("tenant", tenant)]);
-    let key = rpassword::prompt_password(prompt).map_err(|e| e.to_string())?;
-    if key.trim().is_empty() {
-        return Err(t(locale, "gtc.err.key_required").into_owned());
+    loop {
+        let key = rpassword::prompt_password(&prompt).map_err(|e| e.to_string())?;
+        if !key.trim().is_empty() {
+            return Ok(key);
+        }
+        eprintln!("{}", t(locale, "gtc.err.key_required"));
     }
-    Ok(key)
 }
 
 fn tenant_env_var_name(tenant: &str) -> String {
@@ -3255,35 +3716,124 @@ fn parse_flat_json_map(input: &str) -> Result<HashMap<String, String>, String> {
 }
 
 #[derive(Debug, Deserialize)]
-struct InstallManifest {
+struct TenantInstallManifest {
+    #[serde(rename = "$schema")]
     #[allow(dead_code)]
-    schema: String,
-    items: Vec<ManifestItem>,
+    schema: Option<String>,
+    schema_version: String,
+    tenant: String,
+    tools: Vec<TenantManifestReference>,
+    docs: Vec<TenantManifestReference>,
+    #[serde(default)]
+    store_assets: Vec<TenantManifestReference>,
 }
 
 #[derive(Debug, Deserialize)]
-struct ManifestItem {
-    kind: ArtifactKind,
+struct TenantManifestReference {
+    id: String,
+    url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolManifest {
+    #[allow(dead_code)]
+    schema_version: String,
+    id: String,
+    #[allow(dead_code)]
     name: String,
-    oci: String,
+    #[allow(dead_code)]
+    description: String,
+    install: ToolInstallManifest,
+    #[allow(dead_code)]
+    docs: Vec<String>,
 }
 
-#[derive(Debug, Deserialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-enum ArtifactKind {
-    Tool,
-    Component,
-    Pack,
-    Bundle,
+#[derive(Debug, Deserialize)]
+struct ToolInstallManifest {
+    #[serde(rename = "type")]
+    #[allow(dead_code)]
+    kind: String,
+    binary_name: String,
+    targets: Vec<ToolInstallTarget>,
 }
 
-impl ArtifactKind {
-    fn as_str(&self) -> &'static str {
-        match self {
-            ArtifactKind::Tool => "tool",
-            ArtifactKind::Component => "component",
-            ArtifactKind::Pack => "pack",
-            ArtifactKind::Bundle => "bundle",
+#[derive(Debug, Deserialize)]
+struct ToolInstallTarget {
+    os: String,
+    arch: String,
+    url: String,
+    #[allow(dead_code)]
+    sha256: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct DocManifest {
+    #[allow(dead_code)]
+    schema_version: String,
+    #[allow(dead_code)]
+    id: String,
+    title: Option<String>,
+    source: Option<DocSource>,
+    download_file_name: Option<String>,
+    default_relative_path: Option<String>,
+    docs: Option<Vec<DocManifestEntry>>,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DocManifestEntry {
+    #[allow(dead_code)]
+    title: String,
+    source: DocSource,
+    download_file_name: String,
+    default_relative_path: String,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+struct DocSource {
+    #[serde(rename = "type")]
+    #[allow(dead_code)]
+    kind: String,
+    url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct StoreAssetManifest {
+    #[allow(dead_code)]
+    schema_version: String,
+    items: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubRelease {
+    assets: Vec<GithubReleaseAsset>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GithubReleaseAsset {
+    url: String,
+    name: String,
+}
+
+impl DocManifest {
+    fn entries(self) -> Result<Vec<DocManifestEntry>, String> {
+        if let Some(entries) = self.docs {
+            return Ok(entries);
+        }
+        match (
+            self.title,
+            self.source,
+            self.download_file_name,
+            self.default_relative_path,
+        ) {
+            (Some(title), Some(source), Some(download_file_name), Some(default_relative_path)) => {
+                Ok(vec![DocManifestEntry {
+                    title,
+                    source,
+                    download_file_name,
+                    default_relative_path,
+                }])
+            }
+            _ => Err("doc manifest must contain either top-level doc fields or docs[]".to_string()),
         }
     }
 }
@@ -3294,10 +3844,11 @@ mod tests {
         AdminRegistryDocument, DEV_BIN, StartBundleResolution, StartTarget, admin_registry_path,
         build_dev_wizard_args, collect_tail, detect_bundle_root, detect_locale,
         fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
-        parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
-        remove_admin_registry_entry, resolve_admin_cert_dir, resolve_app_pack_path,
-        resolve_companion_binary_from, resolve_local_mutable_bundle_dir,
-        resolve_target_provider_pack, resolve_tenant_key, save_admin_registry, select_start_target,
+        normalize_install_arch, parse_start_cli_options, parse_start_request,
+        parse_stop_cli_options, parse_stop_request, remove_admin_registry_entry,
+        resolve_admin_cert_dir, resolve_app_pack_path, resolve_companion_binary_from,
+        resolve_local_mutable_bundle_dir, resolve_target_provider_pack, resolve_tenant_key,
+        rewrite_store_tenant_placeholder, save_admin_registry, select_start_target,
         tenant_env_var_name, upsert_admin_registry_entry, write_single_vm_spec,
     };
     use clap::{Arg, ArgMatches, Command};
@@ -3881,5 +4432,28 @@ file:state/config/platform/static-routes.json:206"
 
         let err = resolve_local_mutable_bundle_dir(archive.to_str().expect("utf8")).unwrap_err();
         assert!(err.contains("local bundle directory"));
+    }
+
+    #[test]
+    fn normalize_install_arch_maps_common_aliases() {
+        assert_eq!(normalize_install_arch("arm64"), Some("aarch64"));
+        assert_eq!(normalize_install_arch("aarch64"), Some("aarch64"));
+        assert_eq!(normalize_install_arch("amd64"), Some("x86_64"));
+        assert_eq!(normalize_install_arch("x86_64"), Some("x86_64"));
+    }
+
+    #[test]
+    fn normalize_install_arch_rejects_unknown_values() {
+        assert_eq!(normalize_install_arch("armv7"), None);
+    }
+
+    #[test]
+    fn rewrite_store_tenant_placeholder_substitutes_template_segment() {
+        let input = "store://greentic-biz/{tenant}/providers/routing-hook/fast2flow.gtpack:latest";
+        let output = rewrite_store_tenant_placeholder(input, "3point");
+        assert_eq!(
+            output,
+            "store://greentic-biz/3point/providers/routing-hook/fast2flow.gtpack:latest"
+        );
     }
 }
