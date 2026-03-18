@@ -1899,9 +1899,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-distributor-client"
-version = "0.4.38"
+version = "0.4.39"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4e00cbd8c23f433a68d49581e90577dda0d12c9163b9f4a57f9e5f47b2b527d2"
+checksum = "4352579b21809eef9f170440488532ad846614e62bc1e3d9e5f7ded23fd42d08"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2269,9 +2269,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-setup"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fe2e1a7b03d5a8ad0cda17458beff643337e340fd7e3ffbc57c90d76304e5ea9"
+checksum = "9e36f1b6771cdefac0c41e22d4d87e46a6463456d7a7309fc10dd120d34c5f00"
 dependencies = [
  "aes-gcm-siv",
  "anyhow",
@@ -2442,6 +2442,8 @@ dependencies = [
  "greentic-distributor-client",
  "greentic-i18n",
  "greentic-start",
+ "oci-distribution",
+ "rcgen",
  "reqwest 0.13.2",
  "rpassword",
  "serde",

@@ -19,6 +19,10 @@ use greentic_start::{
     CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
     run_start_request, run_stop_request,
 };
+use rcgen::{
+    BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
+    KeyPair, KeyUsagePurpose, SanType,
+};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -525,20 +529,37 @@ fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
             return 1;
         }
     };
-    let request = match parse_start_request(&cli_options.start_args, resolved.bundle_dir.clone()) {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!(
-                "{}: {err}",
-                t_or(
-                    locale,
-                    "gtc.start.err.invalid_args",
-                    "invalid start arguments"
-                )
-            );
-            return 2;
+    let mut request =
+        match parse_start_request(&cli_options.start_args, resolved.bundle_dir.clone()) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(
+                        locale,
+                        "gtc.start.err.invalid_args",
+                        "invalid start arguments"
+                    )
+                );
+                return 2;
+            }
+        };
+    if request.admin {
+        match ensure_admin_certs_ready(&resolved.bundle_dir, request.admin_certs_dir.as_deref()) {
+            Ok(cert_dir) => request.admin_certs_dir = Some(cert_dir),
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(
+                        locale,
+                        "gtc.start.err.admin_certs_failed",
+                        "failed to prepare admin certificates"
+                    )
+                );
+                return 1;
+            }
         }
-    };
+    }
     let target =
         match select_start_target(&resolved.bundle_dir, cli_options.explicit_target, locale) {
             Ok(value) => value,
@@ -1132,6 +1153,141 @@ fn resolve_admin_cert_dir(bundle_dir: &Path) -> PathBuf {
         }
     }
     PathBuf::from("/etc/greentic/admin")
+}
+
+fn ensure_admin_certs_ready(
+    bundle_dir: &Path,
+    explicit_dir: Option<&Path>,
+) -> Result<PathBuf, String> {
+    if let Some(explicit_dir) = explicit_dir {
+        ensure_admin_cert_dir_contents(explicit_dir)?;
+        return Ok(explicit_dir.to_path_buf());
+    }
+
+    let bundle_local = bundle_dir.join(".greentic").join("admin").join("certs");
+    if has_admin_server_certs(&bundle_local) {
+        ensure_admin_cert_dir_contents(&bundle_local)?;
+        return Ok(bundle_local);
+    }
+
+    generate_dev_admin_cert_bundle(&bundle_local)?;
+    Ok(bundle_local)
+}
+
+fn has_admin_server_certs(cert_dir: &Path) -> bool {
+    cert_dir.join("ca.crt").exists()
+        && cert_dir.join("server.crt").exists()
+        && cert_dir.join("server.key").exists()
+}
+
+fn ensure_admin_cert_dir_contents(cert_dir: &Path) -> Result<(), String> {
+    for required in ["ca.crt", "server.crt", "server.key"] {
+        let path = cert_dir.join(required);
+        if !path.exists() {
+            return Err(format!(
+                "required admin TLS file missing: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn generate_dev_admin_cert_bundle(cert_dir: &Path) -> Result<(), String> {
+    fs::create_dir_all(cert_dir).map_err(|err| {
+        format!(
+            "failed to create admin cert dir {}: {err}",
+            cert_dir.display()
+        )
+    })?;
+
+    let mut ca_params = CertificateParams::new(Vec::<String>::new())
+        .map_err(|err| format!("failed to create admin CA params: {err}"))?;
+    ca_params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    ca_params
+        .distinguished_name
+        .push(DnType::CommonName, "greentic-admin-ca");
+    ca_params.key_usages = vec![
+        KeyUsagePurpose::KeyCertSign,
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::CrlSign,
+    ];
+    let ca_key = KeyPair::generate().map_err(|err| format!("failed to generate CA key: {err}"))?;
+    let ca_issuer = CertifiedIssuer::self_signed(ca_params, ca_key)
+        .map_err(|err| format!("failed to generate CA certificate: {err}"))?;
+
+    let mut server_params = CertificateParams::new(vec!["localhost".to_string()])
+        .map_err(|err| format!("failed to create admin server cert params: {err}"))?;
+    server_params
+        .distinguished_name
+        .push(DnType::CommonName, "greentic-admin-server");
+    server_params.subject_alt_names.push(SanType::IpAddress(
+        "127.0.0.1".parse().expect("static localhost ip"),
+    ));
+    server_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth];
+    server_params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
+    let server_key =
+        KeyPair::generate().map_err(|err| format!("failed to generate server key: {err}"))?;
+    let server_cert = server_params
+        .signed_by(&server_key, &*ca_issuer)
+        .map_err(|err| format!("failed to generate server certificate: {err}"))?;
+
+    let mut client_params = CertificateParams::new(Vec::<String>::new())
+        .map_err(|err| format!("failed to create admin client cert params: {err}"))?;
+    client_params
+        .distinguished_name
+        .push(DnType::CommonName, "local-admin");
+    client_params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    client_params.key_usages = vec![
+        KeyUsagePurpose::DigitalSignature,
+        KeyUsagePurpose::KeyEncipherment,
+    ];
+    let client_key =
+        KeyPair::generate().map_err(|err| format!("failed to generate client key: {err}"))?;
+    let client_cert = client_params
+        .signed_by(&client_key, &*ca_issuer)
+        .map_err(|err| format!("failed to generate client certificate: {err}"))?;
+
+    fs::write(cert_dir.join("ca.crt"), ca_issuer.pem()).map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            cert_dir.join("ca.crt").display()
+        )
+    })?;
+    fs::write(cert_dir.join("ca.key"), ca_issuer.key().serialize_pem()).map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            cert_dir.join("ca.key").display()
+        )
+    })?;
+    fs::write(cert_dir.join("server.crt"), server_cert.pem()).map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            cert_dir.join("server.crt").display()
+        )
+    })?;
+    fs::write(cert_dir.join("server.key"), server_key.serialize_pem()).map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            cert_dir.join("server.key").display()
+        )
+    })?;
+    fs::write(cert_dir.join("client.crt"), client_cert.pem()).map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            cert_dir.join("client.crt").display()
+        )
+    })?;
+    fs::write(cert_dir.join("client.key"), client_key.serialize_pem()).map_err(|err| {
+        format!(
+            "failed to write {}: {err}",
+            cert_dir.join("client.key").display()
+        )
+    })?;
+    Ok(())
 }
 
 fn run_multi_target_deployer_apply(
@@ -3843,13 +3999,14 @@ mod tests {
     use super::{
         AdminRegistryDocument, DEV_BIN, StartBundleResolution, StartTarget, admin_registry_path,
         build_dev_wizard_args, collect_tail, detect_bundle_root, detect_locale,
-        fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
-        normalize_install_arch, parse_start_cli_options, parse_start_request,
-        parse_stop_cli_options, parse_stop_request, remove_admin_registry_entry,
-        resolve_admin_cert_dir, resolve_app_pack_path, resolve_companion_binary_from,
-        resolve_local_mutable_bundle_dir, resolve_target_provider_pack, resolve_tenant_key,
-        rewrite_store_tenant_placeholder, save_admin_registry, select_start_target,
-        tenant_env_var_name, upsert_admin_registry_entry, write_single_vm_spec,
+        ensure_admin_certs_ready, fingerprint_bundle_dir, locale_from_args,
+        normalize_bundle_fingerprint, normalize_install_arch, parse_start_cli_options,
+        parse_start_request, parse_stop_cli_options, parse_stop_request,
+        remove_admin_registry_entry, resolve_admin_cert_dir, resolve_app_pack_path,
+        resolve_companion_binary_from, resolve_local_mutable_bundle_dir,
+        resolve_target_provider_pack, resolve_tenant_key, rewrite_store_tenant_placeholder,
+        save_admin_registry, select_start_target, tenant_env_var_name, upsert_admin_registry_entry,
+        write_single_vm_spec,
     };
     use clap::{Arg, ArgMatches, Command};
     use std::path::{Path, PathBuf};
@@ -4251,6 +4408,34 @@ mod tests {
         std::fs::write(certs.join("server.key"), b"key").expect("key");
 
         let resolved = resolve_admin_cert_dir(dir.path());
+        assert_eq!(resolved, certs);
+    }
+
+    #[test]
+    fn ensure_admin_certs_ready_generates_bundle_local_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let resolved = ensure_admin_certs_ready(dir.path(), None).expect("certs");
+        assert_eq!(
+            resolved,
+            dir.path().join(".greentic").join("admin").join("certs")
+        );
+        assert!(resolved.join("ca.crt").exists());
+        assert!(resolved.join("server.crt").exists());
+        assert!(resolved.join("server.key").exists());
+        assert!(resolved.join("client.crt").exists());
+        assert!(resolved.join("client.key").exists());
+    }
+
+    #[test]
+    fn ensure_admin_certs_ready_preserves_explicit_dir() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("custom-certs");
+        std::fs::create_dir_all(&certs).expect("mkdir");
+        std::fs::write(certs.join("ca.crt"), b"ca").expect("ca");
+        std::fs::write(certs.join("server.crt"), b"cert").expect("cert");
+        std::fs::write(certs.join("server.key"), b"key").expect("key");
+
+        let resolved = ensure_admin_certs_ready(dir.path(), Some(&certs)).expect("certs");
         assert_eq!(resolved, certs);
     }
 
