@@ -515,7 +515,7 @@ fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
             return 2;
         }
     };
-    let resolved = match resolve_bundle_reference(bundle_ref) {
+    let resolved = match resolve_bundle_reference(bundle_ref, locale) {
         Ok(value) => value,
         Err(err) => {
             eprintln!(
@@ -575,7 +575,11 @@ fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
                 return 2;
             }
         };
+    println!("Selected deployment target: {}", target.as_str());
+    println!("Bundle source: {}", bundle_ref);
+    println!("Resolved bundle dir: {}", resolved.bundle_dir.display());
     if target != StartTarget::Runtime {
+        println!("Deployment mode: deploy via {} target", target.as_str());
         let deploy_result = ensure_bundle_deployed(
             bundle_ref,
             &resolved,
@@ -600,6 +604,12 @@ fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
             }
         }
     }
+    println!("Deployment mode: local runtime");
+    println!(
+        "Starting tenant={} team={}",
+        request.tenant.as_deref().unwrap_or("default"),
+        request.team.as_deref().unwrap_or("default")
+    );
     if debug {
         eprintln!(
             "{} gtc-start-lib bundle={:?} tenant={:?} team={:?}",
@@ -753,7 +763,7 @@ fn run_stop(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
             return 2;
         }
     };
-    let resolved = match resolve_bundle_reference(bundle_ref) {
+    let resolved = match resolve_bundle_reference(bundle_ref, locale) {
         Ok(value) => value,
         Err(err) => {
             eprintln!(
@@ -885,8 +895,11 @@ fn ensure_bundle_deployed(
         .unwrap_or(true);
     match target {
         StartTarget::SingleVm => {
+            println!("Preparing deployable artifact for target: single-vm");
             let artifact_path = prepare_deployable_bundle_artifact(resolved, debug, locale)?;
+            println!("Deployable artifact: {}", artifact_path.display());
             let spec_path = write_single_vm_spec(bundle_ref, resolved, request, &artifact_path)?;
+            println!("Single-vm deployment spec: {}", spec_path.display());
             let current_status = read_single_vm_status(&spec_path, debug, locale)?;
             let status_applied = current_status
                 .as_ref()
@@ -895,8 +908,10 @@ fn ensure_bundle_deployed(
                 .map(|value| value == "applied")
                 .unwrap_or(false);
             if status_applied && !deploy_needed {
+                println!("single-vm deployment already up-to-date");
                 return Ok(());
             }
+            println!("Applying single-vm deployment...");
             run_single_vm_apply(&spec_path, debug, locale)?;
             let state = StartDeploymentState {
                 target: target.as_str().to_string(),
@@ -912,6 +927,7 @@ fn ensure_bundle_deployed(
             Ok(())
         }
         StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
+            println!("Applying cloud deployment target: {}", target.as_str());
             // For cloud targets, local deployment state is not authoritative
             // enough to prove the remote infrastructure still exists. Re-apply
             // on each start so the deployer reconciles remote state.
@@ -2306,13 +2322,20 @@ fn parse_restart_target(value: &str) -> Result<RestartTarget, String> {
     }
 }
 
-fn resolve_bundle_reference(reference: &str) -> Result<StartBundleResolution, String> {
+fn resolve_bundle_reference(
+    reference: &str,
+    locale: &str,
+) -> Result<StartBundleResolution, String> {
     let trimmed = reference.trim();
     if trimmed.is_empty() {
         return Err("bundle reference is empty".to_string());
     }
     if let Some(path) = parse_local_bundle_ref(trimmed) {
         return resolve_local_bundle_path(path);
+    }
+    if trimmed.starts_with("https://") || trimmed.starts_with("http://") {
+        let fetched = download_https_bundle_to_tempfile(trimmed, locale)?;
+        return resolve_archive_bundle_path(fetched, sanitize_identifier(trimmed));
     }
 
     let mapped = map_remote_bundle_ref(trimmed)?;
@@ -2457,7 +2480,26 @@ fn map_remote_bundle_ref(reference: &str) -> Result<String, String> {
         );
     }
     Err(format!(
-        "unsupported bundle scheme for {reference}; expected local path, file://, oci://, repo://, or store://"
+        "unsupported bundle scheme for {reference}; expected local path, file://, http(s)://, oci://, repo://, or store://"
+    ))
+}
+
+fn download_https_bundle_to_tempfile(url: &str, locale: &str) -> Result<PathBuf, String> {
+    let bytes = fetch_https_bytes(url, "", locale, "application/octet-stream")?;
+    let temp = tempfile::tempdir().map_err(|e| e.to_string())?;
+    let file_name = url_file_name(url).unwrap_or_else(|| "bundle.gtbundle".to_string());
+    let path = temp.path().join(file_name);
+    fs::write(&path, bytes).map_err(|e| e.to_string())?;
+    if path.extension().and_then(|value| value.to_str()) != Some("gtbundle") {
+        return Err(format!(
+            "remote bundle URL must point to a .gtbundle archive: {url}"
+        ));
+    }
+    let persisted = temp.into_path();
+    Ok(persisted.join(
+        path.file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("bundle.gtbundle"),
     ))
 }
 
