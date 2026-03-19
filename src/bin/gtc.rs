@@ -26,6 +26,7 @@ use rcgen::{
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use tempfile::TempDir;
 
 const DEV_BIN: &str = "greentic-dev";
@@ -220,6 +221,13 @@ fn build_cli(locale: &str) -> Command {
                             "gtc.arg.bundle_ref.help",
                             "Bundle path/ref: local path, file://, oci://, repo://, store://",
                         )),
+                )
+                .arg(
+                    Arg::new("deploy-bundle-source")
+                        .long("deploy-bundle-source")
+                        .value_name("BUNDLE_SOURCE")
+                        .num_args(1)
+                        .help("Override the remote bundle source passed to cloud deployers (for example https://.../bundle.gtbundle)."),
                 )
                 .arg(cmd_args.clone()),
         )
@@ -454,6 +462,7 @@ struct StartCliOptions {
     environment: Option<String>,
     provider_pack: Option<PathBuf>,
     app_pack: Option<PathBuf>,
+    deploy_bundle_source: Option<String>,
 }
 
 #[derive(Debug)]
@@ -986,6 +995,25 @@ fn prepare_deployable_bundle_artifact(
     Ok(out_path)
 }
 
+fn sha256_file(path: &Path) -> Result<String, String> {
+    let bytes = fs::read(path).map_err(|err| {
+        format!(
+            "failed to read artifact {} for sha256: {err}",
+            path.display()
+        )
+    })?;
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    Ok(format!("sha256:{:x}", hasher.finalize()))
+}
+
+fn resolve_remote_deploy_bundle_source_override() -> Option<String> {
+    std::env::var("GREENTIC_DEPLOY_BUNDLE_SOURCE")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
 fn deployment_artifacts_root() -> Result<PathBuf, String> {
     let base = BaseDirs::new()
         .ok_or_else(|| "failed to resolve base directories for deployment artifacts".to_string())?;
@@ -1315,6 +1343,15 @@ fn run_multi_target_deployer_apply(
     debug: bool,
     locale: &str,
 ) -> Result<(), String> {
+    let bundle_artifact = prepare_deployable_bundle_artifact(resolved, debug, locale)?;
+    let bundle_digest = sha256_file(&bundle_artifact)?;
+    let remote_override = cli_options
+        .deploy_bundle_source
+        .clone()
+        .or_else(resolve_remote_deploy_bundle_source_override);
+    let deploy_bundle_source = remote_override
+        .clone()
+        .unwrap_or_else(|| bundle_artifact.display().to_string());
     let app_pack = resolve_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
     let provider_pack = resolve_target_provider_pack(
         &resolved.bundle_dir,
@@ -1323,6 +1360,15 @@ fn run_multi_target_deployer_apply(
     )?;
     let tenant = request.tenant.clone().unwrap_or_else(|| "demo".to_string());
     let target_name = target.as_str().to_string();
+    println!("Deployment artifact: {}", bundle_artifact.display());
+    println!("Deployment bundle source: {deploy_bundle_source}");
+    println!("Deployment bundle digest: {bundle_digest}");
+    if remote_override.is_none() {
+        println!(
+            "Note: no GREENTIC_DEPLOY_BUNDLE_SOURCE override set; cloud deploy will use the local artifact path above."
+        );
+    }
+    print_cloud_deploy_contract_hint(target);
     let mut args = vec![
         target_name,
         "apply".to_string(),
@@ -1332,6 +1378,10 @@ fn run_multi_target_deployer_apply(
         app_pack.display().to_string(),
         "--provider-pack".to_string(),
         provider_pack.display().to_string(),
+        "--bundle-source".to_string(),
+        deploy_bundle_source,
+        "--bundle-digest".to_string(),
+        bundle_digest,
         "--execute".to_string(),
         "--output".to_string(),
         "json".to_string(),
@@ -1347,6 +1397,28 @@ fn run_multi_target_deployer_apply(
         locale,
         "multi-target deploy apply",
     )
+}
+
+fn print_cloud_deploy_contract_hint(target: StartTarget) {
+    println!("Cloud deploy contract:");
+    println!("  required remote bundle source:");
+    println!("    --deploy-bundle-source https://.../bundle.gtbundle");
+    match target {
+        StartTarget::Aws => {
+            println!("  required external Terraform vars:");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
+            println!("  optional Terraform vars:");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_DNS_NAME (personalized mode only)");
+            println!("  internal AWS bootstrap now handles:");
+            println!("    admin TLS server secrets");
+        }
+        StartTarget::Gcp | StartTarget::Azure => {
+            println!("  additional target-specific Terraform vars may still be required via:");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_*");
+        }
+        StartTarget::SingleVm | StartTarget::Runtime => {}
+    }
 }
 
 fn destroy_bundle_deployment(
@@ -1963,6 +2035,7 @@ fn parse_start_cli_options(tail: &[String]) -> Result<StartCliOptions, String> {
     let mut environment = None;
     let mut provider_pack = None;
     let mut app_pack = None;
+    let mut deploy_bundle_source = None;
     let mut idx = 0usize;
     while idx < tail.len() {
         let arg = &tail[idx];
@@ -1984,6 +2057,10 @@ fn parse_start_cli_options(tail: &[String]) -> Result<StartCliOptions, String> {
                 idx += 1;
                 app_pack = Some(PathBuf::from(required_value(tail, idx, "--app-pack")?));
             }
+            "--deploy-bundle-source" => {
+                idx += 1;
+                deploy_bundle_source = Some(required_value(tail, idx, "--deploy-bundle-source")?);
+            }
             _ => {
                 if let Some(value) = arg.strip_prefix("--target=") {
                     explicit_target = Some(parse_start_target(value)?);
@@ -1993,6 +2070,8 @@ fn parse_start_cli_options(tail: &[String]) -> Result<StartCliOptions, String> {
                     provider_pack = Some(PathBuf::from(value));
                 } else if let Some(value) = arg.strip_prefix("--app-pack=") {
                     app_pack = Some(PathBuf::from(value));
+                } else if let Some(value) = arg.strip_prefix("--deploy-bundle-source=") {
+                    deploy_bundle_source = Some(value.to_string());
                 } else {
                     start_args.push(arg.clone());
                 }
@@ -2006,6 +2085,7 @@ fn parse_start_cli_options(tail: &[String]) -> Result<StartCliOptions, String> {
         environment,
         provider_pack,
         app_pack,
+        deploy_bundle_source,
     })
 }
 
@@ -2495,7 +2575,7 @@ fn download_https_bundle_to_tempfile(url: &str, locale: &str) -> Result<PathBuf,
             "remote bundle URL must point to a .gtbundle archive: {url}"
         ));
     }
-    let persisted = temp.into_path();
+    let persisted = temp.keep();
     Ok(persisted.join(
         path.file_name()
             .and_then(|value| value.to_str())
