@@ -1,9 +1,0 @@
-target
-.git
-.github
-*.gtbundle
-dist
-tmp
-my
-demo
-node_modules
