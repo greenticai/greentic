@@ -1349,6 +1349,7 @@ fn run_multi_target_deployer_apply(
         .deploy_bundle_source
         .clone()
         .or_else(resolve_remote_deploy_bundle_source_override);
+    validate_cloud_deploy_inputs(target, remote_override.as_deref())?;
     let deploy_bundle_source = remote_override
         .clone()
         .unwrap_or_else(|| bundle_artifact.display().to_string());
@@ -1418,6 +1419,62 @@ fn print_cloud_deploy_contract_hint(target: StartTarget) {
             println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_*");
         }
         StartTarget::SingleVm | StartTarget::Runtime => {}
+    }
+}
+
+fn validate_cloud_deploy_inputs(
+    target: StartTarget,
+    remote_bundle_source: Option<&str>,
+) -> Result<(), String> {
+    match target {
+        StartTarget::Aws => {
+            let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
+                "aws deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE".to_string()
+            })?;
+            if !is_remote_bundle_source(remote_bundle_source) {
+                return Err(format!(
+                    "aws deploy requires a remote bundle source, got local path: {remote_bundle_source}"
+                ));
+            }
+            require_env_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST")?;
+            require_env_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND")?;
+            Ok(())
+        }
+        StartTarget::Gcp | StartTarget::Azure => {
+            let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
+                format!(
+                    "{} deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE",
+                    target.as_str()
+                )
+            })?;
+            if !is_remote_bundle_source(remote_bundle_source) {
+                return Err(format!(
+                    "{} deploy requires a remote bundle source, got local path: {remote_bundle_source}",
+                    target.as_str()
+                ));
+            }
+            Ok(())
+        }
+        StartTarget::SingleVm | StartTarget::Runtime => Ok(()),
+    }
+}
+
+fn is_remote_bundle_source(value: &str) -> bool {
+    matches_remote_bundle_ref(value)
+}
+
+fn matches_remote_bundle_ref(value: &str) -> bool {
+    value.starts_with("http://")
+        || value.starts_with("https://")
+        || value.starts_with("oci://")
+        || value.starts_with("repo://")
+        || value.starts_with("store://")
+}
+
+fn require_env_var(name: &str) -> Result<(), String> {
+    match env::var(name) {
+        Ok(value) if !value.trim().is_empty() => Ok(()),
+        _ => Err(format!("missing required environment variable: {name}")),
     }
 }
 
