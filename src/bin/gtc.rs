@@ -2337,10 +2337,40 @@ fn resolve_target_provider_pack(
     if let Some(path) = resolve_target_provider_pack_from_metadata(bundle_dir, target)? {
         return Ok(path);
     }
+    if let Some(path) = resolve_canonical_target_provider_pack(target) {
+        return Ok(path);
+    }
     Err(format!(
-        "no explicit deployer provider pack configured for target {}; rerun setup and define deployment_targets",
-        target.as_str()
+        "no deployer provider pack found for target {}; define deployment_targets metadata or install greentic-deployer with dist packs",
+        target.as_str(),
     ))
+}
+
+fn resolve_canonical_target_provider_pack(target: StartTarget) -> Option<PathBuf> {
+    let filename = canonical_target_provider_pack_filename(target)?;
+    let deployer_bin = resolve_companion_binary(DEPLOYER_BIN)?;
+    resolve_canonical_target_provider_pack_from(Some(deployer_bin.as_path()), filename)
+}
+
+fn resolve_canonical_target_provider_pack_from(
+    deployer_bin: Option<&Path>,
+    filename: &str,
+) -> Option<PathBuf> {
+    let deployer_bin = deployer_bin?;
+    let exe_dir = deployer_bin.parent()?;
+    let mut candidates = Vec::new();
+    candidates.push(exe_dir.join("dist").join(filename));
+    if let Some(repo_dir) = exe_dir.parent().and_then(Path::parent) {
+        candidates.push(repo_dir.join("dist").join(filename));
+    }
+    candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn canonical_target_provider_pack_filename(target: StartTarget) -> Option<&'static str> {
+    match target {
+        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => Some("terraform.gtpack"),
+        StartTarget::Runtime | StartTarget::SingleVm => None,
+    }
 }
 
 fn resolve_target_provider_pack_from_metadata(
@@ -2359,7 +2389,10 @@ fn resolve_target_provider_pack_from_metadata(
             return Ok(None);
         };
         let candidate = bundle_dir.join(provider_pack);
-        return Ok(Some(candidate));
+        if candidate.exists() {
+            return Ok(Some(candidate));
+        }
+        return Ok(None);
     }
     Ok(None)
 }
@@ -4182,10 +4215,10 @@ mod tests {
         normalize_bundle_fingerprint, normalize_install_arch, parse_start_cli_options,
         parse_start_request, parse_stop_cli_options, parse_stop_request,
         remove_admin_registry_entry, resolve_admin_cert_dir, resolve_app_pack_path,
-        resolve_companion_binary_from, resolve_local_mutable_bundle_dir,
-        resolve_target_provider_pack, resolve_tenant_key, rewrite_store_tenant_placeholder,
-        save_admin_registry, select_start_target, tenant_env_var_name, upsert_admin_registry_entry,
-        write_single_vm_spec,
+        resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
+        resolve_local_mutable_bundle_dir, resolve_target_provider_pack, resolve_tenant_key,
+        rewrite_store_tenant_placeholder, save_admin_registry, select_start_target,
+        tenant_env_var_name, upsert_admin_registry_entry, write_single_vm_spec,
     };
     use clap::{Arg, ArgMatches, Command};
     use std::path::{Path, PathBuf};
@@ -4562,6 +4595,26 @@ mod tests {
         let resolved =
             resolve_target_provider_pack(dir.path(), StartTarget::Gcp, None).expect("provider");
         assert_eq!(resolved, expected);
+    }
+
+    #[test]
+    fn resolve_canonical_target_provider_pack_from_workspace_deployer_dist() {
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let repo_dir = workspace.path().join("greentic-deployer");
+        let exe_dir = repo_dir.join("target").join("debug");
+        let deployer_bin = exe_dir.join("greentic-deployer");
+        let dist_pack = repo_dir.join("dist").join("terraform.gtpack");
+        std::fs::create_dir_all(&exe_dir).expect("mkdir exe dir");
+        std::fs::create_dir_all(dist_pack.parent().expect("dist parent")).expect("mkdir dist");
+        std::fs::write(&deployer_bin, b"").expect("write deployer");
+        std::fs::write(&dist_pack, b"").expect("write pack");
+
+        let resolved = resolve_canonical_target_provider_pack_from(
+            Some(deployer_bin.as_path()),
+            "terraform.gtpack",
+        )
+        .expect("canonical pack");
+        assert_eq!(resolved, dist_pack);
     }
 
     #[test]

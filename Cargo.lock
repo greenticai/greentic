@@ -259,9 +259,9 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aws-lc-rs"
-version = "1.16.1"
+version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94bffc006df10ac2a68c83692d734a465f8ee6c5b384d8545a636f81d858f4bf"
+checksum = "a054912289d18629dc78375ba2c3726a3afe3ff71b4edba9dedfca0e3446d1fc"
 dependencies = [
  "aws-lc-sys",
  "zeroize",
@@ -269,9 +269,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.38.0"
+version = "0.39.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4321e568ed89bb5a7d291a7f37997c2c0df89809d7b6d12062c81ddb54aa782e"
+checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
 dependencies = [
  "cc",
  "cmake",
@@ -1982,9 +1982,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces"
-version = "0.4.109"
+version = "0.4.110"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "93569e3c142e9b184f28a5a72956c3d612d2523101dfff3be817909b7654bb87"
+checksum = "0f765cc9aad991eba96946a72d7631f573ec3544447c8a3be4883918b756ea14"
 dependencies = [
  "anyhow",
  "greentic-types",
@@ -1992,29 +1992,29 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "wasmtime",
- "wit-bindgen 0.53.1",
- "wit-bindgen-core 0.53.1",
- "wit-bindgen-rust 0.53.1",
+ "wit-bindgen 0.54.0",
+ "wit-bindgen-core 0.54.0",
+ "wit-bindgen-rust 0.54.0",
 ]
 
 [[package]]
 name = "greentic-interfaces-guest"
-version = "0.4.109"
+version = "0.4.110"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7c3b8a5c8eec134ef5ebaa65cc48efff1718e2129009220796b6ba42cfc669b9"
+checksum = "b8d68b8a4564583565a85d241b8935dc3de5bb78ddae51b418a3cdb3012411fe"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
- "wit-bindgen 0.53.1",
- "wit-bindgen-core 0.53.1",
- "wit-bindgen-rust 0.53.1",
+ "wit-bindgen 0.54.0",
+ "wit-bindgen-core 0.54.0",
+ "wit-bindgen-rust 0.54.0",
 ]
 
 [[package]]
 name = "greentic-interfaces-host"
-version = "0.4.109"
+version = "0.4.110"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fd612d44791a1d894aa3c1e15e4de3e8b40a9ddd36779cc9f0e0bf5316b3bae"
+checksum = "505b97cb50d01787a0c9f9305228241bb7b8da7afa7807c5714b0b334dec327c"
 dependencies = [
  "greentic-interfaces",
  "greentic-types",
@@ -2068,7 +2068,7 @@ dependencies = [
  "tempfile",
  "time",
  "x509-parser",
- "zip 8.2.0",
+ "zip 8.3.0",
 ]
 
 [[package]]
@@ -2103,7 +2103,7 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "zip 8.2.0",
+ "zip 8.3.0",
 ]
 
 [[package]]
@@ -2166,7 +2166,7 @@ dependencies = [
  "wasmtime",
  "wasmtime-environ",
  "wasmtime-wasi",
- "zip 8.2.0",
+ "zip 8.3.0",
 ]
 
 [[package]]
@@ -2269,9 +2269,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-setup"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9e36f1b6771cdefac0c41e22d4d87e46a6463456d7a7309fc10dd120d34c5f00"
+checksum = "a6d4258e054e48a51ae8ea4ffdaf27b9ec3a8431e3f83479de5ed522eae3518b"
 dependencies = [
  "aes-gcm-siv",
  "anyhow",
@@ -2302,9 +2302,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-start"
-version = "0.4.8"
+version = "0.4.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "30909510c3f1316cec19e7fa5c57a9722cbd39f6c73d03417158165fab985df8"
+checksum = "50ae9088cc310e2d6ae10b597b3ce71b234bc1ff4a224fe9ac7ba227f89bb42a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2346,7 +2346,7 @@ dependencies = [
  "unic-langid",
  "ureq",
  "uuid",
- "zip 8.2.0",
+ "zip 8.3.0",
  "zstd",
 ]
 
@@ -2452,7 +2452,7 @@ dependencies = [
  "tar",
  "tempfile",
  "tokio",
- "zip 8.2.0",
+ "zip 8.3.0",
 ]
 
 [[package]]
@@ -2975,9 +2975,9 @@ dependencies = [
 
 [[package]]
 name = "itoa"
-version = "1.0.17"
+version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
+checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
 name = "ittapi"
@@ -3606,9 +3606,9 @@ dependencies = [
 
 [[package]]
 name = "opentelemetry-otlp"
-version = "0.31.0"
+version = "0.31.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7a2366db2dca4d2ad033cad11e6ee42844fd727007af5ad04a1730f4cb8163bf"
+checksum = "1f69cd6acbb9af919df949cd1ec9e5e7fdc2ef15d234b6b795aaa525cc02f71f"
 dependencies = [
  "http",
  "opentelemetry",
@@ -5135,9 +5135,9 @@ checksum = "55937e1799185b12863d447f42597ed69d9928686b8d88a1df17376a097d8369"
 
 [[package]]
 name = "tar"
-version = "0.4.44"
+version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1d863878d212c87a19c1a610eb53bb01fe12951c0501cf5a0d65f724914a667a"
+checksum = "22692a6476a21fa75fdfc11d452fda482af402c008cdbaf3476414e122040973"
 dependencies = [
  "filetime",
  "libc",
@@ -6877,6 +6877,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wit-bindgen"
+version = "0.54.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bb00254d5051d69730ee32580b7373592f10ad786757c372f0f2c7b61f86a2c"
+dependencies = [
+ "wit-bindgen-rust-macro 0.54.0",
+]
+
+[[package]]
 name = "wit-bindgen-core"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6892,6 +6901,17 @@ name = "wit-bindgen-core"
 version = "0.53.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3deda4b7e9f522d994906f6e6e0fc67965ea8660306940a776b76732be8f3933"
+dependencies = [
+ "anyhow",
+ "heck",
+ "wit-parser 0.245.1",
+]
+
+[[package]]
+name = "wit-bindgen-core"
+version = "0.54.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "99cdef5ccf0b0e9bf30868d6f9c5ed116c84ae95f84ba29d2216d3e922de3963"
 dependencies = [
  "anyhow",
  "heck",
@@ -6931,6 +6951,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "wit-bindgen-rust"
+version = "0.54.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e76541e2f37ac1729db85765729daa0f3c2b5975d66699114d107525f6d6c8d5"
+dependencies = [
+ "anyhow",
+ "heck",
+ "indexmap 2.13.0",
+ "prettyplease",
+ "syn",
+ "wasm-metadata 0.245.1",
+ "wit-bindgen-core 0.54.0",
+ "wit-component 0.245.1",
+]
+
+[[package]]
 name = "wit-bindgen-rust-macro"
 version = "0.51.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6958,6 +6994,21 @@ dependencies = [
  "syn",
  "wit-bindgen-core 0.53.1",
  "wit-bindgen-rust 0.53.1",
+]
+
+[[package]]
+name = "wit-bindgen-rust-macro"
+version = "0.54.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a284e17b2bc808c72ba008f6694626fa76bcac608b3d1ed0880f9add3f558f8e"
+dependencies = [
+ "anyhow",
+ "prettyplease",
+ "proc-macro2",
+ "quote",
+ "syn",
+ "wit-bindgen-core 0.54.0",
+ "wit-bindgen-rust 0.54.0",
 ]
 
 [[package]]
@@ -7130,18 +7181,18 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.8.42"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2578b716f8a7a858b7f02d5bd870c14bf4ddbbcf3a4c05414ba6503640505e3"
+checksum = "efbb2a062be311f2ba113ce66f697a4dc589f85e78a4aea276200804cea0ed87"
 dependencies = [
  "zerocopy-derive",
 ]
 
 [[package]]
 name = "zerocopy-derive"
-version = "0.8.42"
+version = "0.8.47"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e6cc098ea4d3bd6246687de65af3f920c430e236bee1e3bf2e441463f08a02f"
+checksum = "0e8bc7269b54418e7aeeef514aa68f8690b8c0489a06b0136e5f57c4c5ccab89"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -7174,20 +7225,6 @@ name = "zeroize"
 version = "1.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b97154e67e32c85465826e8bcc1c59429aaaf107c1e4a9e53c8d8ccd5eff88d0"
-dependencies = [
- "zeroize_derive",
-]
-
-[[package]]
-name = "zeroize_derive"
-version = "1.4.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85a5b4158499876c763cb03bc4e49185d3cccbabb15b33c627f7884f43db852e"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
-]
 
 [[package]]
 name = "zerotrie"
@@ -7242,9 +7279,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "8.2.0"
+version = "8.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b680f2a0cd479b4cff6e1233c483fdead418106eae419dc60200ae9850f6d004"
+checksum = "4a243cfad17427fc077f529da5a95abe4e94fd2bfdb601611870a6557cc67657"
 dependencies = [
  "aes",
  "bzip2",
