@@ -1353,7 +1353,8 @@ fn run_multi_target_deployer_apply(
     let deploy_bundle_source = remote_override
         .clone()
         .unwrap_or_else(|| bundle_artifact.display().to_string());
-    let app_pack = resolve_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
+    let app_pack =
+        resolve_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref(), locale)?;
     let provider_pack = resolve_target_provider_pack(
         &resolved.bundle_dir,
         target,
@@ -1570,7 +1571,8 @@ fn run_multi_target_deployer_destroy(
     debug: bool,
     locale: &str,
 ) -> Result<(), String> {
-    let app_pack = resolve_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
+    let app_pack =
+        resolve_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref(), locale)?;
     let provider_pack = resolve_target_provider_pack(
         &resolved.bundle_dir,
         target,
@@ -2397,9 +2399,38 @@ fn resolve_target_provider_pack_from_metadata(
     Ok(None)
 }
 
+fn prompt_app_pack_path(candidates: &[PathBuf], locale: &str) -> Result<PathBuf, String> {
+    println!(
+        "{}",
+        t_or(locale, "gtc.start.prompt.app_pack", "Select app pack:")
+    );
+    for (idx, path) in candidates.iter().enumerate() {
+        let label = path
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or_else(|| path.as_os_str().to_str().unwrap_or("<unknown>"));
+        println!("{} ) {}", idx + 1, label);
+    }
+    print!("> ");
+    io::stdout().flush().map_err(|err| err.to_string())?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|err| err.to_string())?;
+    let choice = input
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| "invalid app pack selection".to_string())?;
+    candidates
+        .get(choice.saturating_sub(1))
+        .cloned()
+        .ok_or_else(|| "invalid app pack selection".to_string())
+}
+
 fn resolve_app_pack_path(
     bundle_dir: &Path,
     override_path: Option<&PathBuf>,
+    locale: &str,
 ) -> Result<PathBuf, String> {
     if let Some(path) = override_path {
         return Ok(path.clone());
@@ -2441,10 +2472,7 @@ fn resolve_app_pack_path(
     match candidates.len() {
         0 => Err(format!("no app pack found under {}", packs_dir.display())),
         1 => Ok(candidates.remove(0)),
-        _ => Err(format!(
-            "multiple app packs found under {}; rerun with --app-pack",
-            packs_dir.display()
-        )),
+        _ => prompt_app_pack_path(&candidates, locale),
     }
 }
 
@@ -4730,7 +4758,7 @@ mod tests {
         )
         .expect("write default ref");
 
-        let resolved = resolve_app_pack_path(dir.path(), None).expect("app pack");
+        let resolved = resolve_app_pack_path(dir.path(), None, "en").expect("app pack");
         assert_eq!(resolved, app_pack);
     }
 
