@@ -55,7 +55,7 @@ jobs:
           toolchain: 1.91.0
           components: clippy
       - name: Clippy
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -66,7 +66,7 @@ jobs:
         with:
           toolchain: 1.91.0
       - name: Tests
-        run: cargo test --all-targets --all-features
+        run: cargo test --locked --all-targets --all-features
 
   publish_crates:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -85,7 +85,7 @@ jobs:
       - name: Publish crate to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: cargo publish --token "$CARGO_REGISTRY_TOKEN"
+        run: cargo publish --locked --token "$CARGO_REGISTRY_TOKEN"
 
   build_binaries:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
@@ -126,7 +126,7 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --locked --release --target ${{ matrix.target }}
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
