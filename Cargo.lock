@@ -2434,7 +2434,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "0.9.20"
+version = "0.9.21"
 dependencies = [
  "clap",
  "directories",

@@ -3931,17 +3931,38 @@ fn resolve_companion_binary_from(current_exe: Option<&Path>, binary: &str) -> Op
         return Some(PathBuf::from(path));
     }
 
-    let current_exe = current_exe?;
-    let exe_dir = current_exe.parent()?;
-    let sibling = exe_dir.join(binary);
-    if sibling.is_file() {
-        return Some(sibling);
+    if let Some(current_exe) = current_exe {
+        let exe_dir = current_exe.parent()?;
+        if let Some(sibling) = resolve_binary_in_dir(exe_dir, binary) {
+            return Some(sibling);
+        }
+
+        if let Some(workspace_candidate) = resolve_workspace_local_binary(current_exe, binary) {
+            return Some(workspace_candidate);
+        }
     }
 
-    if let Some(workspace_candidate) = resolve_workspace_local_binary(current_exe, binary) {
-        return Some(workspace_candidate);
+    if let Ok(cargo_bin_dir) = resolve_cargo_bin_dir()
+        && let Some(cargo_candidate) = resolve_binary_in_dir(&cargo_bin_dir, binary)
+    {
+        return Some(cargo_candidate);
     }
     None
+}
+
+fn resolve_binary_in_dir(dir: &Path, binary: &str) -> Option<PathBuf> {
+    binary_file_candidates(dir, binary)
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+}
+
+fn binary_file_candidates(dir: &Path, binary: &str) -> Vec<PathBuf> {
+    let mut candidates = vec![dir.join(binary)];
+    let exe_suffix = env::consts::EXE_SUFFIX;
+    if !exe_suffix.is_empty() && !binary.ends_with(exe_suffix) {
+        candidates.push(dir.join(format!("{binary}{exe_suffix}")));
+    }
+    candidates
 }
 
 fn resolve_workspace_local_binary(current_exe: &Path, binary: &str) -> Option<PathBuf> {
@@ -3959,11 +3980,9 @@ fn resolve_workspace_local_binary(current_exe: &Path, binary: &str) -> Option<Pa
         .join(repo_name)
         .join("target")
         .join("debug")
-        .join(binary);
-    if candidate.is_file() {
-        return Some(candidate);
-    }
-    None
+        .as_path()
+        .to_path_buf();
+    resolve_binary_in_dir(&candidate, binary)
 }
 
 fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
@@ -4426,6 +4445,27 @@ mod tests {
         assert_eq!(resolved, PathBuf::from("/tmp/custom-dev"));
         unsafe {
             std::env::remove_var("GREENTIC_DEV_BIN");
+        }
+    }
+
+    #[test]
+    fn resolve_companion_binary_falls_back_to_cargo_home_bin() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let cargo_home = temp.path().join("cargo-home");
+        let cargo_bin = cargo_home.join("bin");
+        let cargo_binary = cargo_bin.join(DEV_BIN);
+        std::fs::create_dir_all(&cargo_bin).expect("mkdir cargo bin");
+        std::fs::write(&cargo_binary, b"").expect("write cargo binary");
+
+        unsafe {
+            std::env::set_var("CARGO_HOME", &cargo_home);
+        }
+
+        let resolved = resolve_companion_binary_from(None, DEV_BIN).expect("path");
+        assert_eq!(resolved, cargo_binary);
+
+        unsafe {
+            std::env::remove_var("CARGO_HOME");
         }
     }
 
