@@ -9,6 +9,9 @@ gtc dev <args...>
 gtc op <args...>
 gtc wizard <args...>
 gtc install <args...>
+gtc setup <args...>
+gtc start <args...>
+gtc stop <args...>
 ```
 
 ## Routing Rules
@@ -27,8 +30,29 @@ PR-GTC-01 uses PATH-only discovery:
 - `greentic-operator` must be present in PATH
 - `greentic-setup` must be present in PATH for `gtc setup`
 - `terraform` must be present in PATH for `gtc start` when the bundle includes the Terraform deployer
+- cloud deploy flows also require cloud credentials/tooling for the selected target:
+  - AWS for `--target aws`
+  - Azure for `--target azure`
+  - GCP for `--target gcp`
 
 If missing, `gtc` prints install guidance.
+
+## Practical flow
+
+The current practical operator path is:
+
+1. `gtc wizard`
+2. `gtc setup`
+3. `gtc start --target runtime|aws|azure|gcp`
+4. `gtc stop --target runtime|aws|azure|gcp`
+
+Reference docs:
+
+- `/home/vgrishkyan/greentic/demo/MEETING_FLOW.md`
+- `/home/vgrishkyan/greentic/demo/AWS_DEPLOY.md`
+- `/home/vgrishkyan/greentic/demo/AZURE_DEPLOY.md`
+- `/home/vgrishkyan/greentic/demo/GCP_DEPLOY.md`
+- `/home/vgrishkyan/greentic/demo/MULTICLOUD_E2E_MATRIX.md`
 
 ## Doctor
 
