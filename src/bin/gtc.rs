@@ -19,6 +19,7 @@ use greentic_start::{
     CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
     run_start_request, run_stop_request,
 };
+use greentic_types::decode_pack_manifest;
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose, SanType,
@@ -26,8 +27,10 @@ use rcgen::{
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use serde_yaml::Value as YamlValue;
 use sha2::{Digest, Sha256};
 use tempfile::TempDir;
+use zip::ZipArchive;
 
 const DEV_BIN: &str = "greentic-dev";
 
@@ -1349,12 +1352,12 @@ fn run_multi_target_deployer_apply(
         .deploy_bundle_source
         .clone()
         .or_else(resolve_remote_deploy_bundle_source_override);
-    validate_cloud_deploy_inputs(target, remote_override.as_deref())?;
+    validate_cloud_deploy_inputs(target, remote_override.as_deref(), &resolved.bundle_dir)?;
     let deploy_bundle_source = remote_override
         .clone()
         .unwrap_or_else(|| bundle_artifact.display().to_string());
     let app_pack =
-        resolve_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref(), locale)?;
+        resolve_deploy_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
     let provider_pack = resolve_target_provider_pack(
         &resolved.bundle_dir,
         target,
@@ -1376,18 +1379,19 @@ fn run_multi_target_deployer_apply(
         "apply".to_string(),
         "--tenant".to_string(),
         tenant,
-        "--pack".to_string(),
+        "--bundle-pack".to_string(),
         app_pack.display().to_string(),
         "--provider-pack".to_string(),
         provider_pack.display().to_string(),
         "--bundle-source".to_string(),
-        deploy_bundle_source,
+        deploy_bundle_source.clone(),
         "--bundle-digest".to_string(),
         bundle_digest,
         "--execute".to_string(),
         "--output".to_string(),
         "json".to_string(),
     ];
+    append_bundle_registry_args(&mut args, &deploy_bundle_source)?;
     if let Some(environment) = cli_options.environment.as_deref() {
         args.push("--environment".to_string());
         args.push(environment.to_string());
@@ -1426,9 +1430,24 @@ fn print_cloud_deploy_contract_hint(target: StartTarget) {
 fn validate_cloud_deploy_inputs(
     target: StartTarget,
     remote_bundle_source: Option<&str>,
+    bundle_dir: &Path,
 ) -> Result<(), String> {
+    require_tool_in_path(
+        "terraform",
+        "install terraform and make sure it is available in PATH",
+    )?;
+    validate_public_base_url_for_static_routes(bundle_dir)?;
     match target {
         StartTarget::Aws => {
+            require_any_env_vars(
+                &[
+                    "AWS_ACCESS_KEY_ID",
+                    "AWS_PROFILE",
+                    "AWS_DEFAULT_PROFILE",
+                    "AWS_WEB_IDENTITY_TOKEN_FILE",
+                ],
+                "set AWS credentials (for example AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_PROFILE)",
+            )?;
             let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
                 "aws deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE".to_string()
             })?;
@@ -1437,11 +1456,33 @@ fn validate_cloud_deploy_inputs(
                     "aws deploy requires a remote bundle source, got local path: {remote_bundle_source}"
                 ));
             }
+            validate_bundle_registry_mapping_env(remote_bundle_source)?;
             require_env_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST")?;
             require_env_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND")?;
             Ok(())
         }
         StartTarget::Gcp | StartTarget::Azure => {
+            match target {
+                StartTarget::Azure => require_any_env_vars(
+                    &[
+                        "ARM_CLIENT_ID",
+                        "ARM_USE_OIDC",
+                        "AZURE_CLIENT_ID",
+                        "AZURE_TENANT_ID",
+                        "AZURE_SUBSCRIPTION_ID",
+                    ],
+                    "set Azure credentials (for example ARM_CLIENT_ID/ARM_TENANT_ID/ARM_SUBSCRIPTION_ID or the corresponding AZURE_* variables)",
+                )?,
+                StartTarget::Gcp => require_any_env_vars(
+                    &[
+                        "GOOGLE_APPLICATION_CREDENTIALS",
+                        "GOOGLE_OAUTH_ACCESS_TOKEN",
+                        "CLOUDSDK_AUTH_ACCESS_TOKEN",
+                    ],
+                    "set GCP credentials (for example GOOGLE_APPLICATION_CREDENTIALS or CLOUDSDK_AUTH_ACCESS_TOKEN)",
+                )?,
+                _ => {}
+            }
             let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
                 format!(
                     "{} deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE",
@@ -1454,10 +1495,120 @@ fn validate_cloud_deploy_inputs(
                     target.as_str()
                 ));
             }
+            validate_bundle_registry_mapping_env(remote_bundle_source)?;
             Ok(())
         }
         StartTarget::SingleVm | StartTarget::Runtime => Ok(()),
     }
+}
+
+fn validate_public_base_url_for_static_routes(bundle_dir: &Path) -> Result<(), String> {
+    if !bundle_declares_static_routes(bundle_dir)? {
+        return Ok(());
+    }
+    match env::var("GREENTIC_DEPLOY_TERRAFORM_VAR_PUBLIC_BASE_URL") {
+        Ok(value) if !value.trim().is_empty() => Ok(()),
+        _ => Err(
+            "bundle declares static routes; set GREENTIC_DEPLOY_TERRAFORM_VAR_PUBLIC_BASE_URL so cloud runtime can start with a valid PUBLIC_BASE_URL".to_string()
+        ),
+    }
+}
+
+fn bundle_declares_static_routes(bundle_dir: &Path) -> Result<bool, String> {
+    for root in [bundle_dir.join("providers"), bundle_dir.join("packs")] {
+        if !root.exists() {
+            continue;
+        }
+        if dir_declares_static_routes(&root)? {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn dir_declares_static_routes(root: &Path) -> Result<bool, String> {
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries =
+            fs::read_dir(&dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?;
+        for entry in entries {
+            let entry = entry.map_err(|err| format!("failed to read dir entry: {err}"))?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|err| format!("failed to stat {}: {err}", path.display()))?;
+            if file_type.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.extension().and_then(|ext| ext.to_str()) != Some("gtpack") {
+                continue;
+            }
+            if pack_declares_static_routes(&path)? {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn pack_declares_static_routes(path: &Path) -> Result<bool, String> {
+    const EXT_STATIC_ROUTES_V1: &str = "greentic.static-routes.v1";
+    let file =
+        fs::File::open(path).map_err(|err| format!("failed to open {}: {err}", path.display()))?;
+    let mut archive = ZipArchive::new(file)
+        .map_err(|err| format!("failed to open zip archive {}: {err}", path.display()))?;
+    let mut manifest_entry = archive
+        .by_name("manifest.cbor")
+        .map_err(|err| format!("failed to open manifest.cbor in {}: {err}", path.display()))?;
+    let mut bytes = Vec::new();
+    manifest_entry
+        .read_to_end(&mut bytes)
+        .map_err(|err| format!("failed to read manifest.cbor in {}: {err}", path.display()))?;
+    let manifest = decode_pack_manifest(&bytes).map_err(|err| {
+        format!(
+            "failed to decode pack manifest in {}: {err}",
+            path.display()
+        )
+    })?;
+    Ok(manifest
+        .extensions
+        .as_ref()
+        .is_some_and(|extensions| extensions.contains_key(EXT_STATIC_ROUTES_V1)))
+}
+
+fn validate_bundle_registry_mapping_env(bundle_source: &str) -> Result<(), String> {
+    if bundle_source.starts_with("repo://") {
+        require_env_var("GREENTIC_REPO_REGISTRY_BASE")?;
+    }
+    if bundle_source.starts_with("store://") {
+        require_env_var("GREENTIC_STORE_REGISTRY_BASE")?;
+    }
+    Ok(())
+}
+
+fn append_bundle_registry_args(args: &mut Vec<String>, bundle_source: &str) -> Result<(), String> {
+    if bundle_source.starts_with("repo://") {
+        let value = env::var("GREENTIC_REPO_REGISTRY_BASE").map_err(|_| {
+            "missing required environment variable GREENTIC_REPO_REGISTRY_BASE".to_string()
+        })?;
+        if value.trim().is_empty() {
+            return Err("GREENTIC_REPO_REGISTRY_BASE must not be empty".to_string());
+        }
+        args.push("--repo-registry-base".to_string());
+        args.push(value);
+    }
+    if bundle_source.starts_with("store://") {
+        let value = env::var("GREENTIC_STORE_REGISTRY_BASE").map_err(|_| {
+            "missing required environment variable GREENTIC_STORE_REGISTRY_BASE".to_string()
+        })?;
+        if value.trim().is_empty() {
+            return Err("GREENTIC_STORE_REGISTRY_BASE must not be empty".to_string());
+        }
+        args.push("--store-registry-base".to_string());
+        args.push(value);
+    }
+    Ok(())
 }
 
 fn is_remote_bundle_source(value: &str) -> bool {
@@ -1477,6 +1628,40 @@ fn require_env_var(name: &str) -> Result<(), String> {
         Ok(value) if !value.trim().is_empty() => Ok(()),
         _ => Err(format!("missing required environment variable: {name}")),
     }
+}
+
+fn require_any_env_vars(names: &[&str], help: &str) -> Result<(), String> {
+    if names.iter().any(|name| {
+        env::var(name)
+            .map(|value| !value.trim().is_empty())
+            .unwrap_or(false)
+    }) {
+        Ok(())
+    } else {
+        Err(format!(
+            "missing cloud credentials; {}. Expected one of: {}",
+            help,
+            names.join(", ")
+        ))
+    }
+}
+
+fn require_tool_in_path(binary: &str, help: &str) -> Result<(), String> {
+    if binary_in_path(binary) {
+        Ok(())
+    } else {
+        Err(format!(
+            "required tool `{binary}` not found in PATH; {help}"
+        ))
+    }
+}
+
+fn binary_in_path(binary: &str) -> bool {
+    env::var_os("PATH")
+        .map(|path| {
+            env::split_paths(&path).any(|dir| resolve_binary_in_dir(&dir, binary).is_some())
+        })
+        .unwrap_or(false)
 }
 
 fn destroy_bundle_deployment(
@@ -1572,7 +1757,7 @@ fn run_multi_target_deployer_destroy(
     locale: &str,
 ) -> Result<(), String> {
     let app_pack =
-        resolve_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref(), locale)?;
+        resolve_deploy_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
     let provider_pack = resolve_target_provider_pack(
         &resolved.bundle_dir,
         target,
@@ -1583,7 +1768,7 @@ fn run_multi_target_deployer_destroy(
         "destroy".to_string(),
         "--tenant".to_string(),
         request.tenant.clone(),
-        "--pack".to_string(),
+        "--bundle-pack".to_string(),
         app_pack.display().to_string(),
         "--provider-pack".to_string(),
         provider_pack.display().to_string(),
@@ -2399,41 +2584,15 @@ fn resolve_target_provider_pack_from_metadata(
     Ok(None)
 }
 
-fn prompt_app_pack_path(candidates: &[PathBuf], locale: &str) -> Result<PathBuf, String> {
-    println!(
-        "{}",
-        t_or(locale, "gtc.start.prompt.app_pack", "Select app pack:")
-    );
-    for (idx, path) in candidates.iter().enumerate() {
-        let label = path
-            .file_name()
-            .and_then(|value| value.to_str())
-            .unwrap_or_else(|| path.as_os_str().to_str().unwrap_or("<unknown>"));
-        println!("{} ) {}", idx + 1, label);
-    }
-    print!("> ");
-    io::stdout().flush().map_err(|err| err.to_string())?;
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .map_err(|err| err.to_string())?;
-    let choice = input
-        .trim()
-        .parse::<usize>()
-        .map_err(|_| "invalid app pack selection".to_string())?;
-    candidates
-        .get(choice.saturating_sub(1))
-        .cloned()
-        .ok_or_else(|| "invalid app pack selection".to_string())
-}
-
-fn resolve_app_pack_path(
+fn resolve_deploy_app_pack_path(
     bundle_dir: &Path,
     override_path: Option<&PathBuf>,
-    locale: &str,
 ) -> Result<PathBuf, String> {
     if let Some(path) = override_path {
         return Ok(path.clone());
+    }
+    if let Some(path) = resolve_app_pack_path_from_bundle_metadata(bundle_dir)? {
+        return Ok(path);
     }
     let default_pack_ref = bundle_dir.join("default.gtpack");
     if default_pack_ref.exists() {
@@ -2472,8 +2631,48 @@ fn resolve_app_pack_path(
     match candidates.len() {
         0 => Err(format!("no app pack found under {}", packs_dir.display())),
         1 => Ok(candidates.remove(0)),
-        _ => prompt_app_pack_path(&candidates, locale),
+        _ => Err(
+            "cloud deployment requires a canonical app pack; set bundle.yaml app_packs, add default.gtpack, or pass --app-pack explicitly"
+                .to_string(),
+        ),
     }
+}
+
+fn resolve_app_pack_path_from_bundle_metadata(
+    bundle_dir: &Path,
+) -> Result<Option<PathBuf>, String> {
+    let bundle_path = bundle_dir.join("bundle.yaml");
+    if !bundle_path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&bundle_path)
+        .map_err(|err| format!("failed to read {}: {err}", bundle_path.display()))?;
+    let doc: YamlValue = serde_yaml::from_str(&raw)
+        .map_err(|err| format!("failed to parse {}: {err}", bundle_path.display()))?;
+    let Some(app_packs) = doc.get("app_packs").and_then(YamlValue::as_sequence) else {
+        return Ok(None);
+    };
+    let Some(reference) = app_packs.first().and_then(YamlValue::as_str) else {
+        return Ok(None);
+    };
+    let candidate = if Path::new(reference).is_absolute() {
+        if let Some(file_name) = Path::new(reference).file_name() {
+            let bundled = bundle_dir.join("packs").join(file_name);
+            if bundled.exists() {
+                bundled
+            } else {
+                PathBuf::from(reference)
+            }
+        } else {
+            PathBuf::from(reference)
+        }
+    } else {
+        bundle_dir.join(reference)
+    };
+    if candidate.exists() {
+        return Ok(Some(candidate));
+    }
+    Ok(None)
 }
 
 fn required_value(args: &[String], idx: usize, flag: &str) -> Result<String, String> {
@@ -4261,15 +4460,20 @@ mod tests {
         ensure_admin_certs_ready, fingerprint_bundle_dir, locale_from_args,
         normalize_bundle_fingerprint, normalize_install_arch, parse_start_cli_options,
         parse_start_request, parse_stop_cli_options, parse_stop_request,
-        remove_admin_registry_entry, resolve_admin_cert_dir, resolve_app_pack_path,
+        remove_admin_registry_entry, resolve_admin_cert_dir,
         resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
-        resolve_local_mutable_bundle_dir, resolve_target_provider_pack, resolve_tenant_key,
-        rewrite_store_tenant_placeholder, save_admin_registry, select_start_target,
-        tenant_env_var_name, upsert_admin_registry_entry, write_single_vm_spec,
+        resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir,
+        resolve_target_provider_pack, resolve_tenant_key, rewrite_store_tenant_placeholder,
+        save_admin_registry, select_start_target, tenant_env_var_name, upsert_admin_registry_entry,
+        validate_cloud_deploy_inputs, write_single_vm_spec,
     };
     use clap::{Arg, ArgMatches, Command};
+    use std::env;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
-    use tempfile::tempdir;
+    use std::sync::{Mutex, OnceLock};
+    use tempfile::{TempDir, tempdir};
 
     #[test]
     fn locale_arg_is_detected_from_equals_flag() {
@@ -4523,6 +4727,8 @@ mod tests {
         let options = parse_start_cli_options(&[
             "--target".to_string(),
             "aws".to_string(),
+            "--deploy-bundle-source".to_string(),
+            "https://example.com/demo.gtbundle".to_string(),
             "--environment=prod".to_string(),
             "--provider-pack".to_string(),
             "/tmp/provider.gtpack".to_string(),
@@ -4535,6 +4741,10 @@ mod tests {
         assert_eq!(
             options.explicit_target.map(|value| value.as_str()),
             Some("aws")
+        );
+        assert_eq!(
+            options.deploy_bundle_source.as_deref(),
+            Some("https://example.com/demo.gtbundle")
         );
         assert_eq!(options.environment.as_deref(), Some("prod"));
         assert_eq!(
@@ -4549,6 +4759,114 @@ mod tests {
             options.start_args,
             vec!["--tenant".to_string(), "demo".to_string()]
         );
+    }
+
+    #[test]
+    fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_present() {
+        let _guard = env_test_lock().lock().unwrap();
+        let _path_guard = temp_path_with_binary("terraform");
+        let bundle_dir = TempDir::new().expect("tempdir");
+        unsafe {
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
+                "sha256:test",
+            );
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
+                "s3://bucket/state",
+            );
+            env::set_var("AWS_PROFILE", "demo");
+        }
+
+        let result = validate_cloud_deploy_inputs(
+            StartTarget::Aws,
+            Some("https://example.com/demo.gtbundle"),
+            bundle_dir.path(),
+        );
+
+        unsafe {
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
+            env::remove_var("AWS_PROFILE");
+        }
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
+        let _guard = env_test_lock().lock().unwrap();
+        let _path_guard = temp_path_with_binary("terraform");
+        let bundle_dir = TempDir::new().expect("tempdir");
+        unsafe {
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
+                "sha256:test",
+            );
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
+                "s3://bucket/state",
+            );
+            env::set_var("AWS_PROFILE", "demo");
+        }
+
+        let err = validate_cloud_deploy_inputs(
+            StartTarget::Aws,
+            Some("./demo.gtbundle"),
+            bundle_dir.path(),
+        )
+        .unwrap_err();
+
+        unsafe {
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
+            env::remove_var("AWS_PROFILE");
+        }
+
+        assert!(err.contains("aws deploy requires a remote bundle source"));
+    }
+
+    fn env_test_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct PathGuard {
+        _temp_dir: tempfile::TempDir,
+        original: Option<std::ffi::OsString>,
+    }
+
+    impl Drop for PathGuard {
+        fn drop(&mut self) {
+            unsafe {
+                match &self.original {
+                    Some(value) => env::set_var("PATH", value),
+                    None => env::remove_var("PATH"),
+                }
+            }
+        }
+    }
+
+    fn temp_path_with_binary(binary: &str) -> PathGuard {
+        let dir = tempdir().expect("tempdir");
+        let script = dir.path().join(binary);
+        fs::write(&script, "#!/bin/sh\nexit 0\n").expect("write shim");
+        let mut perms = fs::metadata(&script).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&script, perms).expect("chmod");
+        let original = env::var_os("PATH");
+        let mut merged = dir.path().display().to_string();
+        if let Some(existing) = &original {
+            merged.push(':');
+            merged.push_str(&existing.to_string_lossy());
+        }
+        unsafe {
+            env::set_var("PATH", merged);
+        }
+        PathGuard {
+            _temp_dir: dir,
+            original,
+        }
     }
 
     #[test]
@@ -4784,22 +5102,34 @@ mod tests {
     }
 
     #[test]
-    fn resolve_app_pack_path_prefers_default_gtpack_reference() {
+    fn resolve_deploy_app_pack_path_prefers_bundle_metadata_app_pack() {
         let dir = tempfile::tempdir().expect("tempdir");
         let packs_dir = dir.path().join("packs");
         std::fs::create_dir_all(&packs_dir).expect("create packs dir");
         let app_pack = packs_dir.join("cards-demo.gtpack");
-        let other_pack = packs_dir.join("terraform.gtpack");
+        let other_pack = packs_dir.join("default.gtpack");
         std::fs::write(&app_pack, b"app").expect("write app pack");
-        std::fs::write(&other_pack, b"provider").expect("write other pack");
+        std::fs::write(&other_pack, b"other").expect("write other pack");
         std::fs::write(
-            dir.path().join("default.gtpack"),
-            "packs/cards-demo.gtpack\n",
+            dir.path().join("bundle.yaml"),
+            "bundle_id: demo\napp_packs:\n  - /tmp/build/cards-demo.gtpack\n",
         )
-        .expect("write default ref");
+        .expect("write bundle");
 
-        let resolved = resolve_app_pack_path(dir.path(), None, "en").expect("app pack");
+        let resolved = resolve_deploy_app_pack_path(dir.path(), None).expect("app pack");
         assert_eq!(resolved, app_pack);
+    }
+
+    #[test]
+    fn resolve_deploy_app_pack_path_rejects_multiple_candidates_without_canonical_metadata() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let packs_dir = dir.path().join("packs");
+        std::fs::create_dir_all(&packs_dir).expect("create packs dir");
+        std::fs::write(packs_dir.join("cards-demo.gtpack"), b"app").expect("write app pack");
+        std::fs::write(packs_dir.join("other.gtpack"), b"other").expect("write other pack");
+
+        let err = resolve_deploy_app_pack_path(dir.path(), None).unwrap_err();
+        assert!(err.contains("cloud deployment requires a canonical app pack"));
     }
 
     #[test]
