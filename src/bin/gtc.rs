@@ -38,6 +38,10 @@ const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
+const EMBEDDED_TERRAFORM_GTPACK: &[u8] = include_bytes!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/assets/deployer/terraform.gtpack"
+));
 
 const LOCALES_JSON: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -2924,6 +2928,18 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
         return public_status;
     }
 
+    if let Err(err) = ensure_deployer_dist_pack(debug) {
+        eprintln!(
+            "{}: {err}",
+            tf(
+                locale,
+                "gtc.install.item_fail",
+                &[("kind", "asset"), ("name", "terraform.gtpack")]
+            )
+        );
+        return 1;
+    }
+
     let tenant = sub_matches
         .get_one::<String>("tenant")
         .map(|v| v.trim().to_string())
@@ -3168,6 +3184,24 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
     }
 
     0
+}
+
+fn ensure_deployer_dist_pack(debug: bool) -> Result<(), String> {
+    let cargo_bin_dir = resolve_cargo_bin_dir()?;
+    let dist_dir = cargo_bin_dir.join("dist");
+    let target = dist_dir.join("terraform.gtpack");
+    if target.is_file() {
+        return Ok(());
+    }
+
+    fs::create_dir_all(&dist_dir).map_err(|e| e.to_string())?;
+    fs::write(&target, EMBEDDED_TERRAFORM_GTPACK).map_err(|e| e.to_string())?;
+
+    if debug {
+        eprintln!("installed deployer pack at {}", target.display());
+    }
+
+    Ok(())
 }
 
 fn detect_binstall_version(debug: bool, locale: &str) -> Option<String> {
