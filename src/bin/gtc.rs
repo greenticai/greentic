@@ -38,6 +38,8 @@ const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
+const DEFAULT_OPERATOR_IMAGE_DIGEST: &str =
+    "sha256:fa1c82477a03dc2642fdadf5f8d5dc818cb7ed99905b50e53fbab7fec763a8eb";
 const EMBEDDED_TERRAFORM_GTPACK: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/deployer/terraform.gtpack"
@@ -1416,9 +1418,10 @@ fn print_cloud_deploy_contract_hint(target: StartTarget) {
     match target {
         StartTarget::Aws => {
             println!("  required external Terraform vars:");
-            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
             println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
             println!("  optional Terraform vars:");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
+            println!("      default: {DEFAULT_OPERATOR_IMAGE_DIGEST}");
             println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_DNS_NAME (personalized mode only)");
             println!("  internal AWS bootstrap now handles:");
             println!("    admin TLS server secrets");
@@ -1461,7 +1464,6 @@ fn validate_cloud_deploy_inputs(
                 ));
             }
             validate_bundle_registry_mapping_env(remote_bundle_source)?;
-            require_env_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST")?;
             require_env_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND")?;
             Ok(())
         }
@@ -1510,12 +1512,7 @@ fn validate_public_base_url_for_static_routes(bundle_dir: &Path) -> Result<(), S
     if !bundle_declares_static_routes(bundle_dir)? {
         return Ok(());
     }
-    match env::var("GREENTIC_DEPLOY_TERRAFORM_VAR_PUBLIC_BASE_URL") {
-        Ok(value) if !value.trim().is_empty() => Ok(()),
-        _ => Err(
-            "bundle declares static routes; set GREENTIC_DEPLOY_TERRAFORM_VAR_PUBLIC_BASE_URL so cloud runtime can start with a valid PUBLIC_BASE_URL".to_string()
-        ),
-    }
+    Ok(())
 }
 
 fn bundle_declares_static_routes(bundle_dir: &Path) -> Result<bool, String> {
@@ -1910,9 +1907,10 @@ fn run_binary_capture(
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
     }
     let command = resolve_binary_command(binary);
-    let output = ProcessCommand::new(&command)
-        .args(args)
-        .env("GREENTIC_LOCALE", locale)
+    let mut process = ProcessCommand::new(&command);
+    process.args(args).env("GREENTIC_LOCALE", locale);
+    apply_default_deploy_env(&mut process);
+    let output = process
         .output()
         .map_err(|err| format!("failed to execute {binary}: {err}"))?;
     if !output.status.success() {
@@ -1938,14 +1936,26 @@ fn run_binary_status(
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
     }
     let command = resolve_binary_command(binary);
-    ProcessCommand::new(&command)
+    let mut process = ProcessCommand::new(&command);
+    process
         .args(args)
         .env("GREENTIC_LOCALE", locale)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    apply_default_deploy_env(&mut process);
+    process
         .status()
         .map_err(|err| format!("failed to execute {binary}: {err}"))
+}
+
+fn apply_default_deploy_env(process: &mut ProcessCommand) {
+    if env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST").is_none() {
+        process.env(
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
+            DEFAULT_OPERATOR_IMAGE_DIGEST,
+        );
+    }
 }
 
 fn fingerprint_bundle_dir(bundle_dir: &Path) -> Result<String, String> {
