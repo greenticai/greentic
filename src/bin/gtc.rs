@@ -103,8 +103,8 @@ fn run(raw_args: Vec<String>) -> i32 {
         }
         Some(("wizard", sub_matches)) => {
             let tail = collect_tail(sub_matches);
-            let forwarded = build_dev_wizard_args(&tail, &locale);
-            passthrough(DEV_BIN, &forwarded, debug, &locale)
+            let forwarded = build_wizard_args(&tail, &locale);
+            passthrough(OP_BIN, &forwarded, debug, &locale)
         }
         Some(("setup", sub_matches)) => {
             let tail = collect_tail(sub_matches);
@@ -341,7 +341,7 @@ fn passthrough_help_request(
         "dev" => Some((DEV_BIN, raw.tail.clone())),
         "op" => Some((OP_BIN, rewrite_legacy_op_args(&raw.tail))),
         "setup" => Some((SETUP_BIN, raw.tail.clone())),
-        "wizard" => Some((DEV_BIN, build_dev_wizard_args(&raw.tail, locale))),
+        "wizard" => Some((OP_BIN, build_wizard_args(&raw.tail, locale))),
         _ => None,
     }
 }
@@ -371,7 +371,7 @@ fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
     }
 }
 
-fn build_dev_wizard_args(args: &[String], locale: &str) -> Vec<String> {
+fn build_wizard_args(args: &[String], locale: &str) -> Vec<String> {
     let mut forwarded = vec!["wizard".to_string()];
     if !has_flag(args, "locale") {
         ensure_flag_value(&mut forwarded, "locale", locale);
@@ -4307,7 +4307,7 @@ fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 
             if err.kind() == std::io::ErrorKind::NotFound {
                 match binary {
                     DEV_BIN => print_missing_dev_message(locale),
-                    OP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_op")),
+                    OP_BIN => print_missing_op_message(locale),
                     SETUP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_setup")),
                     _ => eprintln!("{}", t(locale, "gtc.err.exec_failed")),
                 }
@@ -4345,7 +4345,7 @@ fn run_doctor(locale: &str) -> i32 {
                 );
                 match binary {
                     DEV_BIN => print_missing_dev_message(locale),
-                    OP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_op")),
+                    OP_BIN => print_missing_op_message(locale),
                     BUNDLE_BIN => eprintln!(
                         "{}",
                         t_or(
@@ -4394,6 +4394,18 @@ fn print_missing_dev_message(locale: &str) {
         t_or(
             locale,
             "gtc.err.bin_missing_dev_install_hint",
+            "Run `gtc install` first."
+        )
+    );
+}
+
+fn print_missing_op_message(locale: &str) {
+    eprintln!("{}", t(locale, "gtc.err.bin_missing_op"));
+    eprintln!(
+        "{}",
+        t_or(
+            locale,
+            "gtc.err.bin_missing_op_install_hint",
             "Run `gtc install` first."
         )
     );
@@ -4745,7 +4757,7 @@ impl DocManifest {
 mod tests {
     use super::{
         AdminRegistryDocument, DEV_BIN, StartBundleResolution, StartTarget, admin_registry_path,
-        build_dev_wizard_args, collect_tail, detect_bundle_root, detect_locale,
+        build_wizard_args, collect_tail, detect_bundle_root, detect_locale,
         ensure_admin_certs_ready, fingerprint_bundle_dir, locale_from_args,
         normalize_bundle_fingerprint, normalize_install_arch, parse_start_cli_options,
         parse_start_request, parse_stop_cli_options, parse_stop_request,
@@ -4836,8 +4848,8 @@ mod tests {
     }
 
     #[test]
-    fn build_dev_wizard_args_prepends_wizard_and_locale() {
-        let args = build_dev_wizard_args(&["--answers".to_string(), "a.json".to_string()], "en");
+    fn build_wizard_args_prepends_wizard_and_locale() {
+        let args = build_wizard_args(&["--answers".to_string(), "a.json".to_string()], "en");
         assert_eq!(
             args,
             vec![
@@ -4851,8 +4863,8 @@ mod tests {
     }
 
     #[test]
-    fn build_dev_wizard_args_preserves_explicit_locale() {
-        let args = build_dev_wizard_args(
+    fn build_wizard_args_preserves_explicit_locale() {
+        let args = build_wizard_args(
             &[
                 "--locale".to_string(),
                 "fr".to_string(),
