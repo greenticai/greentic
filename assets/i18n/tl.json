@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "Hindi nakita ang greentic-dev sa PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Patakbuhin muna ang `gtc install`.",
   "gtc.err.bin_missing_op": "Hindi nakita ang greentic-operator sa PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Patakbuhin muna ang `gtc install`.",
   "gtc.err.bin_missing_setup": "Hindi makita ang greentic-setup sa PATH. I-install gamit ang: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Hindi available ang distribution client.",
   "gtc.err.exec_failed": "Nabigong isagawa ang command.",

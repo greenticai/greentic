@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "PATH တွင် greentic-dev ကို မတွေ့ပါ။",
   "gtc.err.bin_missing_dev_install_hint": "အရင် `gtc install` ကို run လုပ်ပါ။",
   "gtc.err.bin_missing_op": "PATH တွင် greentic-operator ကို မတွေ့ပါ။",
+  "gtc.err.bin_missing_op_install_hint": "`gtc install` ကို အရင် run လုပ်ပါ။",
   "gtc.err.bin_missing_setup": "PATH တွင် greentic-setup ကို မတွေ့ပါ။ ထည့်သွင်းရန်: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribution client မရနိုင်ပါ။",
   "gtc.err.exec_failed": "command ကို execute လုပ်မရပါ။",

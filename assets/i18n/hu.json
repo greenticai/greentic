@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "A greentic-dev nem található a PATH-ban.",
   "gtc.err.bin_missing_dev_install_hint": "Először futtasd a `gtc install` parancsot.",
   "gtc.err.bin_missing_op": "A greentic-operator nem található a PATH-ban.",
+  "gtc.err.bin_missing_op_install_hint": "Először futtasd a `gtc install` parancsot.",
   "gtc.err.bin_missing_setup": "A greentic-setup nem található a PATH-ban. Telepítés: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "A disztribúciós kliens nem érhető el.",
   "gtc.err.exec_failed": "Nem sikerült végrehajtani a parancsot.",

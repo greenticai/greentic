@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "لم يتم العثور على greentic-dev في PATH.",
   "gtc.err.bin_missing_dev_install_hint": "شغّل `gtc install` أولاً.",
   "gtc.err.bin_missing_op": "لم يتم العثور على greentic-operator في PATH.",
+  "gtc.err.bin_missing_op_install_hint": "قم بتشغيل `gtc install` أولاً.",
   "gtc.err.bin_missing_setup": "لم يتم العثور على greentic-setup في PATH. ثبّته باستخدام: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "عميل التوزيع غير متاح.",
   "gtc.err.exec_failed": "فشل تنفيذ الأمر.",

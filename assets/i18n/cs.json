@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev nebyl nalezen v PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Nejprve spusťte `gtc install`.",
   "gtc.err.bin_missing_op": "greentic-operator nebyl nalezen v PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Nejprve spusťte `gtc install`.",
   "gtc.err.bin_missing_setup": "greentic-setup nebyl nalezen v PATH. Nainstalujte pomocí: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribuční klient není dostupný.",
   "gtc.err.exec_failed": "Nepodařilo se spustit příkaz.",

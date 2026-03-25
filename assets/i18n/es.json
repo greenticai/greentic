@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev no se encontró en PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Ejecuta `gtc install` primero.",
   "gtc.err.bin_missing_op": "greentic-operator no se encontró en PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Ejecuta `gtc install` primero.",
   "gtc.err.bin_missing_setup": "greentic-setup no se encontró en PATH. Instálalo con: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Cliente de distribución no disponible.",
   "gtc.err.exec_failed": "No se pudo ejecutar el comando.",

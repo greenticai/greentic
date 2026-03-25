@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev PATH मा फेला परेन।",
   "gtc.err.bin_missing_dev_install_hint": "पहिले `gtc install` चलाउनुहोस्।",
   "gtc.err.bin_missing_op": "greentic-operator PATH मा फेला परेन।",
+  "gtc.err.bin_missing_op_install_hint": "पहिले `gtc install` चलाउनुहोस्।",
   "gtc.err.bin_missing_setup": "PATH मा greentic-setup फेला परेन। यससँग स्थापना गर्नुहोस्: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribution client उपलब्ध छैन।",
   "gtc.err.exec_failed": "आदेश कार्यान्वयन गर्न असफल भयो।",

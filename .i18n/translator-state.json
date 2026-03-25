@@ -129,6 +129,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b7a437a14c32b73a3a3d6a210eb6c04a28f028a54151c6bc79cd9d142aaaf73c",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467770
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "86cdf1fd842a89d9cf3890d0112b830c4fc89d88296d0041b1e0e4e1719c3bef",
@@ -396,6 +402,12 @@
           "last_bot_translation_hash": "ef3e8062c090abbdb2eb1597ec92efbc0fad33f3c50ccf4bea392b663be6261b",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b7a437a14c32b73a3a3d6a210eb6c04a28f028a54151c6bc79cd9d142aaaf73c",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467773
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -665,6 +677,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b7a437a14c32b73a3a3d6a210eb6c04a28f028a54151c6bc79cd9d142aaaf73c",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467775
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "86cdf1fd842a89d9cf3890d0112b830c4fc89d88296d0041b1e0e4e1719c3bef",
@@ -932,6 +950,12 @@
           "last_bot_translation_hash": "ef3e8062c090abbdb2eb1597ec92efbc0fad33f3c50ccf4bea392b663be6261b",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "936bb63f43f25e94daaf74ccf24b88533c0014f544e2c8e0590ae5de9611a106",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467777
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -1201,6 +1225,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b7a437a14c32b73a3a3d6a210eb6c04a28f028a54151c6bc79cd9d142aaaf73c",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467782
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "86cdf1fd842a89d9cf3890d0112b830c4fc89d88296d0041b1e0e4e1719c3bef",
@@ -1468,6 +1498,12 @@
           "last_bot_translation_hash": "ef3e8062c090abbdb2eb1597ec92efbc0fad33f3c50ccf4bea392b663be6261b",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b7a437a14c32b73a3a3d6a210eb6c04a28f028a54151c6bc79cd9d142aaaf73c",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467785
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -1737,6 +1773,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "2edade145842b176e229401bbe5bda6747c921592b5cf4224709378f74746481",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467788
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "86cdf1fd842a89d9cf3890d0112b830c4fc89d88296d0041b1e0e4e1719c3bef",
@@ -2004,6 +2046,12 @@
           "last_bot_translation_hash": "ef3e8062c090abbdb2eb1597ec92efbc0fad33f3c50ccf4bea392b663be6261b",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b7a437a14c32b73a3a3d6a210eb6c04a28f028a54151c6bc79cd9d142aaaf73c",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467791
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -2273,6 +2321,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662720
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b7a437a14c32b73a3a3d6a210eb6c04a28f028a54151c6bc79cd9d142aaaf73c",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467794
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "86cdf1fd842a89d9cf3890d0112b830c4fc89d88296d0041b1e0e4e1719c3bef",
@@ -2540,6 +2594,12 @@
           "last_bot_translation_hash": "ef3e8062c090abbdb2eb1597ec92efbc0fad33f3c50ccf4bea392b663be6261b",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662721
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "936bb63f43f25e94daaf74ccf24b88533c0014f544e2c8e0590ae5de9611a106",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467797
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -2809,6 +2869,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662721
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "de41354968bea25c15bd940546b2477c253be9b388c287e15cfcbdb7362b8191",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467800
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "fe1b4dc49f2b6c180a9239ba9362e735a59578c23e1345de897aebaeade197e2",
@@ -3076,6 +3142,12 @@
           "last_bot_translation_hash": "4a9388b40c4862e1394d3b105c2d6f2f597f1607a106f0855f33809ef7cabac5",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662721
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "82488f82d301833a2fe47eff4cc059167b185b3bde61a06b5ca0f2fb7da88a13",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467802
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -3345,6 +3417,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662721
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "2d12ed42798ca210b2002aa2bd2a024140084df8abf36421457d551b248d3e90",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467805
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "865204e3c25efc172f8c6a15f1eb270a078b9d586e46ad1d45f4339284b48253",
@@ -3612,6 +3690,12 @@
           "last_bot_translation_hash": "dd7e1c9d1a61e94772ff4b14d12a62fa8ca15dc2823120d7d045ede22b0ef898",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662721
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "ad0cfb064a690a08c9a7bfd550fa0e900010a8d30688241ba245f2352570d830",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467807
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -3881,6 +3965,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662721
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "012104dee9999129295493b8a1753f1c7d7cc623cb7cf19a3f777a7fc786f5aa",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467809
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "af4006c7b81ca661c96e20ec5517b2fb41bcce9b4b55a3e5f4542749aaa79fda",
@@ -4148,6 +4238,12 @@
           "last_bot_translation_hash": "2dfde7fc4211565ecc43210cbde8b285f1d65e22bb6dded3c801f47bc833b2ad",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662721
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "819e7eabe2db8210f887ea91ff05c0904583de5ffa1fd511022ef3f5ef081ab0",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467812
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -4417,6 +4513,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662721
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "ff3db4da728eee375c3ff24fcb4d4d3414af82cc250242ed69bbb5c50f0d2cb6",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467814
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "4e93559ca4a4da4b887b928bb7646baefce82f2c075886f91eaccebed6199cfa",
@@ -4684,6 +4786,12 @@
           "last_bot_translation_hash": "c75d099d039001730e327084d9557e016eb37bd9b3369ddc512d54d368f31872",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662731
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467818
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -4953,6 +5061,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662741
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "93e1630702e3e876a63c2e543eefa53662f98b7b35fbb34db14ccb5c2d5138f3",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467820
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "ac63aa76eea0511912af27df7dfafd4e29ada75655418bf1e5eae4cf79a5ff29",
@@ -5220,6 +5334,12 @@
           "last_bot_translation_hash": "5790004089dfd6a6b4f06afc1c7d23dbc4d8e41f845d3fb134108eab6e9c307d",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662763
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "e5a638ffe8f5035bf36f34d0d84b8d25725a8844ba97b9ba99d559855c465345",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467827
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -5489,6 +5609,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662779
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "5c9a47fefb48a8c5db878e00305a3354a3826c7e1c6cd2019770b1ada4947f00",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467831
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "9b2ea0a92aa22c4481f5ff24db70da35604772fb0573fd2737ff0af299044cd8",
@@ -5756,6 +5882,12 @@
           "last_bot_translation_hash": "9b55fb380692403d725d8361a8fccea7f4bc5ad08b1890e01f3096fc35973450",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662797
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "999a829a0f0c52a12fef1c2f828b8a5597d96bb104cb3abc619edaa7c9450d59",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467833
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -6025,6 +6157,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662812
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b05cc163cee7da532a00c537d61ed8d303e4c3f837398952a24c3a5f8f10ed36",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467835
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "5bcda9287d52804ff00316438215d1017f730c382cdd8051f152cf9e1f48916b",
@@ -6292,6 +6430,12 @@
           "last_bot_translation_hash": "a73214365e21bc3c37acd5d131ed25eb226e711eca7ee425e95b13d934ccb1df",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662843
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "663cf78aef3a1918610ef95d7db6e44d414ab3211cf11a0c93e0113b0e31675c",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467838
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -6561,6 +6705,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662859
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "68a992b0469848d2578290e61860ac28bc44013614663a1a87877c01916b47cc",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467840
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "5bec0d9554600cda6a68d2ac4435150d365afc28ce5262db085ec0094e513c87",
@@ -6828,6 +6978,12 @@
           "last_bot_translation_hash": "505c7ab1fcc1dbac901ded619fc018b2630c038fc06107d264ea095f2c5c6dca",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662869
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "243179f1a383b15744e63fc4409f7ee539d4292042e050d2eb69620ce3943c03",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467844
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -7097,6 +7253,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662887
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "1c447df0c0974cf3994d9ef5a170d7b0dff5f8a1820a86523a338ae5f64e52b5",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467848
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "0f821e14dbd13d10c9a3fe21d3e345fd84f0d754ed9177af760aebffa51015f5",
@@ -7364,6 +7526,12 @@
           "last_bot_translation_hash": "1dab2f2e2abb95ca0f89b49c867202ed0291a780fdcde78912ac7295faacbb33",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662899
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "f2ee140bf8a3cc93bfe51d34fbf9d94e0fa62361f02ff3802d9e178628f8910d",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467850
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -7633,6 +7801,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662919
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "f14eb98e346f3c9d34ed9d3a5bf0f6fb7aa0db2682315f1d24bc1b5a71869c68",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467853
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "dddcfebd46cf056b09d74eed108cfd7c9e50034522b363d151cfec3dacadfc4c",
@@ -7900,6 +8074,12 @@
           "last_bot_translation_hash": "fab5c06818560e25c66db71c871871e738e697a3a064ea5ac789d661671a5b88",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662935
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "5f5418e4f54f7feccf36f8cb28d884c269cf25a479ce551e553c27fb3b7e19fa",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467855
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -8169,6 +8349,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662950
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "c352b57292b51b5da4ea953ce1fc44f5e8fbdce9c78ea15743e39ff62015e87e",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467857
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "d1048ff256c20bd1ad34f3afef4d1aa534f42ce51018448c61fd3c8bf5d1409f",
@@ -8436,6 +8622,12 @@
           "last_bot_translation_hash": "769b06994fa583c240d3f29c2c22faca7660b573b812bb67bbb0163e9ef60576",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662962
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "e9d45d4a8d23455ef34753618a4048332a39a01f4ce126baa6c7bf174f762ab8",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467859
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -8705,6 +8897,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662975
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "fd0d4f439fb230a9a7d86df71752265deb1afeb9aa5397ef2c6d02882254c6d0",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467863
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "a466da1f3686a78906c95ad0d5c8b1296fc74d827747e9d80e96b29f0b963854",
@@ -8972,6 +9170,12 @@
           "last_bot_translation_hash": "f92619fe103ca9f29df45273bb85268210625eaaa61807587038956997e9168b",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772662990
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "0beb4716ee1016313475a8fb5c5ce02896d8502bfff972b98b2e0bccc4d1e20a",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467866
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -9241,6 +9445,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663001
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "d5e7cd3930b76cedc3615d45493b6577b4196fe60e6ffc6c096076f2d2a86816",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467868
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "2001546b16245d0c5a8ff753929377275a26ae53ccc188507f0b6e733b2c451c",
@@ -9508,6 +9718,12 @@
           "last_bot_translation_hash": "2389825cb5b8099f4c0aaea56743da006a6afd5445af17db61b7844e40d38d49",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663032
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "2d2e97b292008286382d73afb28c6335929c622c3891efc8c435c579e2eac5a6",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467871
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -9777,6 +9993,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663054
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "7e7f48caac3a899bb8e145540497f8fbaa7d0c8155f888dc1697ae7b32b661bc",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467873
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "2320bf378ab0e00f6d7f80eb9cf61021c217864b24fe180ee73b1fdf93c13b5b",
@@ -10044,6 +10266,12 @@
           "last_bot_translation_hash": "10928d5c9c1f025aa9992923c4c1f5bc7d24b6788c51e817d0886170740efa5a",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663074
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "4262336d67ae3a2735901f9e40aba79a00678f73d587000cc2d542f3a74f3dc1",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467876
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -10313,6 +10541,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663094
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "35111ce71c68ea7a364f579bc9f87f7cd9ad31d245d167ce62ccdd49695db872",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467878
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "d10240ca11046e01018ce873bfaf1f3282a036813e257864b2c6e767e6fb3085",
@@ -10580,6 +10814,12 @@
           "last_bot_translation_hash": "31f7a64101121a674138096787a337fbc69f6cfe1736b7653164640e9fa2fd4f",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663115
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "76300f68dbc4544dbb75a4f15b4b1168e92c845c2bb7472ad628f1de7e4daf4d",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467891
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -10849,6 +11089,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663132
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "ecd958b0edd732dce7f646103c06703c45c083a584733c35945067d11f555c7b",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467893
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "afdbf05b478b144c3a9ec58a3ce754cfc452a831e1441e11d498732325ff8f3e",
@@ -11116,6 +11362,12 @@
           "last_bot_translation_hash": "4533be26f89e2eddba078c42f3a17ce97243b6f7ac1d9f6247bebfe71df66860",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663147
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "b11398d2335c9dd7edae5513bd2c5b3bb18a6225219396d70fc3a914914c2be9",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467896
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -11385,6 +11637,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663174
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "c48d68de80420ac10d87961120545a80735bac290ba21977eaf394e3f3acb274",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467900
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "9715ccd6b735329eefe714411463007612ea0460335d9e693024b1ac002baceb",
@@ -11652,6 +11910,12 @@
           "last_bot_translation_hash": "0926677be588abe94927d240402dfcea7d73c6086a143b27a69b5e5a5d593166",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663195
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "9ab34aaa0a4bff1ea34c91eabae755d713a3b9c93e4cea203cbfdfcacdbf6341",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467903
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -11921,6 +12185,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663210
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "37f76937980998ec57204191ecc0134f55484b1ed8da67c916eb4831948c2ed6",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467906
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "b39d7cf9c723bef2402d166f0e84a73684d9680998cd0618bc4f0ef8a649d864",
@@ -12188,6 +12458,12 @@
           "last_bot_translation_hash": "b220d1b77feee9e5973b27a6fd9919da0d7b9c56a98e95bba0b27f24f3c7afb8",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663224
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "0ea3c01dde170fe4722af91c426d048aebfef2629101df9f4134648ffc0a1cec",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467909
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -12457,6 +12733,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663240
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "a797c2138b01333c85af2ce597840cf1e5ca216d2aa84eb8269cc067cb613efe",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467912
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "4d8f0847ac316a79323a32269eb58c2d640027863e3d7ba3e6cf10f447867527",
@@ -12724,6 +13006,12 @@
           "last_bot_translation_hash": "36b231877f7f29fe626e2a53753280aef733068199d06b0a872b3e1a1f6b0ee4",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663254
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "679754b601d281c0903d499fc604699114f5df17d27f83e32a3b6d127a49ed73",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467914
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -12993,6 +13281,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663270
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "1b3549080b026a80d3ee7daa4f0579a0c5dfb13987c6aa5a86a88b782f569624",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467917
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "5c598cddefb6153e8a9eb4a5b542c4611e45ce5b584fcf56548da7985c7166bf",
@@ -13260,6 +13554,12 @@
           "last_bot_translation_hash": "e5f2e0c9db706db028499a1fd4289d0e0bed9e68e9ffccbf073e336c795a3af3",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663290
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "0571f7dec797e84872341f05df0db1647e877e75ed1a6f28c532222134440b60",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467920
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -13529,6 +13829,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663308
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "9b900a7959173d7ccae367bdfb2bf0c4758f277bb897d7dbbc167566179352f0",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467923
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "8163d24e2deb9f605683f898098eacd51d1a0daaab90023bf6d3d80040595ff5",
@@ -13796,6 +14102,12 @@
           "last_bot_translation_hash": "862c70cb8cb334956da9b1badefff53478ce65f6dfed790b41746ff096236122",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663320
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "ec29c36b2cc640f41d8cb1579fda66f9a45a1dc5915f61ae1c0106a880e73469",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467928
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -14065,6 +14377,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663344
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "296141211c67438e80b1e891c9589b11853447b19e23df5236ae433edff4ea32",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467931
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "d8d7f39751076f80a2e9906a31e04947a6b62a3a5df15e50e36ec9383a26d029",
@@ -14332,6 +14650,12 @@
           "last_bot_translation_hash": "f99f90e88ea9941d377c1cd9df5b775ed84de1304f601a16c633f2b53094ed8a",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663364
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "deba96929e2198f66a7e244672346e7ffb2b90f6fdffee704777d70a6bb7e912",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467934
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -14601,6 +14925,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663384
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "1c447df0c0974cf3994d9ef5a170d7b0dff5f8a1820a86523a338ae5f64e52b5",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467941
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "a3296614e01515d661056fdda5f4a633e551d6dab722743f29daad968b73e39a",
@@ -14868,6 +15198,12 @@
           "last_bot_translation_hash": "324fa617a52f42b3d2415c534f1ab414eba79b25ee1748f48826dbafc8e39ebf",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663396
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "02e8d74339c72147510c7b77e9e0b6a7eaf4160a55ece00b616dd51075678fde",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467946
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -15137,6 +15473,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663410
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "619c0f893aa159e6adec160c33d70b7384df9a39b6771fe80473f1de1626e3ed",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467950
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "3b45c93d18cddbfaee5bb3d82fa17ce3bb519bee3adee9a3753d1671ae7f62ce",
@@ -15404,6 +15746,12 @@
           "last_bot_translation_hash": "b79b88f30f9b0b56b602aa3a560d188a87756b1701f27601532ab01a996c5899",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663422
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "87e1b83f3a1a2b4458205b7f8529cbdbc4daa94d59d9f26448230409ffbd97df",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467953
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -15673,6 +16021,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663435
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "e554c67e7e122dcc9a4e6d1f6bc9e32569562799e0dee30a8072dac4b5bc9008",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467955
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "2fea07a352cf2d03ef546c3c421070ae87d6a4bf80fbdb8d07d18a0f6c2be2dc",
@@ -15940,6 +16294,12 @@
           "last_bot_translation_hash": "e965c07ff697e5fa843d7bf0353674b86124adf97d43614cd7a3f1903ffd0bbf",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663450
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "bc2281310301950f033abfc555e1c46846c1548c3f5fb1ccc8da639c41e0eca9",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467959
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -16209,6 +16569,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663469
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "635d2986149618aec2d3afa26712acdc7514b3eade8db8dab5582db53ac7ce10",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467961
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "c1e709608aad804c2df9964277be66e2ce932db21f919ebb481365427cfd0b3c",
@@ -16476,6 +16842,12 @@
           "last_bot_translation_hash": "e70fc2db357cc6dd8b19f0ea080a05bdd2f4304887e2863636afc2e908c2a995",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663482
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "2dce9556408b166d087ccb156b5ddff8c2d1830846bddad0902e987ca3966df8",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467965
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
@@ -16745,6 +17117,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663503
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "540f8a5ce024b777b076aa89a7b217755159121417c33c37b933102e10a015bf",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467970
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "c2b7509165c4a2be257f43b5a6041af29e87faab3b1c4eb4c9d39ab4dc270521",
@@ -17013,6 +17391,12 @@
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663516
         },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "fec86fde1e856501dac1c070849fcfce669df0804175bfc6f603054a66c4b39d",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467972
+        },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
           "last_bot_translation_hash": "958c161eb7cdc47fa2c9d3e5e3bdc96a895790b660b00c8285c30e94b2e413b9",
@@ -17280,6 +17664,12 @@
           "last_bot_translation_hash": "6f899963099ddf9d474911bfc78c804840fc446421a618e9e68c6c4123a574b4",
           "engine": "codex-cli",
           "timestamp_epoch_secs": 1772663526
+        },
+        "gtc.err.bin_missing_op_install_hint": {
+          "last_english_hash": "64c61159042e7f7d88a4dd765bd8ba1e55b9982c9d515a8b30b6556876f4f41b",
+          "last_bot_translation_hash": "d9957802b9e9cfe1665c39af6844aa2b20c2cfcac1ad5ac9b764a58463767305",
+          "engine": "codex-cli",
+          "timestamp_epoch_secs": 1774467975
         },
         "gtc.err.bin_missing_setup": {
           "last_english_hash": "77765d3390560aafeff924a327097e093491e01c239b34ff5c7ca78092ea67fe",
