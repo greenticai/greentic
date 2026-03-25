@@ -1794,7 +1794,9 @@ fn prompt_azure_credentials() -> Result<(), String> {
             }
         }
         _ => {
-            return Err("cloud deploy aborted before Azure credentials were configured".to_string());
+            return Err(
+                "cloud deploy aborted before Azure credentials were configured".to_string(),
+            );
         }
     }
     Ok(())
