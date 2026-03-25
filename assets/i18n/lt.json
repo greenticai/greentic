@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev nerastas PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Pirmiausia paleiskite `gtc install`.",
   "gtc.err.bin_missing_op": "greentic-operator nerastas PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Pirmiausia paleiskite `gtc install`.",
   "gtc.err.bin_missing_setup": "greentic-setup nerasta PATH aplinkoje. Įdiekite naudodami: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribucijos klientas nepasiekiamas.",
   "gtc.err.exec_failed": "Nepavyko įvykdyti komandos.",

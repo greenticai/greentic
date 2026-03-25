@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev tidak ditemui dalam PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Jalankan `gtc install` dahulu.",
   "gtc.err.bin_missing_op": "greentic-operator tidak ditemui dalam PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Jalankan `gtc install` dahulu.",
   "gtc.err.bin_missing_setup": "greentic-setup tidak ditemui dalam PATH. Pasang dengan: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Klien pengedaran tidak tersedia.",
   "gtc.err.exec_failed": "Gagal melaksanakan perintah.",

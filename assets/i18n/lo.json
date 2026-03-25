@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "ບໍ່ພົບ greentic-dev ໃນ PATH.",
   "gtc.err.bin_missing_dev_install_hint": "ໃຫ້ແລ່ນ `gtc install` ກ່ອນ.",
   "gtc.err.bin_missing_op": "ບໍ່ພົບ greentic-operator ໃນ PATH.",
+  "gtc.err.bin_missing_op_install_hint": "ຮັນ `gtc install` ກ່ອນ.",
   "gtc.err.bin_missing_setup": "ບໍ່ພົບ greentic-setup ໃນ PATH. ຕິດຕັ້ງດ້ວຍ: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "ບໍ່ມີ distribution client.",
   "gtc.err.exec_failed": "ດຳເນີນຄຳສັ່ງບໍ່ສຳເລັດ.",

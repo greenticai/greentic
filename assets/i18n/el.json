@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "Το greentic-dev δεν βρέθηκε στο PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Εκτελέστε πρώτα το `gtc install`.",
   "gtc.err.bin_missing_op": "Το greentic-operator δεν βρέθηκε στο PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Εκτελέστε πρώτα το `gtc install`.",
   "gtc.err.bin_missing_setup": "Το greentic-setup δεν βρέθηκε στο PATH. Εγκαταστήστε το με: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Ο client διανομής δεν είναι διαθέσιμος.",
   "gtc.err.exec_failed": "Αποτυχία εκτέλεσης εντολής.",

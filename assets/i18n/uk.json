@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev не знайдено в PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Спочатку виконайте `gtc install`.",
   "gtc.err.bin_missing_op": "greentic-operator не знайдено в PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Спочатку запустіть `gtc install`.",
   "gtc.err.bin_missing_setup": "greentic-setup не знайдено в PATH. Встановіть за допомогою: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Клієнт дистрибуції недоступний.",
   "gtc.err.exec_failed": "Не вдалося виконати команду.",

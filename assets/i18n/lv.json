@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev nav atrasts PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Vispirms palaidiet `gtc install`.",
   "gtc.err.bin_missing_op": "greentic-operator nav atrasts PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Vispirms palaidiet `gtc install`.",
   "gtc.err.bin_missing_setup": "greentic-setup nav atrasts PATH. Instalējiet ar: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Izplatīšanas klients nav pieejams.",
   "gtc.err.exec_failed": "Neizdevās izpildīt komandu.",

@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "PATH-இல் greentic-dev காணப்படவில்லை.",
   "gtc.err.bin_missing_dev_install_hint": "முதலில் `gtc install` ஐ இயக்கவும்.",
   "gtc.err.bin_missing_op": "PATH-இல் greentic-operator காணப்படவில்லை.",
+  "gtc.err.bin_missing_op_install_hint": "முதலில் `gtc install` ஐ இயக்கவும்.",
   "gtc.err.bin_missing_setup": "PATH-இல் greentic-setup காணப்படவில்லை. இதைப் பயன்படுத்தி நிறுவவும்: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribution client கிடைக்கவில்லை.",
   "gtc.err.exec_failed": "கட்டளையை இயக்க முடியவில்லை.",

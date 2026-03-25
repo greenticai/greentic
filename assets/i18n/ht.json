@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev pa jwenn nan PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Kouri `gtc install` an premye.",
   "gtc.err.bin_missing_op": "greentic-operator pa jwenn nan PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Kouri `gtc install` an premye.",
   "gtc.err.bin_missing_setup": "greentic-setup pa jwenn nan PATH. Enstale ak: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Kliyan distribisyon pa disponib.",
   "gtc.err.exec_failed": "Echèk pandan egzekisyon kòmand la.",

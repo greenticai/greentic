@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev ukax PATH taypin janiw jikxataskiti.",
   "gtc.err.bin_missing_dev_install_hint": "Nayraqata `gtc install` apnaqam.",
   "gtc.err.bin_missing_op": "greentic-operator ukax PATH taypin janiw jikxataskiti.",
+  "gtc.err.bin_missing_op_install_hint": "Nayraqata `gtc install` apnaqam.",
   "gtc.err.bin_missing_setup": "greentic-setup janiw PATH ukan jikxataskiti. Aka tuqimpi instalaram: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribución cliente jan utjkiti.",
   "gtc.err.exec_failed": "Kamachi apnaqañax janiw atinkiti.",
