@@ -31,16 +31,16 @@ fn passthrough_dev_preserves_exit_code() {
 }
 
 #[test]
-fn wizard_missing_greentic_operator_prints_install_guidance() {
-    let sandbox = TestSandbox::new("wizard_missing_greentic_operator_prints_install_guidance");
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
+fn wizard_missing_greentic_dev_prints_install_guidance() {
+    let sandbox = TestSandbox::new("wizard_missing_greentic_dev_prints_install_guidance");
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
 
     let mut extra = HashMap::new();
     extra.insert(
-        "GREENTIC_OPERATOR_BIN".to_string(),
+        "GREENTIC_DEV_BIN".to_string(),
         sandbox
             .path()
-            .join("missing-greentic-operator")
+            .join("missing-greentic-dev")
             .display()
             .to_string(),
     );
@@ -49,7 +49,7 @@ fn wizard_missing_greentic_operator_prints_install_guidance() {
     assert_eq!(output.status.code(), Some(1));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("greentic-operator not found in PATH."));
+    assert!(stderr.contains("greentic-dev not found in PATH."));
     assert!(stderr.contains("gtc install"));
 }
 
@@ -85,17 +85,17 @@ fn passthrough_dev_uses_greentic_dev_bin_override() {
 }
 
 #[test]
-fn wizard_passthrough_routes_to_greentic_operator_with_all_args() {
-    let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_operator_with_all_args");
-    let log_file = sandbox.path().join("op.log");
+fn wizard_passthrough_routes_to_greentic_dev_with_all_args() {
+    let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_dev_with_all_args");
+    let log_file = sandbox.path().join("dev.log");
 
-    let op_script = format!(
+    let dev_script = format!(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
         log_file.display()
     );
 
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", &op_script);
+    sandbox.write_script("greentic-dev", &dev_script);
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
 
     let status = sandbox.run_gtc(
         ["wizard", "--locale", "fr", "--answers", "oci://example"],
@@ -103,23 +103,22 @@ fn wizard_passthrough_routes_to_greentic_operator_with_all_args() {
     );
     assert_eq!(status.code(), Some(0));
 
-    let logged = fs::read_to_string(log_file).expect("read op log");
+    let logged = fs::read_to_string(log_file).expect("read dev log");
     assert!(logged.contains("wizard --locale fr --answers oci://example"));
 }
 
 #[test]
-fn wizard_passthrough_preserves_global_locale_for_greentic_operator() {
-    let sandbox =
-        TestSandbox::new("wizard_passthrough_preserves_global_locale_for_greentic_operator");
-    let log_file = sandbox.path().join("op.log");
+fn wizard_passthrough_preserves_global_locale_for_greentic_dev() {
+    let sandbox = TestSandbox::new("wizard_passthrough_preserves_global_locale_for_greentic_dev");
+    let log_file = sandbox.path().join("dev.log");
 
-    let op_script = format!(
+    let dev_script = format!(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
         log_file.display()
     );
 
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", &op_script);
+    sandbox.write_script("greentic-dev", &dev_script);
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
 
     let status = sandbox.run_gtc(
         ["--locale", "fr", "wizard", "--answers", "oci://example"],
@@ -127,43 +126,40 @@ fn wizard_passthrough_preserves_global_locale_for_greentic_operator() {
     );
     assert_eq!(status.code(), Some(0));
 
-    let logged = fs::read_to_string(log_file).expect("read op log");
+    let logged = fs::read_to_string(log_file).expect("read dev log");
     assert!(logged.contains("wizard --locale fr --answers oci://example"));
 }
 
 #[test]
-fn wizard_passthrough_routes_to_greentic_operator_without_args() {
-    let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_operator_without_args");
-    let log_file = sandbox.path().join("op.log");
+fn wizard_passthrough_routes_to_greentic_dev_without_args() {
+    let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_dev_without_args");
+    let log_file = sandbox.path().join("dev.log");
 
-    let op_script = format!(
+    let dev_script = format!(
         "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
         log_file.display()
     );
 
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", &op_script);
+    sandbox.write_script("greentic-dev", &dev_script);
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
 
     let status = sandbox.run_gtc(["wizard"], HashMap::new());
     assert_eq!(status.code(), Some(0));
 
-    let logged = fs::read_to_string(log_file).expect("read op log");
+    let logged = fs::read_to_string(log_file).expect("read dev log");
     assert!(logged.contains("wizard"));
 }
 
 #[test]
-fn wizard_emit_answers_writes_requested_file_via_operator_wizard() {
-    let sandbox = TestSandbox::new("wizard_emit_answers_writes_requested_file_via_operator_wizard");
+fn wizard_emit_answers_writes_requested_file_via_dev_wizard() {
+    let sandbox = TestSandbox::new("wizard_emit_answers_writes_requested_file_via_dev_wizard");
     let answers_path = sandbox.path().join("answers.json");
 
     sandbox.write_script(
         "greentic-dev",
-        "#!/bin/sh\nif [ \"$1\" = \"wizard\" ]; then\n  : > \"$4\"\n  printf '{\"wrong\":\"binary\"}\\n'\nfi\nexit 0\n",
-    );
-    sandbox.write_script(
-        "greentic-operator",
         "#!/bin/sh\nemit=''\nprev=''\nfor arg in \"$@\"; do\n  if [ \"$prev\" = '--emit-answers' ]; then\n    emit=\"$arg\"\n    break\n  fi\n  prev=\"$arg\"\ndone\nif [ -z \"$emit\" ]; then\n  echo 'missing --emit-answers target' >&2\n  exit 9\nfi\nprintf '{\"schema_version\":\"1.0.0\",\"answers\":{},\"events\":[]}\n' > \"$emit\"\nexit 0\n",
     );
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 99\n");
 
     let output = sandbox.run_gtc_capture(
         [
@@ -211,8 +207,22 @@ fn wizard_emit_answers_writes_requested_file_via_operator_wizard() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.trim().is_empty(),
-        "launcher should not fall back to the dev wizard's stdout-only behavior"
+        "launcher should pass through to greentic-dev without leaking extra stdout"
     );
+}
+
+#[test]
+fn debug_router_shows_wizard_routes_to_greentic_dev() {
+    let sandbox = TestSandbox::new("debug_router_shows_wizard_routes_to_greentic_dev");
+    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 99\n");
+
+    let output = sandbox.run_gtc_capture(["--debug-router", "wizard", "--help"], HashMap::new());
+    assert_eq!(output.status.code(), Some(0));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("Router exec: greentic-dev"));
+    assert!(stderr.contains("[\"wizard\", \"--locale\", \"en\", \"--help\"]"));
 }
 
 #[test]
