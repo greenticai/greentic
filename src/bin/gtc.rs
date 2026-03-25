@@ -1675,7 +1675,11 @@ fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> Result<(), Str
 
 fn ensure_target_terraform_inputs(target: StartTarget) -> Result<(), String> {
     let requirements: &[(&str, bool, Option<&str>)] = match target {
-        StartTarget::Aws => &[("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", true, None)],
+        StartTarget::Aws => &[(
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
+            true,
+            None,
+        )],
         StartTarget::Gcp => &[
             ("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID", true, None),
             (
@@ -1685,7 +1689,11 @@ fn ensure_target_terraform_inputs(target: StartTarget) -> Result<(), String> {
             ),
         ],
         StartTarget::Azure => &[
-            ("GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_KEY_VAULT_ID", true, None),
+            (
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_KEY_VAULT_ID",
+                true,
+                None,
+            ),
             (
                 "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_LOCATION",
                 true,

@@ -2087,9 +2087,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-pack-lib"
-version = "0.4.115"
+version = "0.4.116"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d793a04b347e424005239ae8d44c68e56c10e5649617999fbf0c1d99ab9930d0"
+checksum = "e99c7080d3966a3c034c51b1064215ebff75b6d09ddde641f2fcc469bd99cdae"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "0.9.26"
+version = "0.9.27"
 dependencies = [
  "clap",
  "directories",
