@@ -1453,6 +1453,7 @@ fn validate_cloud_deploy_inputs(
     match target {
         StartTarget::Aws => {
             ensure_cloud_credentials(target, locale)?;
+            ensure_target_terraform_inputs(target)?;
             let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
                 "aws deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE".to_string()
             })?;
@@ -1462,11 +1463,11 @@ fn validate_cloud_deploy_inputs(
                 ));
             }
             validate_bundle_registry_mapping_env(remote_bundle_source)?;
-            require_env_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND")?;
             Ok(())
         }
         StartTarget::Gcp | StartTarget::Azure => {
             ensure_cloud_credentials(target, locale)?;
+            ensure_target_terraform_inputs(target)?;
             let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
                 format!(
                     "{} deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE",
@@ -1672,6 +1673,71 @@ fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> Result<(), Str
     }
 }
 
+fn ensure_target_terraform_inputs(target: StartTarget) -> Result<(), String> {
+    let requirements: &[(&str, bool, Option<&str>)] = match target {
+        StartTarget::Aws => &[("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", true, None)],
+        StartTarget::Gcp => &[
+            ("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID", true, None),
+            (
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION",
+                true,
+                Some("us-central1"),
+            ),
+        ],
+        StartTarget::Azure => &[
+            ("GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_KEY_VAULT_ID", true, None),
+            (
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_LOCATION",
+                true,
+                Some("westeurope"),
+            ),
+        ],
+        StartTarget::SingleVm | StartTarget::Runtime => &[],
+    };
+    if requirements.is_empty() {
+        return Ok(());
+    }
+    let missing: Vec<_> = requirements
+        .iter()
+        .filter(|(name, required, _)| *required && !env_var_present(name))
+        .copied()
+        .collect();
+    if missing.is_empty() {
+        return Ok(());
+    }
+    if !can_prompt_interactively() {
+        return Err(format!(
+            "missing required deployment configuration: {}",
+            missing
+                .iter()
+                .map(|(name, _, _)| *name)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    println!(
+        "Additional {} deployment inputs are required for this run.",
+        target.as_str()
+    );
+    for (name, _, default) in missing {
+        let prompt = match name {
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND" => {
+                "Terraform remote state backend:"
+            }
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID" => "GCP project ID:",
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION" => "GCP region:",
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_KEY_VAULT_ID" => "Azure Key Vault resource ID:",
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_LOCATION" => "Azure location:",
+            _ => name,
+        };
+        let value = prompt_value_with_default(prompt, default)?;
+        unsafe {
+            env::set_var(name, value);
+        }
+    }
+    Ok(())
+}
+
 fn cloud_credentials_satisfied(target: StartTarget) -> bool {
     match target {
         StartTarget::Aws => {
@@ -1870,6 +1936,32 @@ fn prompt_optional(prompt: &str) -> Result<Option<String>, String> {
         Ok(None)
     } else {
         Ok(Some(trimmed.to_string()))
+    }
+}
+
+fn prompt_value_with_default(prompt: &str, default: Option<&str>) -> Result<String, String> {
+    loop {
+        match default {
+            Some(default) => {
+                print!("{prompt} [{default}] ");
+            }
+            None => {
+                print!("{prompt} ");
+            }
+        }
+        io::stdout().flush().map_err(|err| err.to_string())?;
+        let mut input = String::new();
+        io::stdin()
+            .read_line(&mut input)
+            .map_err(|err| err.to_string())?;
+        let trimmed = input.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+        if let Some(default) = default {
+            return Ok(default.to_string());
+        }
+        println!("A value is required.");
     }
 }
 
