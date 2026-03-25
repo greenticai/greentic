@@ -1358,7 +1358,12 @@ fn run_multi_target_deployer_apply(
         .deploy_bundle_source
         .clone()
         .or_else(resolve_remote_deploy_bundle_source_override);
-    validate_cloud_deploy_inputs(target, remote_override.as_deref(), &resolved.bundle_dir)?;
+    validate_cloud_deploy_inputs(
+        target,
+        remote_override.as_deref(),
+        &resolved.bundle_dir,
+        locale,
+    )?;
     let deploy_bundle_source = remote_override
         .clone()
         .unwrap_or_else(|| bundle_artifact.display().to_string());
@@ -1438,6 +1443,7 @@ fn validate_cloud_deploy_inputs(
     target: StartTarget,
     remote_bundle_source: Option<&str>,
     bundle_dir: &Path,
+    locale: &str,
 ) -> Result<(), String> {
     require_tool_in_path(
         "terraform",
@@ -1446,15 +1452,7 @@ fn validate_cloud_deploy_inputs(
     validate_public_base_url_for_static_routes(bundle_dir)?;
     match target {
         StartTarget::Aws => {
-            require_any_env_vars(
-                &[
-                    "AWS_ACCESS_KEY_ID",
-                    "AWS_PROFILE",
-                    "AWS_DEFAULT_PROFILE",
-                    "AWS_WEB_IDENTITY_TOKEN_FILE",
-                ],
-                "set AWS credentials (for example AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_PROFILE)",
-            )?;
+            ensure_cloud_credentials(target, locale)?;
             let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
                 "aws deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE".to_string()
             })?;
@@ -1468,27 +1466,7 @@ fn validate_cloud_deploy_inputs(
             Ok(())
         }
         StartTarget::Gcp | StartTarget::Azure => {
-            match target {
-                StartTarget::Azure => require_any_env_vars(
-                    &[
-                        "ARM_CLIENT_ID",
-                        "ARM_USE_OIDC",
-                        "AZURE_CLIENT_ID",
-                        "AZURE_TENANT_ID",
-                        "AZURE_SUBSCRIPTION_ID",
-                    ],
-                    "set Azure credentials (for example ARM_CLIENT_ID/ARM_TENANT_ID/ARM_SUBSCRIPTION_ID or the corresponding AZURE_* variables)",
-                )?,
-                StartTarget::Gcp => require_any_env_vars(
-                    &[
-                        "GOOGLE_APPLICATION_CREDENTIALS",
-                        "GOOGLE_OAUTH_ACCESS_TOKEN",
-                        "CLOUDSDK_AUTH_ACCESS_TOKEN",
-                    ],
-                    "set GCP credentials (for example GOOGLE_APPLICATION_CREDENTIALS or CLOUDSDK_AUTH_ACCESS_TOKEN)",
-                )?,
-                _ => {}
-            }
+            ensure_cloud_credentials(target, locale)?;
             let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
                 format!(
                     "{} deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE",
@@ -1631,19 +1609,284 @@ fn require_env_var(name: &str) -> Result<(), String> {
     }
 }
 
-fn require_any_env_vars(names: &[&str], help: &str) -> Result<(), String> {
-    if names.iter().any(|name| {
-        env::var(name)
-            .map(|value| !value.trim().is_empty())
-            .unwrap_or(false)
-    }) {
+fn missing_cloud_credentials_error(names: &[&str], help: &str) -> String {
+    format!(
+        "missing cloud credentials; {}. Expected one of: {}",
+        help,
+        names.join(", ")
+    )
+}
+
+fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> Result<(), String> {
+    let (names, help) = match target {
+        StartTarget::Aws => (
+            &[
+                "AWS_ACCESS_KEY_ID",
+                "AWS_PROFILE",
+                "AWS_DEFAULT_PROFILE",
+                "AWS_WEB_IDENTITY_TOKEN_FILE",
+            ][..],
+            "set AWS credentials (for example AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_PROFILE)",
+        ),
+        StartTarget::Azure => (
+            &[
+                "ARM_CLIENT_ID",
+                "ARM_USE_OIDC",
+                "AZURE_CLIENT_ID",
+                "AZURE_TENANT_ID",
+                "AZURE_SUBSCRIPTION_ID",
+            ][..],
+            "set Azure credentials (for example ARM_CLIENT_ID/ARM_TENANT_ID/ARM_SUBSCRIPTION_ID or the corresponding AZURE_* variables)",
+        ),
+        StartTarget::Gcp => (
+            &[
+                "GOOGLE_APPLICATION_CREDENTIALS",
+                "GOOGLE_OAUTH_ACCESS_TOKEN",
+                "CLOUDSDK_AUTH_ACCESS_TOKEN",
+            ][..],
+            "set GCP credentials (for example GOOGLE_APPLICATION_CREDENTIALS or CLOUDSDK_AUTH_ACCESS_TOKEN)",
+        ),
+        StartTarget::SingleVm | StartTarget::Runtime => return Ok(()),
+    };
+    if cloud_credentials_satisfied(target) {
+        return Ok(());
+    }
+    if !can_prompt_interactively() {
+        return Err(missing_cloud_credentials_error(names, help));
+    }
+    let _ = locale;
+    println!(
+        "Cloud credentials for {} are missing. gtc can collect them for this run.",
+        target.as_str()
+    );
+    match target {
+        StartTarget::Aws => prompt_aws_credentials()?,
+        StartTarget::Azure => prompt_azure_credentials()?,
+        StartTarget::Gcp => prompt_gcp_credentials()?,
+        StartTarget::SingleVm | StartTarget::Runtime => {}
+    }
+    if cloud_credentials_satisfied(target) {
         Ok(())
     } else {
-        Err(format!(
-            "missing cloud credentials; {}. Expected one of: {}",
-            help,
-            names.join(", ")
-        ))
+        Err(missing_cloud_credentials_error(names, help))
+    }
+}
+
+fn cloud_credentials_satisfied(target: StartTarget) -> bool {
+    match target {
+        StartTarget::Aws => {
+            env_var_present("AWS_PROFILE")
+                || env_var_present("AWS_DEFAULT_PROFILE")
+                || env_var_present("AWS_WEB_IDENTITY_TOKEN_FILE")
+                || (env_var_present("AWS_ACCESS_KEY_ID")
+                    && env_var_present("AWS_SECRET_ACCESS_KEY"))
+        }
+        StartTarget::Azure => {
+            (env_var_present("ARM_CLIENT_ID")
+                && env_var_present("ARM_TENANT_ID")
+                && env_var_present("ARM_SUBSCRIPTION_ID")
+                && (env_var_present("ARM_CLIENT_SECRET") || env_var_present("ARM_USE_OIDC")))
+                || (env_var_present("AZURE_CLIENT_ID")
+                    && env_var_present("AZURE_TENANT_ID")
+                    && env_var_present("AZURE_SUBSCRIPTION_ID"))
+        }
+        StartTarget::Gcp => {
+            env_var_present("GOOGLE_APPLICATION_CREDENTIALS")
+                || env_var_present("GOOGLE_OAUTH_ACCESS_TOKEN")
+                || env_var_present("CLOUDSDK_AUTH_ACCESS_TOKEN")
+        }
+        StartTarget::SingleVm | StartTarget::Runtime => true,
+    }
+}
+
+fn env_var_present(name: &str) -> bool {
+    env::var(name)
+        .map(|value| !value.trim().is_empty())
+        .unwrap_or(false)
+}
+
+fn can_prompt_interactively() -> bool {
+    if cfg!(test) {
+        return false;
+    }
+    io::stdin().is_terminal() && io::stdout().is_terminal()
+}
+
+fn prompt_aws_credentials() -> Result<(), String> {
+    let mode = prompt_choice(
+        "Select AWS credential input mode:",
+        &[
+            "Access key pair",
+            "AWS profile",
+            "Web identity token file",
+            "Abort",
+        ],
+    )?;
+    match mode {
+        0 => {
+            let access_key_id = prompt_non_empty("AWS access key ID:")?;
+            let secret_access_key = prompt_secret("AWS secret access key:")?;
+            let session_token = prompt_optional_secret("AWS session token (optional):")?;
+            let default_region = prompt_optional("AWS default region (optional):")?;
+            unsafe {
+                env::set_var("AWS_ACCESS_KEY_ID", access_key_id);
+                env::set_var("AWS_SECRET_ACCESS_KEY", secret_access_key);
+                if let Some(value) = session_token {
+                    env::set_var("AWS_SESSION_TOKEN", value);
+                }
+                if let Some(value) = default_region {
+                    env::set_var("AWS_DEFAULT_REGION", value);
+                }
+            }
+        }
+        1 => {
+            let profile = prompt_non_empty("AWS profile:")?;
+            let default_region = prompt_optional("AWS default region (optional):")?;
+            unsafe {
+                env::set_var("AWS_PROFILE", profile);
+                if let Some(value) = default_region {
+                    env::set_var("AWS_DEFAULT_REGION", value);
+                }
+            }
+        }
+        2 => {
+            let token_file = prompt_non_empty("AWS web identity token file:")?;
+            let role_arn = prompt_optional("AWS role ARN (optional):")?;
+            unsafe {
+                env::set_var("AWS_WEB_IDENTITY_TOKEN_FILE", token_file);
+                if let Some(value) = role_arn {
+                    env::set_var("AWS_ROLE_ARN", value);
+                }
+            }
+        }
+        _ => return Err("cloud deploy aborted before AWS credentials were configured".to_string()),
+    }
+    Ok(())
+}
+
+fn prompt_azure_credentials() -> Result<(), String> {
+    let mode = prompt_choice(
+        "Select Azure credential input mode:",
+        &["ARM service principal", "Azure OIDC", "Abort"],
+    )?;
+    match mode {
+        0 => {
+            let subscription_id = prompt_non_empty("Azure subscription ID:")?;
+            let tenant_id = prompt_non_empty("Azure tenant ID:")?;
+            let client_id = prompt_non_empty("Azure client ID:")?;
+            let client_secret = prompt_secret("Azure client secret:")?;
+            unsafe {
+                env::set_var("ARM_SUBSCRIPTION_ID", subscription_id);
+                env::set_var("ARM_TENANT_ID", tenant_id);
+                env::set_var("ARM_CLIENT_ID", client_id);
+                env::set_var("ARM_CLIENT_SECRET", client_secret);
+            }
+        }
+        1 => {
+            let subscription_id = prompt_non_empty("Azure subscription ID:")?;
+            let tenant_id = prompt_non_empty("Azure tenant ID:")?;
+            let client_id = prompt_non_empty("Azure client ID:")?;
+            unsafe {
+                env::set_var("ARM_SUBSCRIPTION_ID", subscription_id);
+                env::set_var("ARM_TENANT_ID", tenant_id);
+                env::set_var("ARM_CLIENT_ID", client_id);
+                env::set_var("ARM_USE_OIDC", "true");
+            }
+        }
+        _ => {
+            return Err("cloud deploy aborted before Azure credentials were configured".to_string());
+        }
+    }
+    Ok(())
+}
+
+fn prompt_gcp_credentials() -> Result<(), String> {
+    let mode = prompt_choice(
+        "Select GCP credential input mode:",
+        &["Service account credentials file", "Access token", "Abort"],
+    )?;
+    match mode {
+        0 => {
+            let credentials_file = prompt_non_empty("GOOGLE_APPLICATION_CREDENTIALS path:")?;
+            unsafe {
+                env::set_var("GOOGLE_APPLICATION_CREDENTIALS", credentials_file);
+            }
+        }
+        1 => {
+            let access_token = prompt_secret("GCP access token:")?;
+            unsafe {
+                env::set_var("CLOUDSDK_AUTH_ACCESS_TOKEN", access_token);
+            }
+        }
+        _ => return Err("cloud deploy aborted before GCP credentials were configured".to_string()),
+    }
+    Ok(())
+}
+
+fn prompt_choice(prompt: &str, options: &[&str]) -> Result<usize, String> {
+    println!("{prompt}");
+    for (idx, option) in options.iter().enumerate() {
+        println!("{} ) {}", idx + 1, option);
+    }
+    print!("> ");
+    io::stdout().flush().map_err(|err| err.to_string())?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|err| err.to_string())?;
+    let choice = input
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| "invalid selection".to_string())?;
+    let idx = choice.saturating_sub(1);
+    if idx < options.len() {
+        Ok(idx)
+    } else {
+        Err("invalid selection".to_string())
+    }
+}
+
+fn prompt_non_empty(prompt: &str) -> Result<String, String> {
+    loop {
+        let value = prompt_optional(prompt)?;
+        if let Some(value) = value {
+            return Ok(value);
+        }
+        println!("A value is required.");
+    }
+}
+
+fn prompt_optional(prompt: &str) -> Result<Option<String>, String> {
+    print!("{prompt} ");
+    io::stdout().flush().map_err(|err| err.to_string())?;
+    let mut input = String::new();
+    io::stdin()
+        .read_line(&mut input)
+        .map_err(|err| err.to_string())?;
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(trimmed.to_string()))
+    }
+}
+
+fn prompt_secret(prompt: &str) -> Result<String, String> {
+    loop {
+        let value = rpassword::prompt_password(prompt).map_err(|err| err.to_string())?;
+        if !value.trim().is_empty() {
+            return Ok(value);
+        }
+        println!("A value is required.");
+    }
+}
+
+fn prompt_optional_secret(prompt: &str) -> Result<Option<String>, String> {
+    let value = rpassword::prompt_password(prompt).map_err(|err| err.to_string())?;
+    if value.trim().is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(value))
     }
 }
 
@@ -4810,6 +5053,7 @@ mod tests {
         let _guard = env_test_lock().lock().unwrap();
         let _path_guard = temp_path_with_binary("terraform");
         let bundle_dir = TempDir::new().expect("tempdir");
+        clear_aws_credential_env();
         unsafe {
             env::set_var(
                 "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
@@ -4826,13 +5070,14 @@ mod tests {
             StartTarget::Aws,
             Some("https://example.com/demo.gtbundle"),
             bundle_dir.path(),
+            "en",
         );
 
         unsafe {
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
-            env::remove_var("AWS_PROFILE");
         }
+        clear_aws_credential_env();
 
         assert!(result.is_ok());
     }
@@ -4842,6 +5087,7 @@ mod tests {
         let _guard = env_test_lock().lock().unwrap();
         let _path_guard = temp_path_with_binary("terraform");
         let bundle_dir = TempDir::new().expect("tempdir");
+        clear_aws_credential_env();
         unsafe {
             env::set_var(
                 "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
@@ -4858,16 +5104,63 @@ mod tests {
             StartTarget::Aws,
             Some("./demo.gtbundle"),
             bundle_dir.path(),
+            "en",
         )
         .unwrap_err();
 
         unsafe {
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
-            env::remove_var("AWS_PROFILE");
         }
+        clear_aws_credential_env();
 
         assert!(err.contains("aws deploy requires a remote bundle source"));
+    }
+
+    #[test]
+    fn validate_cloud_deploy_inputs_does_not_accept_partial_aws_access_key_env() {
+        let _guard = env_test_lock().lock().unwrap();
+        let _path_guard = temp_path_with_binary("terraform");
+        let bundle_dir = TempDir::new().expect("tempdir");
+        clear_aws_credential_env();
+        unsafe {
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
+                "s3://bucket/state",
+            );
+            env::set_var("AWS_ACCESS_KEY_ID", "demo");
+            env::remove_var("AWS_SECRET_ACCESS_KEY");
+            env::remove_var("AWS_PROFILE");
+            env::remove_var("AWS_DEFAULT_PROFILE");
+            env::remove_var("AWS_WEB_IDENTITY_TOKEN_FILE");
+        }
+
+        let err = validate_cloud_deploy_inputs(
+            StartTarget::Aws,
+            Some("https://example.com/demo.gtbundle"),
+            bundle_dir.path(),
+            "en",
+        )
+        .unwrap_err();
+
+        unsafe {
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
+        }
+        clear_aws_credential_env();
+
+        assert!(err.contains("missing cloud credentials"));
+    }
+
+    fn clear_aws_credential_env() {
+        unsafe {
+            env::remove_var("AWS_ACCESS_KEY_ID");
+            env::remove_var("AWS_SECRET_ACCESS_KEY");
+            env::remove_var("AWS_SESSION_TOKEN");
+            env::remove_var("AWS_PROFILE");
+            env::remove_var("AWS_DEFAULT_PROFILE");
+            env::remove_var("AWS_WEB_IDENTITY_TOKEN_FILE");
+            env::remove_var("AWS_ROLE_ARN");
+        }
     }
 
     fn env_test_lock() -> &'static Mutex<()> {
