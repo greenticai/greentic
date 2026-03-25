@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev PATH içinde bulunamadı.",
   "gtc.err.bin_missing_dev_install_hint": "Önce `gtc install` çalıştırın.",
   "gtc.err.bin_missing_op": "greentic-operator PATH içinde bulunamadı.",
+  "gtc.err.bin_missing_op_install_hint": "Önce `gtc install` çalıştırın.",
   "gtc.err.bin_missing_setup": "PATH içinde greentic-setup bulunamadı. Şununla yükleyin: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Dağıtım istemcisi kullanılamıyor.",
   "gtc.err.exec_failed": "Komut yürütülemedi.",

@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "在 PATH 中找不到 greentic-dev。",
   "gtc.err.bin_missing_dev_install_hint": "请先运行 `gtc install`。",
   "gtc.err.bin_missing_op": "在 PATH 中找不到 greentic-operator。",
+  "gtc.err.bin_missing_op_install_hint": "先运行 `gtc install`。",
   "gtc.err.bin_missing_setup": "在 PATH 中找不到 greentic-setup。请使用以下命令安装：cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "分发客户端不可用。",
   "gtc.err.exec_failed": "执行命令失败。",

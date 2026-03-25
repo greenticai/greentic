@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "PATH에서 greentic-dev를 찾을 수 없습니다.",
   "gtc.err.bin_missing_dev_install_hint": "먼저 `gtc install`을 실행하세요.",
   "gtc.err.bin_missing_op": "PATH에서 greentic-operator를 찾을 수 없습니다.",
+  "gtc.err.bin_missing_op_install_hint": "먼저 `gtc install`을 실행하세요.",
   "gtc.err.bin_missing_setup": "PATH에서 greentic-setup을 찾을 수 없습니다. 다음으로 설치하세요: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "배포 클라이언트를 사용할 수 없습니다.",
   "gtc.err.exec_failed": "명령 실행에 실패했습니다.",

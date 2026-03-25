@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev در PATH پیدا نشد.",
   "gtc.err.bin_missing_dev_install_hint": "ابتدا `gtc install` را اجرا کنید.",
   "gtc.err.bin_missing_op": "greentic-operator در PATH پیدا نشد.",
+  "gtc.err.bin_missing_op_install_hint": "ابتدا `gtc install` را اجرا کنید.",
   "gtc.err.bin_missing_setup": "greentic-setup در PATH یافت نشد. با این دستور نصب کنید: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "کلاینت توزیع در دسترس نیست.",
   "gtc.err.exec_failed": "اجرای دستور ناموفق بود.",

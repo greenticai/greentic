@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "PATH లో greentic-dev కనపడలేదు.",
   "gtc.err.bin_missing_dev_install_hint": "ముందుగా `gtc install` నడపండి.",
   "gtc.err.bin_missing_op": "PATH లో greentic-operator కనపడలేదు.",
+  "gtc.err.bin_missing_op_install_hint": "ముందుగా `gtc install` నడపండి.",
   "gtc.err.bin_missing_setup": "PATH లో greentic-setup కనపడలేదు. దీనితో ఇన్‌స్టాల్ చేయండి: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "డిస్ట్రిబ్యూషన్ క్లయింట్ అందుబాటులో లేదు.",
   "gtc.err.exec_failed": "కమాండ్‌ను అమలు చేయడం విఫలమైంది.",

@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev ble ikke funnet i PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Kjør `gtc install` først.",
   "gtc.err.bin_missing_op": "greentic-operator ble ikke funnet i PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Kjør `gtc install` først.",
   "gtc.err.bin_missing_setup": "greentic-setup ble ikke funnet i PATH. Installer med: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribusjonsklient utilgjengelig.",
   "gtc.err.exec_failed": "Klarte ikke å kjøre kommandoen.",

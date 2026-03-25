@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev ndojejuhúi PATH-pe.",
   "gtc.err.bin_missing_dev_install_hint": "Emongu'e `gtc install` raẽ.",
   "gtc.err.bin_missing_op": "greentic-operator ndojejuhúi PATH-pe.",
+  "gtc.err.bin_missing_op_install_hint": "Ejapo `gtc install` raẽ.",
   "gtc.err.bin_missing_setup": "Ndojejuhúi greentic-setup PATH-pe. Emohenda ko'ãva rupive: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Cliente de distribución ndojeporukuaái.",
   "gtc.err.exec_failed": "Ojavy tembiapoukapy ejecuta hag̃ua.",

@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "ไม่พบ greentic-dev ใน PATH",
   "gtc.err.bin_missing_dev_install_hint": "รัน `gtc install` ก่อน",
   "gtc.err.bin_missing_op": "ไม่พบ greentic-operator ใน PATH",
+  "gtc.err.bin_missing_op_install_hint": "ให้รัน `gtc install` ก่อน",
   "gtc.err.bin_missing_setup": "ไม่พบ greentic-setup ใน PATH ติดตั้งด้วย: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "ไคลเอนต์การกระจายไม่พร้อมใช้งาน",
   "gtc.err.exec_failed": "รันคำสั่งไม่สำเร็จ",

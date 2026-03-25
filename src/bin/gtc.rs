@@ -94,21 +94,27 @@ fn run(raw_args: Vec<String>) -> i32 {
         Some(("stop", sub_matches)) => run_stop(sub_matches, debug, &locale),
         Some(("dev", sub_matches)) => {
             let tail = collect_tail(sub_matches);
-            passthrough(DEV_BIN, &tail, debug, &locale)
+            let (binary, args) =
+                route_passthrough_subcommand("dev", &tail, &locale).expect("dev route");
+            passthrough(binary, &args, debug, &locale)
         }
         Some(("op", sub_matches)) => {
             let tail = collect_tail(sub_matches);
-            let rewritten = rewrite_legacy_op_args(&tail);
-            passthrough(OP_BIN, &rewritten, debug, &locale)
+            let (binary, args) =
+                route_passthrough_subcommand("op", &tail, &locale).expect("op route");
+            passthrough(binary, &args, debug, &locale)
         }
         Some(("wizard", sub_matches)) => {
             let tail = collect_tail(sub_matches);
-            let forwarded = build_wizard_args(&tail, &locale);
-            passthrough(OP_BIN, &forwarded, debug, &locale)
+            let (binary, args) =
+                route_passthrough_subcommand("wizard", &tail, &locale).expect("wizard route");
+            passthrough(binary, &args, debug, &locale)
         }
         Some(("setup", sub_matches)) => {
             let tail = collect_tail(sub_matches);
-            passthrough(SETUP_BIN, &tail, debug, &locale)
+            let (binary, args) =
+                route_passthrough_subcommand("setup", &tail, &locale).expect("setup route");
+            passthrough(binary, &args, debug, &locale)
         }
         _ => 2,
     }
@@ -337,11 +343,19 @@ fn passthrough_help_request(
         return None;
     }
 
-    match raw.subcommand.as_str() {
-        "dev" => Some((DEV_BIN, raw.tail.clone())),
-        "op" => Some((OP_BIN, rewrite_legacy_op_args(&raw.tail))),
-        "setup" => Some((SETUP_BIN, raw.tail.clone())),
-        "wizard" => Some((OP_BIN, build_wizard_args(&raw.tail, locale))),
+    route_passthrough_subcommand(&raw.subcommand, &raw.tail, locale)
+}
+
+fn route_passthrough_subcommand(
+    subcommand: &str,
+    tail: &[String],
+    locale: &str,
+) -> Option<(&'static str, Vec<String>)> {
+    match subcommand {
+        "dev" => Some((DEV_BIN, tail.to_vec())),
+        "op" => Some((OP_BIN, rewrite_legacy_op_args(tail))),
+        "setup" => Some((SETUP_BIN, tail.to_vec())),
+        "wizard" => Some((DEV_BIN, build_wizard_args(tail, locale))),
         _ => None,
     }
 }
@@ -4865,8 +4879,9 @@ mod tests {
         resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
         resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir,
         resolve_target_provider_pack, resolve_tenant_key, rewrite_store_tenant_placeholder,
-        save_admin_registry, select_start_target, tenant_env_var_name, upsert_admin_registry_entry,
-        validate_cloud_deploy_inputs, write_single_vm_spec,
+        route_passthrough_subcommand, save_admin_registry, select_start_target,
+        tenant_env_var_name, upsert_admin_registry_entry, validate_cloud_deploy_inputs,
+        write_single_vm_spec,
     };
     use clap::{Arg, ArgMatches, Command};
     use std::env;
@@ -4981,6 +4996,24 @@ mod tests {
                 "fr".to_string(),
                 "--answers".to_string(),
                 "a.json".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn route_passthrough_subcommand_routes_wizard_to_greentic_dev() {
+        let tail = vec!["--help".to_string()];
+        let (binary, args) =
+            route_passthrough_subcommand("wizard", &tail, "en").expect("wizard route");
+
+        assert_eq!(binary, DEV_BIN);
+        assert_eq!(
+            args,
+            vec![
+                "wizard".to_string(),
+                "--locale".to_string(),
+                "en".to_string(),
+                "--help".to_string()
             ]
         );
     }

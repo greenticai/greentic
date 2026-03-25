@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "PATH ൽ greentic-dev കണ്ടെത്തിയില്ല.",
   "gtc.err.bin_missing_dev_install_hint": "ആദ്യം `gtc install` പ്രവർത്തിപ്പിക്കുക.",
   "gtc.err.bin_missing_op": "PATH ൽ greentic-operator കണ്ടെത്തിയില്ല.",
+  "gtc.err.bin_missing_op_install_hint": "ആദ്യം `gtc install` പ്രവർത്തിപ്പിക്കുക.",
   "gtc.err.bin_missing_setup": "PATH-ൽ greentic-setup കണ്ടെത്തിയില്ല. ഇത് ഇൻസ്റ്റാൾ ചെയ്യുക: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "Distribution client ലഭ്യമല്ല.",
   "gtc.err.exec_failed": "കമാൻഡ് പ്രവർത്തിപ്പിക്കാൻ പരാജയപ്പെട്ടു.",

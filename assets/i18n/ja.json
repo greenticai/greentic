@@ -20,6 +20,7 @@
   "gtc.err.bin_missing_dev": "PATH に greentic-dev が見つかりません。",
   "gtc.err.bin_missing_dev_install_hint": "先に `gtc install` を実行してください。",
   "gtc.err.bin_missing_op": "PATH に greentic-operator が見つかりません。",
+  "gtc.err.bin_missing_op_install_hint": "最初に`gtc install`を実行してください。",
   "gtc.err.bin_missing_setup": "PATH に greentic-setup が見つかりません。次でインストールしてください: cargo install greentic-setup",
   "gtc.err.distribution_client_missing": "配布クライアントが利用できません。",
   "gtc.err.exec_failed": "コマンドの実行に失敗しました。",
