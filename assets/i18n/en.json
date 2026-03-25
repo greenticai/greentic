@@ -15,6 +15,7 @@
   "gtc.err.bin_missing_dev": "greentic-dev not found in PATH.",
   "gtc.err.bin_missing_dev_install_hint": "Run `gtc install` first.",
   "gtc.err.bin_missing_op": "greentic-operator not found in PATH.",
+  "gtc.err.bin_missing_op_install_hint": "Run `gtc install` first.",
   "gtc.err.bin_missing_setup": "greentic-setup not found in PATH. Install with: cargo install greentic-setup",
   "gtc.err.exec_failed": "Failed to execute command.",
   "gtc.err.key_required": "A key is required for tenant installs.",
