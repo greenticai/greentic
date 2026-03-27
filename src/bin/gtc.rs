@@ -3028,7 +3028,23 @@ fn resolve_app_pack_path_from_bundle_metadata(
     let Some(reference) = app_packs.first().and_then(YamlValue::as_str) else {
         return Ok(None);
     };
-    let candidate = if Path::new(reference).is_absolute() {
+    let candidate = if reference.contains("://") {
+        if let Some(file_name) = reference
+            .split('?')
+            .next()
+            .and_then(|value| value.rsplit('/').next())
+            .filter(|value| !value.is_empty())
+        {
+            let bundled = bundle_dir.join("packs").join(file_name);
+            if bundled.exists() {
+                bundled
+            } else {
+                PathBuf::from(reference)
+            }
+        } else {
+            PathBuf::from(reference)
+        }
+    } else if Path::new(reference).is_absolute() {
         if let Some(file_name) = Path::new(reference).file_name() {
             let bundled = bundle_dir.join("packs").join(file_name);
             if bundled.exists() {
@@ -5597,6 +5613,25 @@ mod tests {
         std::fs::write(
             dir.path().join("bundle.yaml"),
             "bundle_id: demo\napp_packs:\n  - /tmp/build/cards-demo.gtpack\n",
+        )
+        .expect("write bundle");
+
+        let resolved = resolve_deploy_app_pack_path(dir.path(), None).expect("app pack");
+        assert_eq!(resolved, app_pack);
+    }
+
+    #[test]
+    fn resolve_deploy_app_pack_path_prefers_bundle_metadata_remote_app_pack() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let packs_dir = dir.path().join("packs");
+        std::fs::create_dir_all(&packs_dir).expect("create packs dir");
+        let app_pack = packs_dir.join("cards-demo.gtpack");
+        let other_pack = packs_dir.join("default.gtpack");
+        std::fs::write(&app_pack, b"app").expect("write app pack");
+        std::fs::write(&other_pack, b"other").expect("write other pack");
+        std::fs::write(
+            dir.path().join("bundle.yaml"),
+            "bundle_id: demo\napp_packs:\n  - https://example.com/releases/latest/download/cards-demo.gtpack\n",
         )
         .expect("write bundle");
 
