@@ -280,9 +280,9 @@ dependencies = [
 
 [[package]]
 name = "aws-lc-sys"
-version = "0.39.0"
+version = "0.39.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fa7e52a4c5c547c741610a2c6f123f3881e409b714cd27e6798ef020c514f0a"
+checksum = "83a25cf98105baa966497416dbd42565ce3a8cf8dbfd59803ec9ad46f3126399"
 dependencies = [
  "cc",
  "cmake",
@@ -2351,9 +2351,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-start"
-version = "0.4.18"
+version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2d97cbb5c5fb71119d571a87734b730f2fbc855d4f378072ade0e24613c3d06d"
+checksum = "101ccf5099de95fb55501c2f5dc782253ac40781b45440c1fe4e93cb99ef8104"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "0.9.29"
+version = "0.9.30"
 dependencies = [
  "clap",
  "directories",

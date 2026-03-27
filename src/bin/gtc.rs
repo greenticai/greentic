@@ -39,7 +39,7 @@ const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
 const DEFAULT_OPERATOR_IMAGE_DIGEST: &str =
-    "sha256:caf0176a7f8d92a556b670c83fea235af213535293d5e024eae299635126d4b5";
+    "sha256:289f908849166956ba443d61d03563f65fcf1cdf89fe3d0bedd99689b05feb70";
 const EMBEDDED_TERRAFORM_GTPACK: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/deployer/terraform.gtpack"
