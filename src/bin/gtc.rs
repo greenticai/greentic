@@ -38,11 +38,11 @@ const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
-const DEFAULT_AWS_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:ed294bd2a8b21dfbaddd409adf7182635b9121e3b677220a41f07d2f836ee0e4";
-const DEFAULT_GCP_OPERATOR_IMAGE: &str = "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:7d2ef179a43206858c845b1c1758c5ee850b4f1fc64c5894939055fa8a66ef30";
-const DEFAULT_AZURE_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:ed294bd2a8b21dfbaddd409adf7182635b9121e3b677220a41f07d2f836ee0e4";
+const DEFAULT_AWS_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b";
+const DEFAULT_GCP_OPERATOR_IMAGE: &str = "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db";
+const DEFAULT_AZURE_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b";
 const DEFAULT_OPERATOR_IMAGE_DIGEST: &str =
-    "sha256:ed294bd2a8b21dfbaddd409adf7182635b9121e3b677220a41f07d2f836ee0e4";
+    "sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b";
 const EMBEDDED_TERRAFORM_GTPACK: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/deployer/terraform.gtpack"

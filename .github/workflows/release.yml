@@ -33,12 +33,44 @@ jobs:
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
+  prepare_deployer_assets:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs:
+      - ci
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out greentic-deployer
+        uses: actions/checkout@v4
+        with:
+          repository: greenticai/greentic-deployer
+          path: greentic-deployer
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.91.0
+
+      - name: Build and sync deployer pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash ci/sync_deployer_pack.sh "$GITHUB_WORKSPACE/greentic-deployer" "$GITHUB_WORKSPACE/assets/deployer/terraform.gtpack"
+
+      - name: Upload embedded deployer asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: embedded-deployer-assets
+          path: assets/deployer/terraform.gtpack
+
   build_binaries:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.os }}
     needs:
       - metadata
       - ci
+      - prepare_deployer_assets
     strategy:
       fail-fast: false
       matrix:
@@ -64,6 +96,12 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+
+      - name: Download embedded deployer asset
+        uses: actions/download-artifact@v4
+        with:
+          name: embedded-deployer-assets
+          path: assets/deployer
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
