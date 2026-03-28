@@ -38,8 +38,11 @@ const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
+const DEFAULT_AWS_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:4733a3dd155567f89466ddc056c578fa68c00c3793d70bb29785af328758a785";
+const DEFAULT_GCP_OPERATOR_IMAGE: &str = "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:0145fe466388f168cbd909b221c334f8233624d14684f8cbcc72700f79bc415b";
+const DEFAULT_AZURE_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:4733a3dd155567f89466ddc056c578fa68c00c3793d70bb29785af328758a785";
 const DEFAULT_OPERATOR_IMAGE_DIGEST: &str =
-    "sha256:289f908849166956ba443d61d03563f65fcf1cdf89fe3d0bedd99689b05feb70";
+    "sha256:4733a3dd155567f89466ddc056c578fa68c00c3793d70bb29785af328758a785";
 const EMBEDDED_TERRAFORM_GTPACK: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/deployer/terraform.gtpack"
@@ -1421,12 +1424,13 @@ fn run_multi_target_deployer_apply(
         args.push("--environment".to_string());
         args.push(environment.to_string());
     }
-    run_binary_checked(
+    run_binary_checked_with_target(
         DEPLOYER_BIN,
         &args,
         debug,
         locale,
         "multi-target deploy apply",
+        Some(target),
     )
 }
 
@@ -1439,17 +1443,42 @@ fn print_cloud_deploy_contract_hint(target: StartTarget) {
             println!("  required external Terraform vars:");
             println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
             println!("  optional Terraform vars:");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
+            println!("      default: {DEFAULT_AWS_OPERATOR_IMAGE}");
             println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
-            println!("      default: {DEFAULT_OPERATOR_IMAGE_DIGEST}");
+            println!("      fallback default: {DEFAULT_OPERATOR_IMAGE_DIGEST}");
             println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_DNS_NAME (personalized mode only)");
             println!("  internal AWS bootstrap now handles:");
             println!("    admin TLS server secrets");
         }
-        StartTarget::Gcp | StartTarget::Azure => {
+        StartTarget::Gcp => {
+            println!("  optional Terraform vars:");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
+            println!("      default: {DEFAULT_GCP_OPERATOR_IMAGE}");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
+            println!("      fallback default: {DEFAULT_OPERATOR_IMAGE_DIGEST}");
+            println!("  additional target-specific Terraform vars may still be required via:");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_*");
+        }
+        StartTarget::Azure => {
+            println!("  optional Terraform vars:");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
+            println!("      default: {DEFAULT_AZURE_OPERATOR_IMAGE}");
+            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
+            println!("      fallback default: {DEFAULT_OPERATOR_IMAGE_DIGEST}");
             println!("  additional target-specific Terraform vars may still be required via:");
             println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_*");
         }
         StartTarget::SingleVm | StartTarget::Runtime => {}
+    }
+}
+
+fn default_operator_image_for_target(target: StartTarget) -> Option<&'static str> {
+    match target {
+        StartTarget::Aws => Some(DEFAULT_AWS_OPERATOR_IMAGE),
+        StartTarget::Gcp => Some(DEFAULT_GCP_OPERATOR_IMAGE),
+        StartTarget::Azure => Some(DEFAULT_AZURE_OPERATOR_IMAGE),
+        StartTarget::SingleVm | StartTarget::Runtime => None,
     }
 }
 
@@ -2140,12 +2169,13 @@ fn run_multi_target_deployer_destroy(
         args.push("--environment".to_string());
         args.push(environment.to_string());
     }
-    run_binary_checked(
+    run_binary_checked_with_target(
         DEPLOYER_BIN,
         &args,
         debug,
         locale,
         "multi-target deploy destroy",
+        Some(target),
     )
 }
 
@@ -2246,7 +2276,18 @@ fn run_binary_checked(
     locale: &str,
     operation: &str,
 ) -> Result<(), String> {
-    let status = run_binary_status(binary, args, debug, locale)?;
+    run_binary_checked_with_target(binary, args, debug, locale, operation, None)
+}
+
+fn run_binary_checked_with_target(
+    binary: &str,
+    args: &[String],
+    debug: bool,
+    locale: &str,
+    operation: &str,
+    target: Option<StartTarget>,
+) -> Result<(), String> {
+    let status = run_binary_status_with_target(binary, args, debug, locale, target)?;
     if status.success() {
         return Ok(());
     }
@@ -2262,13 +2303,23 @@ fn run_binary_capture(
     debug: bool,
     locale: &str,
 ) -> Result<String, String> {
+    run_binary_capture_with_target(binary, args, debug, locale, None)
+}
+
+fn run_binary_capture_with_target(
+    binary: &str,
+    args: &[String],
+    debug: bool,
+    locale: &str,
+    target: Option<StartTarget>,
+) -> Result<String, String> {
     if debug {
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
     }
     let command = resolve_binary_command(binary);
     let mut process = ProcessCommand::new(&command);
     process.args(args).env("GREENTIC_LOCALE", locale);
-    apply_default_deploy_env(&mut process);
+    apply_default_deploy_env_for_target(&mut process, target);
     let output = process
         .output()
         .map_err(|err| format!("failed to execute {binary}: {err}"))?;
@@ -2285,11 +2336,12 @@ fn run_binary_capture(
     String::from_utf8(output.stdout).map_err(|err| format!("invalid UTF-8 from {binary}: {err}"))
 }
 
-fn run_binary_status(
+fn run_binary_status_with_target(
     binary: &str,
     args: &[String],
     debug: bool,
     locale: &str,
+    target: Option<StartTarget>,
 ) -> Result<std::process::ExitStatus, String> {
     if debug {
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
@@ -2302,13 +2354,19 @@ fn run_binary_status(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    apply_default_deploy_env(&mut process);
+    apply_default_deploy_env_for_target(&mut process, target);
     process
         .status()
         .map_err(|err| format!("failed to execute {binary}: {err}"))
 }
 
-fn apply_default_deploy_env(process: &mut ProcessCommand) {
+fn apply_default_deploy_env_for_target(process: &mut ProcessCommand, target: Option<StartTarget>) {
+    if env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE").is_none()
+        && let Some(target) = target
+        && let Some(image) = default_operator_image_for_target(target)
+    {
+        process.env("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE", image);
+    }
     if env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST").is_none() {
         process.env(
             "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
@@ -4886,8 +4944,10 @@ impl DocManifest {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdminRegistryDocument, DEV_BIN, StartBundleResolution, StartTarget, admin_registry_path,
-        build_wizard_args, collect_tail, detect_bundle_root, detect_locale,
+        AdminRegistryDocument, DEFAULT_AWS_OPERATOR_IMAGE, DEFAULT_AZURE_OPERATOR_IMAGE,
+        DEFAULT_GCP_OPERATOR_IMAGE, DEFAULT_OPERATOR_IMAGE_DIGEST, DEV_BIN, StartBundleResolution,
+        StartTarget, admin_registry_path, apply_default_deploy_env_for_target, build_wizard_args,
+        collect_tail, default_operator_image_for_target, detect_bundle_root, detect_locale,
         ensure_admin_certs_ready, fingerprint_bundle_dir, locale_from_args,
         normalize_bundle_fingerprint, normalize_install_arch, parse_start_cli_options,
         parse_start_request, parse_stop_cli_options, parse_stop_request,
@@ -4900,10 +4960,12 @@ mod tests {
         write_single_vm_spec,
     };
     use clap::{Arg, ArgMatches, Command};
+    use std::collections::HashMap;
     use std::env;
     use std::fs;
     use std::os::unix::fs::PermissionsExt;
     use std::path::{Path, PathBuf};
+    use std::process::Command as ProcessCommand;
     use std::sync::{Mutex, OnceLock};
     use tempfile::{TempDir, tempdir};
 
@@ -5789,5 +5851,64 @@ file:state/config/platform/static-routes.json:206"
             output,
             "store://greentic-biz/3point/providers/routing-hook/fast2flow.gtpack:latest"
         );
+    }
+
+    #[test]
+    fn default_operator_image_for_target_uses_cloud_specific_refs() {
+        assert_eq!(
+            default_operator_image_for_target(StartTarget::Aws),
+            Some(DEFAULT_AWS_OPERATOR_IMAGE)
+        );
+        assert_eq!(
+            default_operator_image_for_target(StartTarget::Gcp),
+            Some(DEFAULT_GCP_OPERATOR_IMAGE)
+        );
+        assert_eq!(
+            default_operator_image_for_target(StartTarget::Azure),
+            Some(DEFAULT_AZURE_OPERATOR_IMAGE)
+        );
+        assert_eq!(
+            default_operator_image_for_target(StartTarget::Runtime),
+            None
+        );
+    }
+
+    #[test]
+    fn apply_default_deploy_env_for_target_prefers_explicit_env() {
+        let _guard = env_test_lock().lock().unwrap();
+        unsafe {
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE",
+                "custom/image@sha256:deadbeef",
+            );
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
+        }
+        let mut process = ProcessCommand::new("env");
+
+        apply_default_deploy_env_for_target(&mut process, Some(StartTarget::Gcp));
+
+        let envs: HashMap<_, _> = process
+            .get_envs()
+            .filter_map(|(key, value)| {
+                Some((
+                    key.to_string_lossy().to_string(),
+                    value?.to_string_lossy().to_string(),
+                ))
+            })
+            .collect();
+        assert!(
+            !envs.contains_key("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE"),
+            "explicit parent env should be inherited without adding a child override"
+        );
+        assert_eq!(
+            envs.get("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST")
+                .map(String::as_str),
+            Some(DEFAULT_OPERATOR_IMAGE_DIGEST)
+        );
+
+        unsafe {
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
+        }
     }
 }
