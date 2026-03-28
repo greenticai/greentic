@@ -38,11 +38,11 @@ const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
-const DEFAULT_AWS_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:4733a3dd155567f89466ddc056c578fa68c00c3793d70bb29785af328758a785";
-const DEFAULT_GCP_OPERATOR_IMAGE: &str = "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:0145fe466388f168cbd909b221c334f8233624d14684f8cbcc72700f79bc415b";
-const DEFAULT_AZURE_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:4733a3dd155567f89466ddc056c578fa68c00c3793d70bb29785af328758a785";
+const DEFAULT_AWS_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:ed294bd2a8b21dfbaddd409adf7182635b9121e3b677220a41f07d2f836ee0e4";
+const DEFAULT_GCP_OPERATOR_IMAGE: &str = "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:7d2ef179a43206858c845b1c1758c5ee850b4f1fc64c5894939055fa8a66ef30";
+const DEFAULT_AZURE_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:ed294bd2a8b21dfbaddd409adf7182635b9121e3b677220a41f07d2f836ee0e4";
 const DEFAULT_OPERATOR_IMAGE_DIGEST: &str =
-    "sha256:4733a3dd155567f89466ddc056c578fa68c00c3793d70bb29785af328758a785";
+    "sha256:ed294bd2a8b21dfbaddd409adf7182635b9121e3b677220a41f07d2f836ee0e4";
 const EMBEDDED_TERRAFORM_GTPACK: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/assets/deployer/terraform.gtpack"
@@ -3633,15 +3633,20 @@ fn ensure_deployer_dist_pack(debug: bool) -> Result<(), String> {
     let cargo_bin_dir = resolve_cargo_bin_dir()?;
     let dist_dir = cargo_bin_dir.join("dist");
     let target = dist_dir.join("terraform.gtpack");
-    if target.is_file() {
+    fs::create_dir_all(&dist_dir).map_err(|e| e.to_string())?;
+
+    let needs_write = match fs::read(&target) {
+        Ok(existing) => existing != EMBEDDED_TERRAFORM_GTPACK,
+        Err(_) => true,
+    };
+    if !needs_write {
         return Ok(());
     }
 
-    fs::create_dir_all(&dist_dir).map_err(|e| e.to_string())?;
     fs::write(&target, EMBEDDED_TERRAFORM_GTPACK).map_err(|e| e.to_string())?;
 
     if debug {
-        eprintln!("installed deployer pack at {}", target.display());
+        eprintln!("updated deployer pack at {}", target.display());
     }
 
     Ok(())
