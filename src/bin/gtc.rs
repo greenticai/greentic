@@ -1375,15 +1375,10 @@ fn run_multi_target_deployer_apply(
         .deploy_bundle_source
         .clone()
         .or_else(resolve_remote_deploy_bundle_source_override);
-    validate_cloud_deploy_inputs(
-        target,
-        remote_override.as_deref(),
-        &resolved.bundle_dir,
-        locale,
-    )?;
     let deploy_bundle_source = remote_override
         .clone()
         .unwrap_or_else(|| bundle_artifact.display().to_string());
+    validate_cloud_deploy_inputs(target, &deploy_bundle_source, &resolved.bundle_dir, locale)?;
     let app_pack =
         resolve_deploy_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
     let provider_pack = resolve_target_provider_pack(
@@ -1398,7 +1393,7 @@ fn run_multi_target_deployer_apply(
     println!("Deployment bundle digest: {bundle_digest}");
     if remote_override.is_none() {
         println!(
-            "Note: no GREENTIC_DEPLOY_BUNDLE_SOURCE override set; cloud deploy will use the local artifact path above."
+            "Note: no GREENTIC_DEPLOY_BUNDLE_SOURCE override set; cloud deploy will use the local configured artifact above."
         );
     }
     print_cloud_deploy_contract_hint(target);
@@ -1436,8 +1431,9 @@ fn run_multi_target_deployer_apply(
 
 fn print_cloud_deploy_contract_hint(target: StartTarget) {
     println!("Cloud deploy contract:");
-    println!("  required remote bundle source:");
-    println!("    --deploy-bundle-source https://.../bundle.gtbundle");
+    println!("  bundle source:");
+    println!("    default: local configured artifact produced by setup/start");
+    println!("    override: --deploy-bundle-source https://.../bundle.gtbundle");
     match target {
         StartTarget::Aws => {
             println!("  required external Terraform vars:");
@@ -1484,7 +1480,7 @@ fn default_operator_image_for_target(target: StartTarget) -> Option<&'static str
 
 fn validate_cloud_deploy_inputs(
     target: StartTarget,
-    remote_bundle_source: Option<&str>,
+    bundle_source: &str,
     bundle_dir: &Path,
     locale: &str,
 ) -> Result<(), String> {
@@ -1497,33 +1493,17 @@ fn validate_cloud_deploy_inputs(
         StartTarget::Aws => {
             ensure_cloud_credentials(target, locale)?;
             ensure_target_terraform_inputs(target)?;
-            let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
-                "aws deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE".to_string()
-            })?;
-            if !is_remote_bundle_source(remote_bundle_source) {
-                return Err(format!(
-                    "aws deploy requires a remote bundle source, got local path: {remote_bundle_source}"
-                ));
+            if is_remote_bundle_source(bundle_source) {
+                validate_bundle_registry_mapping_env(bundle_source)?;
             }
-            validate_bundle_registry_mapping_env(remote_bundle_source)?;
             Ok(())
         }
         StartTarget::Gcp | StartTarget::Azure => {
             ensure_cloud_credentials(target, locale)?;
             ensure_target_terraform_inputs(target)?;
-            let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
-                format!(
-                    "{} deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE",
-                    target.as_str()
-                )
-            })?;
-            if !is_remote_bundle_source(remote_bundle_source) {
-                return Err(format!(
-                    "{} deploy requires a remote bundle source, got local path: {remote_bundle_source}",
-                    target.as_str()
-                ));
+            if is_remote_bundle_source(bundle_source) {
+                validate_bundle_registry_mapping_env(bundle_source)?;
             }
-            validate_bundle_registry_mapping_env(remote_bundle_source)?;
             Ok(())
         }
         StartTarget::SingleVm | StartTarget::Runtime => Ok(()),
@@ -5298,7 +5278,7 @@ mod tests {
 
         let result = validate_cloud_deploy_inputs(
             StartTarget::Aws,
-            Some("https://example.com/demo.gtbundle"),
+            "https://example.com/demo.gtbundle",
             bundle_dir.path(),
             "en",
         );
@@ -5313,7 +5293,7 @@ mod tests {
     }
 
     #[test]
-    fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
+    fn validate_cloud_deploy_inputs_accepts_local_bundle_for_aws() {
         let _guard = env_test_lock().lock().unwrap();
         let _path_guard = temp_path_with_binary("terraform");
         let bundle_dir = TempDir::new().expect("tempdir");
@@ -5330,13 +5310,12 @@ mod tests {
             env::set_var("AWS_PROFILE", "demo");
         }
 
-        let err = validate_cloud_deploy_inputs(
+        let result = validate_cloud_deploy_inputs(
             StartTarget::Aws,
-            Some("./demo.gtbundle"),
+            "./demo.gtbundle",
             bundle_dir.path(),
             "en",
-        )
-        .unwrap_err();
+        );
 
         unsafe {
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
@@ -5344,7 +5323,7 @@ mod tests {
         }
         clear_aws_credential_env();
 
-        assert!(err.contains("aws deploy requires a remote bundle source"));
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -5367,7 +5346,7 @@ mod tests {
 
         let err = validate_cloud_deploy_inputs(
             StartTarget::Aws,
-            Some("https://example.com/demo.gtbundle"),
+            "https://example.com/demo.gtbundle",
             bundle_dir.path(),
             "en",
         )
