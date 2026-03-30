@@ -326,6 +326,8 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
     let sandbox = TestSandbox::new("install_tenant_mode_uses_env_key_and_installs_tools_and_docs");
     let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
+    let current_os = env::consts::OS;
+    let current_arch = env::consts::ARCH;
 
     sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
@@ -356,6 +358,12 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
             "binary_name": "greentic-enterprise-tool",
             "targets": [
                 {
+                    "os": current_os,
+                    "arch": current_arch,
+                    "url": format!("file://{}", tool_zip.display()),
+                    "sha256": tool_sha256
+                },
+                {
                     "os": "macos",
                     "arch": "x86_64",
                     "url": format!("file://{}", tool_zip.display()),
@@ -366,12 +374,6 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
                     "arch": "aarch64",
                     "url": format!("file://{}", tool_zip.display()),
                     "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-                },
-                {
-                    "os": "linux",
-                    "arch": "x86_64",
-                    "url": format!("file://{}", tool_zip.display()),
-                    "sha256": tool_sha256
                 }
             ]
         },

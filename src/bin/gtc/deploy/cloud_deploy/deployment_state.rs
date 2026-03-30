@@ -451,6 +451,7 @@ mod tests {
     };
     use crate::deploy::{StartBundleResolution, StartCliOptions, StartTarget, StopCliOptions};
     use crate::tests::env_test_lock;
+    use directories::BaseDirs;
     use greentic_start::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
     };
@@ -491,14 +492,17 @@ mod tests {
 
         let state_path = deployment_state_path("demo", StartTarget::Aws).expect("state path");
         let artifact_root = deployment_artifacts_root().expect("artifact root");
+        let base = BaseDirs::new().expect("base dirs");
+        let expected_state_root = base.state_dir().unwrap_or_else(|| base.data_local_dir());
+        let expected_artifact_root = base.data_local_dir();
 
         unsafe {
             env::remove_var("XDG_STATE_HOME");
             env::remove_var("XDG_DATA_HOME");
         }
 
-        assert!(state_path.starts_with(&state_home));
-        assert!(artifact_root.starts_with(&data_home));
+        assert!(state_path.starts_with(expected_state_root));
+        assert!(artifact_root.starts_with(expected_artifact_root));
     }
 
     #[test]

@@ -374,9 +374,11 @@ mod tests {
 
         let spec_path = write_single_vm_spec("Demo Bundle", &resolved, &request, &artifact)
             .expect("write spec");
+        let state_root = deployment_runtime_root("demo-key").expect("state root");
         let snapshot = fs::read_to_string(&spec_path)
             .expect("read spec")
-            .replace(&dir.path().display().to_string(), "<TMP>");
+            .replace(&dir.path().display().to_string(), "<TMP>")
+            .replace(&state_root.display().to_string(), "<STATE_ROOT>");
 
         unsafe {
             env::remove_var("XDG_STATE_HOME");
@@ -403,10 +405,10 @@ mod tests {
                 certFile: '<TMP>/bundle/.greentic/admin/certs/server.crt'
                 keyFile: '<TMP>/bundle/.greentic/admin/certs/server.key'
           storage:
-            stateDir: '<TMP>/state-home/greentic/gtc/single-vm/demo-key/state'
-            cacheDir: '<TMP>/state-home/greentic/gtc/single-vm/demo-key/cache'
-            logDir: '<TMP>/state-home/greentic/gtc/single-vm/demo-key/log'
-            tempDir: '<TMP>/state-home/greentic/gtc/single-vm/demo-key/tmp'
+            stateDir: '<STATE_ROOT>/state'
+            cacheDir: '<STATE_ROOT>/cache'
+            logDir: '<STATE_ROOT>/log'
+            tempDir: '<STATE_ROOT>/tmp'
           service:
             manager: systemd
             user: greentic

@@ -117,6 +117,9 @@ jobs:
           toolchain: 1.91.0
           targets: ${{ matrix.target }}
 
+      - name: Ensure target stdlib is installed
+        run: rustup target add --toolchain 1.91.0 ${{ matrix.target }}
+
       - name: Build
         run: cargo build --release --target ${{ matrix.target }}
 
