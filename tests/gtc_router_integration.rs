@@ -1,13 +1,12 @@
-#![cfg(unix)]
-
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::io::Write;
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use sha2::{Digest, Sha256};
 
 #[test]
 fn version_flag_prints_cargo_package_version() {
@@ -23,8 +22,8 @@ fn version_flag_prints_cargo_package_version() {
 #[test]
 fn passthrough_dev_preserves_exit_code() {
     let sandbox = TestSandbox::new("passthrough_dev_preserves_exit_code");
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 17\n");
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.write_exit_tool("greentic-dev", 17);
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let status = sandbox.run_gtc(["dev", "flow", "list"], HashMap::new());
     assert_eq!(status.code(), Some(17));
@@ -33,7 +32,7 @@ fn passthrough_dev_preserves_exit_code() {
 #[test]
 fn wizard_missing_greentic_dev_prints_install_guidance() {
     let sandbox = TestSandbox::new("wizard_missing_greentic_dev_prints_install_guidance");
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let mut extra = HashMap::new();
     extra.insert(
@@ -59,17 +58,9 @@ fn passthrough_dev_uses_greentic_dev_bin_override() {
     let log_file = sandbox.path().join("override-dev.log");
     let override_bin = sandbox.path().join("bin").join("greentic-dev-local");
     fs::create_dir_all(override_bin.parent().expect("override parent")).expect("override dir");
-
-    let override_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-    fs::write(&override_bin, override_script).expect("write override dev");
-    fs::set_permissions(&override_bin, fs::Permissions::from_mode(0o755))
-        .expect("chmod override dev");
-
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 91\n");
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.compile_rust_tool_at(&override_bin, &rust_arg_logger_program(&log_file, 0));
+    sandbox.write_exit_tool("greentic-dev", 91);
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let mut extra = HashMap::new();
     extra.insert(
@@ -88,14 +79,8 @@ fn passthrough_dev_uses_greentic_dev_bin_override() {
 fn wizard_passthrough_routes_to_greentic_dev_with_all_args() {
     let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_dev_with_all_args");
     let log_file = sandbox.path().join("dev.log");
-
-    let dev_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-dev", &dev_script);
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let status = sandbox.run_gtc(
         ["wizard", "--locale", "fr", "--answers", "oci://example"],
@@ -111,14 +96,8 @@ fn wizard_passthrough_routes_to_greentic_dev_with_all_args() {
 fn wizard_passthrough_preserves_global_locale_for_greentic_dev() {
     let sandbox = TestSandbox::new("wizard_passthrough_preserves_global_locale_for_greentic_dev");
     let log_file = sandbox.path().join("dev.log");
-
-    let dev_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-dev", &dev_script);
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let status = sandbox.run_gtc(
         ["--locale", "fr", "wizard", "--answers", "oci://example"],
@@ -134,14 +113,8 @@ fn wizard_passthrough_preserves_global_locale_for_greentic_dev() {
 fn wizard_passthrough_routes_to_greentic_dev_without_args() {
     let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_dev_without_args");
     let log_file = sandbox.path().join("dev.log");
-
-    let dev_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-dev", &dev_script);
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let status = sandbox.run_gtc(["wizard"], HashMap::new());
     assert_eq!(status.code(), Some(0));
@@ -154,12 +127,8 @@ fn wizard_passthrough_routes_to_greentic_dev_without_args() {
 fn wizard_emit_answers_writes_requested_file_via_dev_wizard() {
     let sandbox = TestSandbox::new("wizard_emit_answers_writes_requested_file_via_dev_wizard");
     let answers_path = sandbox.path().join("answers.json");
-
-    sandbox.write_script(
-        "greentic-dev",
-        "#!/bin/sh\nemit=''\nprev=''\nfor arg in \"$@\"; do\n  if [ \"$prev\" = '--emit-answers' ]; then\n    emit=\"$arg\"\n    break\n  fi\n  prev=\"$arg\"\ndone\nif [ -z \"$emit\" ]; then\n  echo 'missing --emit-answers target' >&2\n  exit 9\nfi\nprintf '{\"schema_version\":\"1.0.0\",\"answers\":{},\"events\":[]}\n' > \"$emit\"\nexit 0\n",
-    );
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 99\n");
+    sandbox.write_emit_answers_tool("greentic-dev");
+    sandbox.write_exit_tool("greentic-operator", 99);
 
     let output = sandbox.run_gtc_capture(
         [
@@ -214,8 +183,8 @@ fn wizard_emit_answers_writes_requested_file_via_dev_wizard() {
 #[test]
 fn debug_router_shows_wizard_routes_to_greentic_dev() {
     let sandbox = TestSandbox::new("debug_router_shows_wizard_routes_to_greentic_dev");
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 99\n");
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 99);
 
     let output = sandbox.run_gtc_capture(["--debug-router", "wizard", "--help"], HashMap::new());
     assert_eq!(output.status.code(), Some(0));
@@ -229,15 +198,9 @@ fn debug_router_shows_wizard_routes_to_greentic_dev() {
 fn setup_help_passthrough_routes_to_greentic_setup() {
     let sandbox = TestSandbox::new("setup_help_passthrough_routes_to_greentic_setup");
     let log_file = sandbox.path().join("setup.log");
-
-    let setup_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-setup", &setup_script);
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let status = sandbox.run_gtc(["setup", "--help"], HashMap::new());
     assert_eq!(status.code(), Some(0));
@@ -250,14 +213,8 @@ fn setup_help_passthrough_routes_to_greentic_setup() {
 fn op_help_passthrough_routes_to_greentic_operator() {
     let sandbox = TestSandbox::new("op_help_passthrough_routes_to_greentic_operator");
     let log_file = sandbox.path().join("op.log");
-
-    let op_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-operator", &op_script);
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
+    sandbox.write_arg_logger_tool("greentic-operator", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
 
     let status = sandbox.run_gtc(["op", "--help"], HashMap::new());
     assert_eq!(status.code(), Some(0));
@@ -271,29 +228,15 @@ fn doctor_uses_greentic_dev_bin_override() {
     let sandbox = TestSandbox::new("doctor_uses_greentic_dev_bin_override");
     let override_bin = sandbox.path().join("bin").join("greentic-dev-local");
     fs::create_dir_all(override_bin.parent().expect("override parent")).expect("override dir");
-
-    fs::write(
+    sandbox.compile_rust_tool_at(
         &override_bin,
-        "#!/bin/sh\nif [ \"$1\" = \"--version\" ]; then\n  echo 'greentic-dev local-test'\n  exit 0\nfi\nexit 0\n",
-    )
-    .expect("write override dev");
-    fs::set_permissions(&override_bin, fs::Permissions::from_mode(0o755))
-        .expect("chmod override dev");
-
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 92\n");
-    sandbox.write_script(
-        "greentic-operator",
-        "#!/bin/sh\necho 'greentic-operator 0.0.0'\n",
+        &rust_version_tool_program("greentic-dev local-test"),
     );
-    sandbox.write_script(
-        "greentic-bundle",
-        "#!/bin/sh\necho 'greentic-bundle 0.0.0'\n",
-    );
-    sandbox.write_script("greentic-setup", "#!/bin/sh\necho 'greentic-setup 0.0.0'\n");
-    sandbox.write_script(
-        "greentic-deployer",
-        "#!/bin/sh\necho 'greentic-deployer 0.0.0'\n",
-    );
+    sandbox.write_exit_tool("greentic-dev", 92);
+    sandbox.write_version_tool("greentic-operator", "greentic-operator 0.0.0");
+    sandbox.write_version_tool("greentic-bundle", "greentic-bundle 0.0.0");
+    sandbox.write_version_tool("greentic-setup", "greentic-setup 0.0.0");
+    sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
 
     let mut extra = HashMap::new();
     extra.insert(
@@ -312,14 +255,8 @@ fn doctor_uses_greentic_dev_bin_override() {
 fn op_setup_routes_to_demo_setup_with_default_tenant_team() {
     let sandbox = TestSandbox::new("op_setup_routes_to_demo_setup_with_default_tenant_team");
     let log_file = sandbox.path().join("op.log");
-
-    let op_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", &op_script);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_arg_logger_tool("greentic-operator", &log_file, 0);
 
     let status = sandbox.run_gtc(
         ["op", "setup", "--bundle", "./myfirst.gtbundle"],
@@ -340,13 +277,8 @@ fn op_start_routes_to_demo_start_with_default_tenant_team_and_cloudflared_off() 
     );
     let log_file = sandbox.path().join("op.log");
 
-    let op_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", &op_script);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_arg_logger_tool("greentic-operator", &log_file, 0);
 
     let status = sandbox.run_gtc(
         ["op", "start", "--bundle", "./myfirst.gtbundle"],
@@ -367,18 +299,9 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
     let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
 
-    let dev_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-dev", &dev_script);
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
-    let cargo_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"search\" ]; then\n  echo 'cargo-binstall = \"1.0.0\" # mock'\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\nfi\nexit 0\n",
-        cargo_log_file.display()
-    );
-    sandbox.write_script("cargo", &cargo_script);
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
 
     let output = sandbox.run_gtc_capture(["install"], HashMap::new());
     assert_eq!(
@@ -404,18 +327,9 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
     let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
 
-    let dev_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-        log_file.display()
-    );
-
-    sandbox.write_script("greentic-dev", &dev_script);
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
-    let cargo_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"search\" ]; then\n  echo 'cargo-binstall = \"1.0.0\" # mock'\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\nfi\nexit 0\n",
-        cargo_log_file.display()
-    );
-    sandbox.write_script("cargo", &cargo_script);
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
 
     let mock_root = sandbox.path().join("mock-dist");
     fs::create_dir_all(&mock_root).expect("mock root");
@@ -426,6 +340,7 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
         "greentic-enterprise-tool",
         b"#!/bin/sh\necho tool\n",
     );
+    let tool_sha256 = sha256_file(&tool_zip);
 
     let doc_path = mock_root.join("guide.md");
     fs::write(&doc_path, b"# enterprise guide\n").expect("doc write");
@@ -456,7 +371,7 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
                     "os": "linux",
                     "arch": "x86_64",
                     "url": format!("file://{}", tool_zip.display()),
-                    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                    "sha256": tool_sha256
                 }
             ]
         },
@@ -568,13 +483,9 @@ fn install_skips_tenant_when_public_install_fails() {
     let sandbox = TestSandbox::new("install_skips_tenant_when_public_install_fails");
     let cargo_log_file = sandbox.path().join("cargo.log");
 
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 23\n");
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
-    let cargo_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"search\" ]; then\n  echo 'cargo-binstall = \"1.0.0\" # mock'\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\nfi\nexit 0\n",
-        cargo_log_file.display()
-    );
-    sandbox.write_script("cargo", &cargo_script);
+    sandbox.write_exit_tool("greentic-dev", 23);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
 
     let mock_root = sandbox.path().join("mock-dist");
     fs::create_dir_all(&mock_root).expect("mock root");
@@ -599,13 +510,9 @@ fn update_calls_binstall_force_for_all_companions() {
     let sandbox = TestSandbox::new("update_calls_binstall_force_for_all_companions");
     let cargo_log_file = sandbox.path().join("cargo.log");
 
-    let cargo_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\nfi\nexit 0\n",
-        cargo_log_file.display()
-    );
-    sandbox.write_script("cargo", &cargo_script);
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let output = sandbox.run_gtc_capture(["update"], HashMap::new());
     assert_eq!(
@@ -633,13 +540,9 @@ fn update_reports_failure_and_continues() {
     let sandbox = TestSandbox::new("update_reports_failure_and_continues");
     let cargo_log_file = sandbox.path().join("cargo.log");
 
-    let cargo_script = format!(
-        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\n  exit 0\nfi\ncase \"$*\" in\n  *greentic-bundle*) exit 1 ;;\n  *) exit 0 ;;\nesac\n",
-        cargo_log_file.display()
-    );
-    sandbox.write_script("cargo", &cargo_script);
-    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
-    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, Some("greentic-bundle"));
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
 
     let output = sandbox.run_gtc_capture(["update"], HashMap::new());
     assert_eq!(
@@ -660,6 +563,243 @@ fn update_reports_failure_and_continues() {
     );
 }
 
+#[test]
+fn add_and_remove_admin_roundtrip_updates_registry() {
+    let sandbox = TestSandbox::new("add_and_remove_admin_roundtrip_updates_registry");
+    let bundle_dir = sandbox.path().join("bundle");
+    fs::create_dir_all(&bundle_dir).expect("bundle dir");
+    let public_key = sandbox.path().join("admin.pub");
+    fs::write(
+        &public_key,
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestKey admin@test\n",
+    )
+    .expect("write public key");
+
+    let add_output = sandbox.run_gtc_capture(
+        [
+            "add-admin",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--cn",
+            "admin-cn",
+            "--name",
+            "Demo Admin",
+            "--public-key-file",
+            public_key.to_str().expect("pubkey utf8"),
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(
+        add_output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&add_output.stdout),
+        String::from_utf8_lossy(&add_output.stderr)
+    );
+
+    let registry_path = bundle_dir
+        .join(".greentic")
+        .join("admin")
+        .join("admins.json");
+    let registry_raw = fs::read_to_string(&registry_path).expect("read registry");
+    let registry: serde_json::Value =
+        serde_json::from_str(&registry_raw).expect("registry should be valid json");
+    let admins = registry
+        .get("admins")
+        .and_then(serde_json::Value::as_array)
+        .expect("admins array");
+    assert_eq!(admins.len(), 1);
+    assert_eq!(
+        admins[0]
+            .get("client_cn")
+            .and_then(serde_json::Value::as_str),
+        Some("admin-cn")
+    );
+    assert_eq!(
+        admins[0].get("name").and_then(serde_json::Value::as_str),
+        Some("Demo Admin")
+    );
+
+    let remove_output = sandbox.run_gtc_capture(
+        [
+            "remove-admin",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--cn",
+            "admin-cn",
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(
+        remove_output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&remove_output.stdout),
+        String::from_utf8_lossy(&remove_output.stderr)
+    );
+
+    let registry_raw = fs::read_to_string(&registry_path).expect("read registry after removal");
+    let registry: serde_json::Value =
+        serde_json::from_str(&registry_raw).expect("registry should be valid json");
+    let admins = registry
+        .get("admins")
+        .and_then(serde_json::Value::as_array)
+        .expect("admins array");
+    assert!(
+        admins.is_empty(),
+        "admin registry should be empty after removal"
+    );
+}
+
+#[test]
+fn start_single_vm_creates_artifact_spec_and_state() {
+    let sandbox = TestSandbox::new("start_single_vm_creates_artifact_spec_and_state");
+    let bundle_dir = sandbox.path().join("bundle");
+    create_minimal_bundle_dir(&bundle_dir);
+
+    let setup_log = sandbox.path().join("setup.log");
+    let deployer_log = sandbox.path().join("deployer.log");
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_setup_bundle_tool("greentic-setup", &setup_log);
+    sandbox.write_single_vm_deployer_tool("greentic-deployer", &deployer_log);
+
+    let state_home = sandbox.path().join("xdg-state");
+    let data_home = sandbox.path().join("xdg-data");
+    fs::create_dir_all(&state_home).expect("state home");
+    fs::create_dir_all(&data_home).expect("data home");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "XDG_STATE_HOME".to_string(),
+        state_home.display().to_string(),
+    );
+    extra.insert("XDG_DATA_HOME".to_string(), data_home.display().to_string());
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "start",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "single-vm",
+            "--tenant",
+            "acme",
+            "--team",
+            "ops",
+        ],
+        extra,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let setup_logged = fs::read_to_string(&setup_log).expect("read setup log");
+    assert!(setup_logged.contains("bundle build"));
+
+    let deployer_logged = fs::read_to_string(&deployer_log).expect("read deployer log");
+    assert!(deployer_logged.contains("single-vm status"));
+    assert!(deployer_logged.contains("single-vm apply"));
+
+    let specs_dir = state_home.join("greentic").join("gtc").join("single-vm");
+    let spec_path = find_file_named(&specs_dir, "single-vm.deployment.yaml")
+        .expect("single-vm spec should be written");
+    let spec = fs::read_to_string(&spec_path).expect("read spec");
+    assert!(spec.contains("target: single-vm"));
+    assert!(spec.contains("name: acme-ops-"));
+    assert!(spec.contains("source: 'file://"));
+
+    let deployments_dir = state_home.join("greentic").join("gtc").join("deployments");
+    let state_path = find_single_json_file(&deployments_dir).expect("deployment state file");
+    let state_raw = fs::read_to_string(&state_path).expect("read deployment state");
+    let state: serde_json::Value = serde_json::from_str(&state_raw).expect("deployment state json");
+    assert_eq!(
+        state.get("target").and_then(serde_json::Value::as_str),
+        Some("single-vm")
+    );
+    let artifact_path = state
+        .get("artifact_path")
+        .and_then(serde_json::Value::as_str)
+        .expect("artifact path");
+    assert!(
+        Path::new(artifact_path).exists(),
+        "artifact path should exist"
+    );
+}
+
+#[test]
+fn stop_single_vm_destroy_removes_saved_state() {
+    let sandbox = TestSandbox::new("stop_single_vm_destroy_removes_saved_state");
+    let bundle_dir = sandbox.path().join("bundle");
+    create_minimal_bundle_dir(&bundle_dir);
+
+    let setup_log = sandbox.path().join("setup.log");
+    let deployer_log = sandbox.path().join("deployer.log");
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_setup_bundle_tool("greentic-setup", &setup_log);
+    sandbox.write_single_vm_deployer_tool("greentic-deployer", &deployer_log);
+
+    let state_home = sandbox.path().join("xdg-state");
+    let data_home = sandbox.path().join("xdg-data");
+    fs::create_dir_all(&state_home).expect("state home");
+    fs::create_dir_all(&data_home).expect("data home");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "XDG_STATE_HOME".to_string(),
+        state_home.display().to_string(),
+    );
+    extra.insert("XDG_DATA_HOME".to_string(), data_home.display().to_string());
+
+    let start = sandbox.run_gtc_capture(
+        [
+            "start",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "single-vm",
+        ],
+        extra.clone(),
+    );
+    assert_eq!(
+        start.status.code(),
+        Some(0),
+        "start stderr: {}",
+        String::from_utf8_lossy(&start.stderr)
+    );
+
+    let deployments_dir = state_home.join("greentic").join("gtc").join("deployments");
+    let state_path =
+        find_single_json_file(&deployments_dir).expect("deployment state file after start");
+    assert!(
+        state_path.exists(),
+        "deployment state should exist after start"
+    );
+
+    let stop = sandbox.run_gtc_capture(
+        [
+            "stop",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "single-vm",
+            "--destroy",
+        ],
+        extra,
+    );
+    assert_eq!(
+        stop.status.code(),
+        Some(0),
+        "stop stderr: {}",
+        String::from_utf8_lossy(&stop.stderr)
+    );
+
+    let deployer_logged = fs::read_to_string(&deployer_log).expect("read deployer log");
+    assert!(deployer_logged.contains("single-vm destroy"));
+    assert!(
+        !state_path.exists(),
+        "deployment state should be removed after single-vm destroy"
+    );
+}
+
 fn write_tool_zip(path: &Path, file_name: &str, contents: &[u8]) {
     let file = fs::File::create(path).expect("zip create");
     let mut zip = zip::ZipWriter::new(file);
@@ -668,6 +808,56 @@ fn write_tool_zip(path: &Path, file_name: &str, contents: &[u8]) {
         .expect("zip start file");
     zip.write_all(contents).expect("zip write");
     zip.finish().expect("zip finish");
+}
+
+fn sha256_file(path: &Path) -> String {
+    let bytes = fs::read(path).expect("read file for sha256");
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+fn create_minimal_bundle_dir(path: &Path) {
+    fs::create_dir_all(path.join("packs")).expect("packs dir");
+    fs::write(path.join("bundle.yaml"), "bundle_id: demo\n").expect("bundle.yaml");
+    fs::write(path.join("packs").join("default.gtpack"), b"fixture-pack").expect("default pack");
+}
+
+fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
+    if root.is_file() {
+        return root
+            .file_name()
+            .filter(|name| *name == file_name)
+            .map(|_| root.to_path_buf());
+    }
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries {
+        let path = entry.ok()?.path();
+        if path.is_dir() {
+            if let Some(found) = find_file_named(&path, file_name) {
+                return Some(found);
+            }
+        } else if path.file_name().is_some_and(|name| name == file_name) {
+            return Some(path);
+        }
+    }
+    None
+}
+
+fn find_single_json_file(root: &Path) -> Option<PathBuf> {
+    let mut matches = Vec::new();
+    let entries = fs::read_dir(root).ok()?;
+    for entry in entries {
+        let path = entry.ok()?.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+            matches.push(path);
+        }
+    }
+    if matches.len() == 1 {
+        matches.pop()
+    } else {
+        None
+    }
 }
 
 struct TestSandbox {
@@ -695,12 +885,66 @@ impl TestSandbox {
         &self.root
     }
 
-    fn write_script(&self, name: &str, content: &str) {
-        let path = self.root.join(name);
-        fs::write(&path, content).expect("write script");
-        let mut perms = fs::metadata(&path).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&path, perms).expect("chmod");
+    fn binary_path(&self, name: &str) -> PathBuf {
+        #[cfg(windows)]
+        {
+            self.root.join(format!("{name}.exe"))
+        }
+        #[cfg(not(windows))]
+        {
+            self.root.join(name)
+        }
+    }
+
+    fn compile_rust_tool_at(&self, path: &Path, source: &str) {
+        let src_path = path.with_extension("rs");
+        fs::write(&src_path, source).expect("write rust tool source");
+        let status = Command::new("rustc")
+            .arg("--edition=2024")
+            .arg(&src_path)
+            .arg("-o")
+            .arg(path)
+            .status()
+            .expect("run rustc");
+        assert!(status.success(), "rustc should compile helper tool");
+    }
+
+    fn write_exit_tool(&self, name: &str, exit_code: i32) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_exit_tool_program(exit_code));
+    }
+
+    fn write_arg_logger_tool(&self, name: &str, log_file: &Path, exit_code: i32) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_arg_logger_program(log_file, exit_code));
+    }
+
+    fn write_version_tool(&self, name: &str, version_line: &str) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_version_tool_program(version_line));
+    }
+
+    fn write_emit_answers_tool(&self, name: &str) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_emit_answers_tool_program());
+    }
+
+    fn write_cargo_binstall_tool(&self, log_file: &Path, fail_on_contains: Option<&str>) {
+        let path = self.binary_path("cargo");
+        self.compile_rust_tool_at(
+            &path,
+            &rust_cargo_binstall_tool_program(log_file, fail_on_contains),
+        );
+    }
+
+    fn write_setup_bundle_tool(&self, name: &str, log_file: &Path) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_setup_bundle_tool_program(log_file));
+    }
+
+    fn write_single_vm_deployer_tool(&self, name: &str, log_file: &Path) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_single_vm_deployer_tool_program(log_file));
     }
 
     fn run_gtc<const N: usize>(
@@ -716,8 +960,10 @@ impl TestSandbox {
         args: [&str; N],
         extra_env: HashMap<String, String>,
     ) -> std::process::Output {
-        let current_path = env::var("PATH").unwrap_or_default();
-        let merged_path = format!("{}:{}", self.root.display(), current_path);
+        let current_path = env::var_os("PATH").unwrap_or_default();
+        let mut path_entries = vec![self.root.clone()];
+        path_entries.extend(env::split_paths(&current_path));
+        let merged_path = env::join_paths(path_entries).expect("join PATH");
 
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_gtc"));
         cmd.args(args).env("PATH", merged_path);
@@ -729,7 +975,7 @@ impl TestSandbox {
             ("greentic-bundle", "GREENTIC_BUNDLE_BIN"),
             ("greentic-deployer", "GREENTIC_DEPLOYER_BIN"),
         ] {
-            let path = self.root.join(binary);
+            let path = self.binary_path(binary);
             if path.is_file() {
                 cmd.env(env_key, path);
             }
@@ -747,4 +993,182 @@ impl Drop for TestSandbox {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.root);
     }
+}
+
+fn rust_string_literal(value: &str) -> String {
+    format!("{value:?}")
+}
+
+fn rust_exit_tool_program(exit_code: i32) -> String {
+    format!("fn main() {{ std::process::exit({exit_code}); }}",)
+}
+
+fn rust_arg_logger_program(log_file: &Path, exit_code: i32) -> String {
+    let log_literal = rust_string_literal(&log_file.display().to_string());
+    format!(
+        r#"
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn main() {{
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open({log_literal})
+        .expect("open log");
+    let line = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
+    writeln!(file, "{{}}", line).expect("write log");
+    std::process::exit({exit_code});
+}}
+"#
+    )
+}
+
+fn rust_version_tool_program(version_line: &str) -> String {
+    let version_literal = rust_string_literal(version_line);
+    format!(
+        r#"
+fn main() {{
+    if std::env::args().nth(1).as_deref() == Some("--version") {{
+        println!({version_literal});
+    }}
+}}
+"#
+    )
+}
+
+fn rust_emit_answers_tool_program() -> String {
+    r#"
+fn main() {
+    let mut emit = None::<String>;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        if arg == "--emit-answers" {
+            emit = args.next();
+            break;
+        }
+    }
+
+    let Some(path) = emit else {
+        eprintln!("missing --emit-answers target");
+        std::process::exit(9);
+    };
+
+    std::fs::write(
+        path,
+        "{\"schema_version\":\"1.0.0\",\"answers\":{},\"events\":[]}\n",
+    )
+    .expect("write answers");
+}
+"#
+    .to_string()
+}
+
+fn rust_cargo_binstall_tool_program(log_file: &Path, fail_on_contains: Option<&str>) -> String {
+    let log_literal = rust_string_literal(&log_file.display().to_string());
+    let fail_check = if let Some(needle) = fail_on_contains {
+        let needle_literal = rust_string_literal(needle);
+        format!(
+            r#"
+    if joined.contains({needle_literal}) {{
+        std::process::exit(1);
+    }}
+"#
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        r#"
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn main() {{
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let joined = args.join(" ");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open({log_literal})
+        .expect("open log");
+    writeln!(file, "{{}}", joined).expect("write log");
+
+    if args.first().map(String::as_str) == Some("search") {{
+        println!("cargo-binstall = \"1.0.0\" # mock");
+        return;
+    }}
+    if args.first().map(String::as_str) == Some("binstall")
+        && args.get(1).map(String::as_str) == Some("--version")
+    {{
+        println!("cargo-binstall 1.0.0");
+        return;
+    }}
+{fail_check}
+}}
+"#
+    )
+}
+
+fn rust_setup_bundle_tool_program(log_file: &Path) -> String {
+    let log_literal = rust_string_literal(&log_file.display().to_string());
+    format!(
+        r#"
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn main() {{
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let joined = args.join(" ");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open({log_literal})
+        .expect("open log");
+    writeln!(file, "{{}}", joined).expect("write log");
+
+    let mut out = None::<String>;
+    let mut idx = 0usize;
+    while idx < args.len() {{
+        if args[idx] == "--out" {{
+            out = args.get(idx + 1).cloned();
+            break;
+        }}
+        idx += 1;
+    }}
+    let Some(out_path) = out else {{
+        eprintln!("missing --out");
+        std::process::exit(9);
+    }};
+    std::fs::write(out_path, b"bundle-bytes").expect("write artifact");
+}}
+"#
+    )
+}
+
+fn rust_single_vm_deployer_tool_program(log_file: &Path) -> String {
+    let log_literal = rust_string_literal(&log_file.display().to_string());
+    format!(
+        r#"
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn main() {{
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let joined = args.join(" ");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open({log_literal})
+        .expect("open log");
+    writeln!(file, "{{}}", joined).expect("write log");
+
+    match args.get(1).map(String::as_str) {{
+        Some("status") => {{
+            println!("{{{{\"status\":\"missing\"}}}}");
+        }}
+        Some("apply") | Some("destroy") | None | Some(_) => {{}}
+    }}
+}}
+"#
+    )
 }

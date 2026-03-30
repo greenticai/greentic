@@ -1,0 +1,26 @@
+[package]
+name = "gtc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+gtc = { path = ".." }
+
+[[bin]]
+name = "parse_start_request"
+path = "fuzz_targets/parse_start_request.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_stop_request"
+path = "fuzz_targets/parse_stop_request.rs"
+test = false
+doc = false
+bench = false

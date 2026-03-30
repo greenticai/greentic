@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "global": {
+    "line_coverage_min": 60.0
+  },
+  "defaults": {
+    "per_file_line_coverage_min": 60.0
+  },
+  "exclusions": {
+    "files": [
+      "src/bin/gtc.rs",
+      "src/bin/gtc/cli.rs",
+      "build.rs"
+    ]
+  },
+  "per_file": {
+    "src/dist.rs": {
+      "line_coverage_min": 80.0
+    },
+    "src/perf_targets.rs": {
+      "line_coverage_min": 85.0
+    },
+    "src/bin/gtc/deploy/bundle_resolution.rs": {
+      "line_coverage_min": 80.0
+    },
+    "src/bin/gtc/deploy/cloud_deploy/provider_packs.rs": {
+      "line_coverage_min": 80.0
+    },
+    "src/bin/gtc/install.rs": {
+      "line_coverage_min": 75.0
+    }
+  }
+}

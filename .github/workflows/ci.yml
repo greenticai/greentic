@@ -10,4 +10,7 @@ permissions:
 
 jobs:
   ci:
+    # Shared host-crate CI currently runs outside this repo in greenticai/.github.
+    # See docs/ci.md for the effective checks and platform coverage that `gtc`
+    # expects from the delegated workflow plus the local release/perf workflows.
     uses: greenticai/.github/.github/workflows/host-crate-ci.yml@main
