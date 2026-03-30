@@ -2351,9 +2351,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-start"
-version = "0.4.22"
+version = "0.4.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20be57b70f6dc7d2f893d3c500a13fbeade204f5d87fb0e38a8b32938fc47c07"
+checksum = "a63619ca1da2d46104addf158abe32efc04c65b7ba704958b57bdb7c128b704e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2368,6 +2368,7 @@ dependencies = [
  "greentic-secrets-lib",
  "greentic-setup",
  "greentic-types",
+ "hmac",
  "http-body-util",
  "hyper",
  "hyper-util",
