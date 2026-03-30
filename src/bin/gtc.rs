@@ -91,6 +91,7 @@ fn run(raw_args: Vec<String>) -> i32 {
         }
         Some(("doctor", _)) => run_doctor(&locale),
         Some(("install", sub_matches)) => run_install(sub_matches, debug, &locale),
+        Some(("update", _)) => run_update(debug, &locale),
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
         Some(("remove-admin", sub_matches)) => run_remove_admin(sub_matches, &locale),
         Some(("start", sub_matches)) => run_start(sub_matches, debug, &locale),
@@ -163,6 +164,9 @@ fn build_cli(locale: &str) -> Command {
                         .num_args(1)
                         .help(t(locale, "gtc.arg.key.help").into_owned()),
                 ),
+        )
+        .subcommand(
+            Command::new("update").about(t(locale, "gtc.cmd.update.about").into_owned()),
         )
         .subcommand(
             Command::new("add-admin")
@@ -3590,6 +3594,60 @@ fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     }
 }
 
+fn run_update(debug: bool, locale: &str) -> i32 {
+    println!("{}", t(locale, "gtc.update.start"));
+
+    if !is_binstall_available(debug, locale) {
+        eprintln!("{}", t(locale, "gtc.update.binstall_missing"));
+        return 1;
+    }
+
+    let mut any_failed = false;
+
+    for package in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN, DEPLOYER_BIN] {
+        println!(
+            "{}",
+            tf(locale, "gtc.update.updating", &[("package", package)])
+        );
+
+        let binstall_args = vec![
+            "binstall".to_string(),
+            "-y".to_string(),
+            "--force".to_string(),
+            "--version".to_string(),
+            "0.4".to_string(),
+            package.to_string(),
+        ];
+        let status = run_cargo(&binstall_args, debug, locale);
+        if status != 0 {
+            any_failed = true;
+            eprintln!(
+                "{}",
+                tf(locale, "gtc.update.item_fail", &[("package", package)])
+            );
+        } else {
+            println!(
+                "{}",
+                tf(locale, "gtc.update.item_ok", &[("package", package)])
+            );
+        }
+    }
+
+    let tools_args = vec!["install".to_string(), "tools".to_string()];
+    let tools_status = passthrough(DEV_BIN, &tools_args, debug, locale);
+    if tools_status != 0 {
+        any_failed = true;
+    }
+
+    if any_failed {
+        eprintln!("{}", t(locale, "gtc.update.summary_failed"));
+        1
+    } else {
+        println!("{}", t(locale, "gtc.update.summary_ok"));
+        0
+    }
+}
+
 fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
     let installed_binstall = detect_binstall_version(debug, locale);
     let latest_binstall = latest_binstall_version(debug, locale);
@@ -3650,6 +3708,17 @@ fn ensure_deployer_dist_pack(debug: bool) -> Result<(), String> {
     }
 
     Ok(())
+}
+
+fn is_binstall_available(debug: bool, locale: &str) -> bool {
+    // Try `cargo binstall -V` first (works in newer versions).
+    // Fall back to `cargo binstall --version` (older versions).
+    if let Some(output) = run_cargo_capture(&["binstall", "-V"], debug, locale)
+        && output.status.success()
+    {
+        return true;
+    }
+    detect_binstall_version(debug, locale).is_some()
 }
 
 fn detect_binstall_version(debug: bool, locale: &str) -> Option<String> {

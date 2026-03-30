@@ -594,6 +594,72 @@ fn install_skips_tenant_when_public_install_fails() {
     assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-operator"));
 }
 
+#[test]
+fn update_calls_binstall_force_for_all_companions() {
+    let sandbox = TestSandbox::new("update_calls_binstall_force_for_all_companions");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+
+    let cargo_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\nfi\nexit 0\n",
+        cargo_log_file.display()
+    );
+    sandbox.write_script("cargo", &cargo_script);
+    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+
+    let output = sandbox.run_gtc_capture(["update"], HashMap::new());
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
+    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-dev"));
+    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-operator"));
+    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-bundle"));
+    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-setup"));
+    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-deployer"));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Updating greentic-dev"));
+    assert!(stdout.contains("Updated greentic-dev: OK"));
+}
+
+#[test]
+fn update_reports_failure_and_continues() {
+    let sandbox = TestSandbox::new("update_reports_failure_and_continues");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+
+    let cargo_script = format!(
+        "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.0.0'\n  exit 0\nfi\ncase \"$*\" in\n  *greentic-bundle*) exit 1 ;;\n  *) exit 0 ;;\nesac\n",
+        cargo_log_file.display()
+    );
+    sandbox.write_script("cargo", &cargo_script);
+    sandbox.write_script("greentic-dev", "#!/bin/sh\nexit 0\n");
+    sandbox.write_script("greentic-operator", "#!/bin/sh\nexit 0\n");
+
+    let output = sandbox.run_gtc_capture(["update"], HashMap::new());
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "should exit 1 when any package fails"
+    );
+
+    let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
+    assert!(cargo_logged.contains("greentic-dev"));
+    assert!(cargo_logged.contains("greentic-bundle"));
+    assert!(cargo_logged.contains("greentic-deployer"));
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("greentic-bundle: FAIL")
+            || stderr.contains("Updated greentic-bundle: FAIL")
+    );
+}
+
 fn write_tool_zip(path: &Path, file_name: &str, contents: &[u8]) {
     let file = fs::File::create(path).expect("zip create");
     let mut zip = zip::ZipWriter::new(file);
