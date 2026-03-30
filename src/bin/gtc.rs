@@ -3713,10 +3713,10 @@ fn ensure_deployer_dist_pack(debug: bool) -> Result<(), String> {
 fn is_binstall_available(debug: bool, locale: &str) -> bool {
     // Try `cargo binstall -V` first (works in newer versions).
     // Fall back to `cargo binstall --version` (older versions).
-    if let Some(output) = run_cargo_capture(&["binstall", "-V"], debug, locale) {
-        if output.status.success() {
-            return true;
-        }
+    if let Some(output) = run_cargo_capture(&["binstall", "-V"], debug, locale)
+        && output.status.success()
+    {
+        return true;
     }
     detect_binstall_version(debug, locale).is_some()
 }
