@@ -822,6 +822,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn validate_cloud_deploy_inputs_runtime_returns_empty_env() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");

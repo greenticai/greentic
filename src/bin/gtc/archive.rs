@@ -197,11 +197,11 @@ pub(super) fn set_executable_if_unix(_path: &Path) -> GtcResult<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        ensure_no_symlink_ancestors, looks_like_gzip, looks_like_squashfs, looks_like_zip,
-        safe_join, set_executable_if_unix,
-    };
+    #[cfg(unix)]
+    use super::{ensure_no_symlink_ancestors, set_executable_if_unix};
+    use super::{looks_like_gzip, looks_like_squashfs, looks_like_zip, safe_join};
     use gtc::error::GtcError;
+    #[cfg(unix)]
     use std::fs;
     use std::path::Path;
 
