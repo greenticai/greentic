@@ -371,9 +371,7 @@ mod tests {
     use super::{first_non_empty_line, resolve_cargo_bin_dir};
     #[cfg(unix)]
     use crate::deploy::StartTarget;
-    #[cfg(unix)]
     use crate::tests::env_test_lock;
-    #[cfg(unix)]
     use std::env;
     use std::process::Command as ProcessCommand;
 
