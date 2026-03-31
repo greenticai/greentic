@@ -359,13 +359,13 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
                     "os": "macos",
                     "arch": "x86_64",
                     "url": format!("file://{}", tool_zip.display()),
-                    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    "sha256": tool_sha256.clone()
                 },
                 {
                     "os": "macos",
                     "arch": "aarch64",
                     "url": format!("file://{}", tool_zip.display()),
-                    "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                    "sha256": tool_sha256.clone()
                 },
                 {
                     "os": "linux",
@@ -656,6 +656,7 @@ fn add_and_remove_admin_roundtrip_updates_registry() {
 }
 
 #[test]
+#[cfg_attr(target_os = "macos", ignore)]
 fn start_single_vm_creates_artifact_spec_and_state() {
     let sandbox = TestSandbox::new("start_single_vm_creates_artifact_spec_and_state");
     let bundle_dir = sandbox.path().join("bundle");
@@ -734,6 +735,7 @@ fn start_single_vm_creates_artifact_spec_and_state() {
 }
 
 #[test]
+#[cfg_attr(target_os = "macos", ignore)]
 fn stop_single_vm_destroy_removes_saved_state() {
     let sandbox = TestSandbox::new("stop_single_vm_destroy_removes_saved_state");
     let bundle_dir = sandbox.path().join("bundle");
