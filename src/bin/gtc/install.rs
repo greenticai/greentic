@@ -1320,17 +1320,21 @@ impl DocManifest {
 mod tests {
     use super::{
         DocManifest, DocManifestEntry, DocSource, TenantManifestReference, current_install_arch,
-        current_install_os, detect_binstall_version, download_url_into_dir,
-        ensure_deployer_dist_pack, ensure_install_prereqs, expand_into_target,
+        current_install_os, download_url_into_dir, expand_into_target,
         fetch_download_bytes_with_auth, fetch_download_bytes_with_auth as fetch_download_bytes,
         fetch_json_bytes_with_auth, fetch_json_bytes_with_auth as fetch_json_bytes,
         fetch_json_with_auth, file_url_path, gather_tool_candidates, install_tenant_doc_reference,
-        install_tenant_tool_reference, install_tool_artifact, is_binstall_available,
-        latest_binstall_version, list_files_recursive, normalize_expected_sha256,
-        parse_first_semver, parse_numeric_version, recurse_files,
-        resolve_github_release_asset_api_url, run_update, semver_compare, store_asset_file_name,
+        install_tenant_tool_reference, install_tool_artifact, list_files_recursive,
+        normalize_expected_sha256, parse_first_semver, parse_numeric_version,
+        resolve_github_release_asset_api_url, semver_compare, store_asset_file_name,
         store_asset_target_path, url_file_name,
     };
+    #[cfg(unix)]
+    use super::{
+        detect_binstall_version, ensure_deployer_dist_pack, ensure_install_prereqs,
+        is_binstall_available, latest_binstall_version, recurse_files, run_update,
+    };
+    #[cfg(unix)]
     use crate::EMBEDDED_TERRAFORM_GTPACK;
     #[cfg(unix)]
     use crate::tests::env_test_lock;
