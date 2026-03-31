@@ -371,6 +371,12 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
                     "os": "linux",
                     "arch": "x86_64",
                     "url": format!("file://{}", tool_zip.display()),
+                    "sha256": tool_sha256.clone()
+                },
+                {
+                    "os": "linux",
+                    "arch": "aarch64",
+                    "url": format!("file://{}", tool_zip.display()),
                     "sha256": tool_sha256
                 }
             ]
