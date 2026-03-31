@@ -322,6 +322,7 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
 }
 
 #[test]
+#[cfg(unix)]
 fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
     let sandbox = TestSandbox::new("install_tenant_mode_uses_env_key_and_installs_tools_and_docs");
     let log_file = sandbox.path().join("dev.log");
@@ -656,6 +657,7 @@ fn add_and_remove_admin_roundtrip_updates_registry() {
 }
 
 #[test]
+#[cfg(unix)]
 #[cfg_attr(target_os = "macos", ignore)]
 fn start_single_vm_creates_artifact_spec_and_state() {
     let sandbox = TestSandbox::new("start_single_vm_creates_artifact_spec_and_state");
@@ -735,6 +737,7 @@ fn start_single_vm_creates_artifact_spec_and_state() {
 }
 
 #[test]
+#[cfg(unix)]
 #[cfg_attr(target_os = "macos", ignore)]
 fn stop_single_vm_destroy_removes_saved_state() {
     let sandbox = TestSandbox::new("stop_single_vm_destroy_removes_saved_state");
