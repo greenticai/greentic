@@ -21,7 +21,9 @@ use std::env;
 use std::fs;
 use std::io::{Cursor, Write};
 use std::net::{TcpListener, TcpStream};
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+#[cfg(unix)]
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
@@ -366,6 +368,7 @@ fn parse_start_cli_options_strips_deploy_flags() {
 }
 
 #[test]
+#[cfg(unix)]
 fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_present() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
@@ -400,6 +403,7 @@ fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_pre
 }
 
 #[test]
+#[cfg(unix)]
 fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
@@ -436,6 +440,7 @@ fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
 }
 
 #[test]
+#[cfg(unix)]
 fn validate_cloud_deploy_inputs_does_not_accept_partial_aws_access_key_env() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
@@ -503,6 +508,7 @@ impl Drop for PathGuard {
     }
 }
 
+#[cfg(unix)]
 fn temp_path_with_binary(binary: &str) -> PathGuard {
     let dir = tempdir().expect("tempdir");
     let script = dir.path().join(binary);
@@ -1221,6 +1227,7 @@ fn fetch_https_bytes_drops_auth_on_cross_host_redirect() {
 }
 
 #[test]
+#[cfg(unix)]
 fn generated_admin_private_keys_are_owner_only() {
     let dir = tempfile::tempdir().expect("tempdir");
     let resolved = ensure_admin_certs_ready(dir.path(), None).expect("certs");
@@ -1300,6 +1307,7 @@ fn extract_tar_archive_rejects_symlink_entries() {
 }
 
 #[test]
+#[cfg(unix)]
 fn extract_tar_archive_does_not_write_through_symlink_parent() {
     let out_dir = tempdir().expect("out_dir");
     let outside = tempdir().expect("outside");
@@ -1327,6 +1335,7 @@ fn extract_tar_archive_does_not_write_through_symlink_parent() {
 }
 
 #[test]
+#[cfg(unix)]
 fn extract_tar_archive_does_not_mark_text_files_executable() {
     let out_dir = tempdir().expect("tempdir");
     let mut bytes = Vec::new();
@@ -1355,6 +1364,7 @@ fn extract_tar_archive_does_not_mark_text_files_executable() {
 }
 
 #[test]
+#[cfg(unix)]
 fn extract_zip_bytes_does_not_mark_text_files_executable() {
     let out_dir = tempdir().expect("tempdir");
     let mut bytes = Cursor::new(Vec::new());
@@ -1376,6 +1386,7 @@ fn extract_zip_bytes_does_not_mark_text_files_executable() {
 }
 
 #[test]
+#[cfg(unix)]
 fn recurse_files_skips_symlinked_directories() {
     let dir = tempdir().expect("tempdir");
     let root = dir.path().join("root");
@@ -1393,6 +1404,7 @@ fn recurse_files_skips_symlinked_directories() {
 }
 
 #[test]
+#[cfg(unix)]
 fn fingerprint_bundle_dir_skips_symlink_cycles() {
     let dir = tempfile::tempdir().expect("tempdir");
     let nested = dir.path().join("packs");
