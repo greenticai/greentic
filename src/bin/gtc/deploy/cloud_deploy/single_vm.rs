@@ -201,18 +201,27 @@ fn truncate_identifier(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        deployment_name, load_or_prepare_single_vm_artifact, sanitize_identifier,
-        stop_request_to_start_request, truncate_identifier, write_single_vm_spec, yaml_string,
+        deployment_name, sanitize_identifier, stop_request_to_start_request, truncate_identifier,
+        yaml_string,
     };
+    #[cfg(unix)]
+    use super::{load_or_prepare_single_vm_artifact, write_single_vm_spec};
+    use crate::deploy::StartBundleResolution;
+    #[cfg(unix)]
+    use crate::deploy::StartTarget;
+    #[cfg(unix)]
     use crate::deploy::cloud_deploy::deployment_state::deployment_state_path;
-    use crate::deploy::{StartBundleResolution, StartTarget};
+    #[cfg(unix)]
     use crate::tests::env_test_lock;
     use greentic_start::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
     };
+    #[cfg(unix)]
     use insta::assert_snapshot;
     use proptest::prelude::*;
+    #[cfg(unix)]
     use std::env;
+    #[cfg(unix)]
     use std::fs;
     use std::path::PathBuf;
 
@@ -278,6 +287,7 @@ mod tests {
         assert_eq!(start.runner_binary.as_deref(), Some(artifact.as_path()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn load_or_prepare_single_vm_artifact_reuses_saved_artifact() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -322,8 +332,9 @@ mod tests {
         assert_eq!(reused, artifact);
     }
 
-    #[test]
+    #[cfg(unix)]
     #[cfg_attr(target_os = "macos", ignore)]
+    #[test]
     fn write_single_vm_spec_matches_snapshot() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");

@@ -1319,25 +1319,26 @@ impl DocManifest {
 #[cfg(test)]
 mod tests {
     use super::{
-        DocManifest, DocManifestEntry, DocSource, TenantManifestReference, current_install_arch,
-        current_install_os, download_url_into_dir, expand_into_target,
-        fetch_download_bytes_with_auth, fetch_download_bytes_with_auth as fetch_download_bytes,
-        fetch_json_bytes_with_auth, fetch_json_bytes_with_auth as fetch_json_bytes,
-        fetch_json_with_auth, file_url_path, gather_tool_candidates, install_tenant_doc_reference,
-        install_tenant_tool_reference, install_tool_artifact, list_files_recursive,
+        DocManifest, DocManifestEntry, DocSource, current_install_arch, current_install_os,
+        download_url_into_dir, expand_into_target, fetch_download_bytes_with_auth,
+        fetch_download_bytes_with_auth as fetch_download_bytes, fetch_json_bytes_with_auth,
+        fetch_json_bytes_with_auth as fetch_json_bytes, fetch_json_with_auth, file_url_path,
+        gather_tool_candidates, install_tool_artifact, list_files_recursive,
         normalize_expected_sha256, parse_first_semver, parse_numeric_version,
         resolve_github_release_asset_api_url, semver_compare, store_asset_file_name,
         store_asset_target_path, url_file_name,
     };
     #[cfg(unix)]
     use super::{
-        detect_binstall_version, ensure_deployer_dist_pack, ensure_install_prereqs,
+        TenantManifestReference, detect_binstall_version, ensure_deployer_dist_pack,
+        ensure_install_prereqs, install_tenant_doc_reference, install_tenant_tool_reference,
         is_binstall_available, latest_binstall_version, recurse_files, run_update,
     };
     #[cfg(unix)]
     use crate::EMBEDDED_TERRAFORM_GTPACK;
     #[cfg(unix)]
     use crate::tests::env_test_lock;
+    #[cfg(unix)]
     use sha2::Digest;
     use std::cmp::Ordering;
     #[cfg(unix)]
@@ -1412,6 +1413,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn download_helpers_support_local_file_urls() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1647,6 +1649,7 @@ mod tests {
         assert_eq!(files[0].file_name().and_then(|v| v.to_str()), Some("tool"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn install_tenant_doc_reference_installs_local_doc_into_docs_tree() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1679,6 +1682,7 @@ mod tests {
         assert_eq!(fs::read(&installed[0]).expect("read"), b"doc-bytes");
     }
 
+    #[cfg(unix)]
     #[test]
     fn install_tenant_doc_reference_rejects_unsafe_file_names() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1736,6 +1740,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn install_tenant_tool_reference_installs_matching_local_artifact() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1789,6 +1794,7 @@ mod tests {
         assert_eq!(fs::read(installed).expect("read"), b"tool-bytes");
     }
 
+    #[cfg(unix)]
     #[test]
     fn install_tenant_tool_reference_rejects_missing_platform_target() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -1832,6 +1838,7 @@ mod tests {
         assert!(err.contains("no install target for tool"));
     }
 
+    #[cfg(unix)]
     #[test]
     fn install_tenant_tool_reference_rejects_digest_mismatch() {
         let dir = tempfile::tempdir().expect("tempdir");

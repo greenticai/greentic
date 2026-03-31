@@ -480,8 +480,9 @@ mod tests {
         assert_eq!(value.as_deref(), Some("https://example.com/demo"));
     }
 
-    #[test]
+    #[cfg(unix)]
     #[cfg_attr(target_os = "macos", ignore)]
+    #[test]
     fn deployment_roots_follow_xdg_state_and_data_home() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
