@@ -1,12 +1,11 @@
 use super::{
-    AdminRegistryDocument, DEFAULT_GCP_OPERATOR_IMAGE, DEFAULT_GHCR_OPERATOR_IMAGE,
-    DEFAULT_OPERATOR_IMAGE_DIGEST, DEV_BIN, StartBundleResolution, StartTarget,
-    admin_registry_path, build_cli, build_wizard_args, collect_tail,
-    default_operator_image_for_target, detect_bundle_root, detect_locale, ensure_admin_certs_ready,
-    extract_tar_archive, fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
-    normalize_expected_sha256, normalize_install_arch, parse_prompt_choice,
-    parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
-    remove_admin_registry_entry, resolve_admin_cert_dir,
+    AdminRegistryDocument, DEFAULT_GCP_OPERATOR_IMAGE, DEFAULT_GHCR_OPERATOR_IMAGE, DEV_BIN,
+    StartBundleResolution, StartTarget, admin_registry_path, build_cli, build_wizard_args,
+    collect_tail, default_operator_image_for_target, detect_bundle_root, detect_locale,
+    ensure_admin_certs_ready, extract_tar_archive, fingerprint_bundle_dir, locale_from_args,
+    normalize_bundle_fingerprint, normalize_expected_sha256, normalize_install_arch,
+    parse_prompt_choice, parse_start_cli_options, parse_start_request, parse_stop_cli_options,
+    parse_stop_request, remove_admin_registry_entry, resolve_admin_cert_dir,
     resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
     resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
     resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
@@ -14,7 +13,10 @@ use super::{
     upsert_admin_registry_entry, verify_sha256_digest, write_single_vm_spec,
 };
 #[cfg(unix)]
-use super::{apply_default_deploy_env_for_target, extract_zip_bytes, validate_cloud_deploy_inputs};
+use super::{
+    DEFAULT_OPERATOR_IMAGE_DIGEST, apply_default_deploy_env_for_target, extract_zip_bytes,
+    validate_cloud_deploy_inputs,
+};
 use clap::{Arg, ArgMatches, Command};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -478,6 +480,7 @@ fn validate_cloud_deploy_inputs_does_not_accept_partial_aws_access_key_env() {
     assert!(err.contains("missing cloud credentials"));
 }
 
+#[cfg(unix)]
 fn clear_aws_credential_env() {
     unsafe {
         env::remove_var("AWS_ACCESS_KEY_ID");
@@ -495,11 +498,13 @@ pub(crate) fn env_test_lock() -> &'static Mutex<()> {
     LOCK.get_or_init(|| Mutex::new(()))
 }
 
+#[cfg(unix)]
 struct PathGuard {
     _temp_dir: tempfile::TempDir,
     original: Option<std::ffi::OsString>,
 }
 
+#[cfg(unix)]
 impl Drop for PathGuard {
     fn drop(&mut self) {
         unsafe {

@@ -373,6 +373,7 @@ mod tests {
     use crate::deploy::StartTarget;
     use crate::tests::env_test_lock;
     use std::env;
+    #[cfg(unix)]
     use std::process::Command as ProcessCommand;
 
     #[test]
