@@ -450,7 +450,9 @@ mod tests {
     };
     #[cfg(unix)]
     use super::{run_multi_target_deployer_apply, run_multi_target_deployer_destroy};
-    use crate::deploy::{StartBundleResolution, StartCliOptions, StartTarget, StopCliOptions};
+    use crate::deploy::{StartBundleResolution, StartTarget};
+    #[cfg(unix)]
+    use crate::deploy::{StartCliOptions, StopCliOptions};
     use crate::tests::env_test_lock;
     use greentic_start::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
