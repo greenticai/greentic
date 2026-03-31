@@ -366,12 +366,14 @@ fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        apply_default_deploy_env_for_target, first_non_empty_line, resolve_cargo_bin_dir,
-        run_binary_capture, run_binary_checked,
-    };
+    #[cfg(unix)]
+    use super::{apply_default_deploy_env_for_target, run_binary_capture, run_binary_checked};
+    use super::{first_non_empty_line, resolve_cargo_bin_dir};
+    #[cfg(unix)]
     use crate::deploy::StartTarget;
+    #[cfg(unix)]
     use crate::tests::env_test_lock;
+    #[cfg(unix)]
     use std::env;
     use std::process::Command as ProcessCommand;
 
@@ -401,6 +403,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn apply_default_deploy_env_for_target_sets_expected_vars() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         unsafe {

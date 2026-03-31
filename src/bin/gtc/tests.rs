@@ -1,10 +1,9 @@
 use super::{
     AdminRegistryDocument, DEFAULT_GCP_OPERATOR_IMAGE, DEFAULT_GHCR_OPERATOR_IMAGE,
     DEFAULT_OPERATOR_IMAGE_DIGEST, DEV_BIN, StartBundleResolution, StartTarget,
-    admin_registry_path, apply_default_deploy_env_for_target, build_cli, build_wizard_args,
-    collect_tail, default_operator_image_for_target, detect_bundle_root, detect_locale,
-    ensure_admin_certs_ready, extract_tar_archive, extract_zip_bytes, fingerprint_bundle_dir,
-    locale_from_args, normalize_bundle_fingerprint, normalize_expected_sha256,
+    admin_registry_path, build_cli, build_wizard_args, collect_tail,
+    default_operator_image_for_target, detect_bundle_root, detect_locale, ensure_admin_certs_ready,
+    extract_tar_archive, locale_from_args, normalize_bundle_fingerprint, normalize_expected_sha256,
     normalize_install_arch, parse_prompt_choice, parse_start_cli_options, parse_start_request,
     parse_stop_cli_options, parse_stop_request, remove_admin_registry_entry,
     resolve_admin_cert_dir, resolve_canonical_target_provider_pack_from,
@@ -12,7 +11,12 @@ use super::{
     resolve_target_provider_pack, resolve_tenant_key, rewrite_store_tenant_placeholder,
     route_passthrough_subcommand, save_admin_registry, select_start_target,
     should_send_auth_header, tenant_env_var_name, upsert_admin_registry_entry,
-    validate_cloud_deploy_inputs, verify_sha256_digest, write_single_vm_spec,
+    verify_sha256_digest, write_single_vm_spec,
+};
+#[cfg(unix)]
+use super::{
+    apply_default_deploy_env_for_target, extract_zip_bytes, fingerprint_bundle_dir,
+    validate_cloud_deploy_inputs,
 };
 use clap::{Arg, ArgMatches, Command};
 use std::collections::BTreeMap;
@@ -30,7 +34,9 @@ use std::process::Command as ProcessCommand;
 use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
-use tempfile::{TempDir, tempdir};
+#[cfg(unix)]
+use tempfile::TempDir;
+use tempfile::tempdir;
 
 #[test]
 fn locale_arg_is_detected_from_equals_flag() {

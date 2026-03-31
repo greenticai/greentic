@@ -1332,9 +1332,11 @@ mod tests {
         store_asset_target_path, url_file_name,
     };
     use crate::EMBEDDED_TERRAFORM_GTPACK;
+    #[cfg(unix)]
     use crate::tests::env_test_lock;
     use sha2::Digest;
     use std::cmp::Ordering;
+    #[cfg(unix)]
     use std::env;
     use std::fs;
     use std::io::Write;
