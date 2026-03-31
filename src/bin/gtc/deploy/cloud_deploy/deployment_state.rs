@@ -454,6 +454,7 @@ mod tests {
     #[cfg(unix)]
     use crate::deploy::{StartCliOptions, StopCliOptions};
     use crate::tests::env_test_lock;
+    #[cfg(unix)]
     use greentic_start::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
     };

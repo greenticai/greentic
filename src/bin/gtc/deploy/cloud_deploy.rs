@@ -635,9 +635,10 @@ mod tests {
         append_bundle_registry_args, binary_in_path, cloud_credentials_satisfied,
         default_operator_image_for_target, dir_declares_static_routes,
         ensure_target_terraform_inputs, env_var_present, matches_remote_bundle_ref,
-        require_tool_in_path, validate_bundle_registry_mapping_env, validate_cloud_deploy_inputs,
-        validate_public_base_url_for_static_routes,
+        validate_bundle_registry_mapping_env, validate_public_base_url_for_static_routes,
     };
+    #[cfg(unix)]
+    use super::{require_tool_in_path, validate_cloud_deploy_inputs};
     use crate::deploy::StartTarget;
     use crate::tests::env_test_lock;
     use gtc::config::GtcConfig;

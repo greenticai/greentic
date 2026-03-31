@@ -158,8 +158,8 @@ pub fn collect_bundle_entries(
         let relative = path
             .strip_prefix(root)
             .map_err(|err| err.to_string())?
-            .display()
-            .to_string();
+            .to_string_lossy()
+            .replace('\\', "/");
         let file_type = entry.file_type().map_err(|err| err.to_string())?;
         if file_type.is_symlink() {
             continue;
