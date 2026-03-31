@@ -18,7 +18,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
+          toolchain: 1.94.0
 
       - name: Run perf guard tests
         run: cargo test --test perf_scaling --test perf_timeout

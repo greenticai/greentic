@@ -52,7 +52,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
+          toolchain: 1.94.0
 
       - name: Build and sync deployer pack
         shell: bash
@@ -114,7 +114,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
+          toolchain: 1.94.0
           targets: ${{ matrix.target }}
 
       - name: Build
@@ -221,7 +221,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
+          toolchain: 1.94.0
 
       - name: Install cargo-sbom
         run: cargo install --locked cargo-sbom
@@ -249,7 +249,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.91.0
+          toolchain: 1.94.0
       - name: Publish crate to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
