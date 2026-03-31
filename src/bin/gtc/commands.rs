@@ -4,7 +4,7 @@ use std::fs;
 use clap::ArgMatches;
 
 use crate::admin::{
-    load_admin_registry, remove_admin_registry_entry, save_admin_registry,
+    load_admin_registry, remove_admin_registry_entry, run_admin_tunnel, save_admin_registry,
     upsert_admin_registry_entry,
 };
 use crate::cli::build_cli;
@@ -51,6 +51,15 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         Some(("update", _)) => run_update(debug, &locale),
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
         Some(("remove-admin", sub_matches)) => run_remove_admin(sub_matches, &locale),
+        Some(("admin", sub_matches)) => match sub_matches.subcommand() {
+            Some(("tunnel", tunnel_matches)) => run_admin_tunnel(tunnel_matches, &locale),
+            _ => {
+                eprintln!(
+                    "usage: gtc admin tunnel <BUNDLE_REF> [--target aws] [--local-port 8443]"
+                );
+                2
+            }
+        },
         Some(("start", sub_matches)) => run_start(sub_matches, debug, &locale),
         Some(("stop", sub_matches)) => run_stop(sub_matches, debug, &locale),
         Some((name @ ("dev" | "op" | "wizard" | "setup"), sub_matches)) => {
