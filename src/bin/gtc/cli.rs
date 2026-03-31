@@ -105,6 +105,47 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 ),
         )
         .subcommand(
+            Command::new("admin")
+                .about("Admin plane helpers.")
+                .subcommand(
+                    Command::new("tunnel")
+                        .about(
+                            "Open an AWS Session Manager tunnel to the admin API of a deployed bundle.",
+                        )
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help("Local deployed bundle directory."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws"])
+                                .help("Cloud provider for the admin tunnel."),
+                        )
+                        .arg(
+                            Arg::new("local-port")
+                                .long("local-port")
+                                .value_name("PORT")
+                                .num_args(1)
+                                .default_value("8443")
+                                .help("Local port to bind for the admin tunnel."),
+                        )
+                        .arg(
+                            Arg::new("container")
+                                .long("container")
+                                .value_name("NAME")
+                                .num_args(1)
+                                .default_value("app")
+                                .help("Container name inside the ECS task."),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("start")
                 .about(t_or(
                     locale,
