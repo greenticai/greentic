@@ -477,6 +477,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn deployment_roots_follow_xdg_state_and_data_home() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");

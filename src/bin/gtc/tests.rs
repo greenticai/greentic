@@ -367,7 +367,7 @@ fn parse_start_cli_options_strips_deploy_flags() {
 
 #[test]
 fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_present() {
-    let _guard = env_test_lock().lock().unwrap();
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
@@ -401,7 +401,7 @@ fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_pre
 
 #[test]
 fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
-    let _guard = env_test_lock().lock().unwrap();
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
@@ -437,7 +437,7 @@ fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
 
 #[test]
 fn validate_cloud_deploy_inputs_does_not_accept_partial_aws_access_key_env() {
-    let _guard = env_test_lock().lock().unwrap();
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
@@ -715,7 +715,7 @@ fn ensure_admin_certs_ready_preserves_explicit_dir() {
 
 #[test]
 fn write_single_vm_spec_uses_bundle_local_server_certs() {
-    let _guard = env_test_lock().lock().unwrap();
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().expect("tempdir");
     let state_home = dir.path().join("xdg-state");
     std::fs::create_dir_all(&state_home).expect("mkdir state home");
@@ -958,7 +958,7 @@ fn rewrite_store_tenant_placeholder_substitutes_template_segment() {
 
 #[test]
 fn default_operator_image_for_target_uses_cloud_specific_refs() {
-    let _guard = env_test_lock().lock().unwrap();
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AWS");
         env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP");
@@ -984,7 +984,7 @@ fn default_operator_image_for_target_uses_cloud_specific_refs() {
 
 #[test]
 fn default_operator_image_for_target_allows_source_override() {
-    let _guard = env_test_lock().lock().unwrap();
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         env::set_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP", "ghcr");
         env::set_var(
@@ -1010,7 +1010,7 @@ fn default_operator_image_for_target_allows_source_override() {
 
 #[test]
 fn apply_default_deploy_env_for_target_prefers_explicit_env() {
-    let _guard = env_test_lock().lock().unwrap();
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         env::set_var(
             "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE",
@@ -1089,7 +1089,7 @@ fn parse_prompt_choice_accepts_first_option() {
 
 #[test]
 fn child_process_env_applies_without_mutating_parent_env() {
-    let _guard = env_test_lock().lock().unwrap();
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     unsafe {
         env::remove_var("TEST_CHILD_ENV");
     }
