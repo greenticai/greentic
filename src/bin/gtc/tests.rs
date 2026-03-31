@@ -1,21 +1,21 @@
 use super::{
     AdminRegistryDocument, DEFAULT_GCP_OPERATOR_IMAGE, DEFAULT_GHCR_OPERATOR_IMAGE, DEV_BIN,
-    StartBundleResolution, StartTarget, admin_registry_path, build_cli, build_wizard_args,
-    collect_tail, default_operator_image_for_target, detect_bundle_root, detect_locale,
-    ensure_admin_certs_ready, extract_tar_archive, fingerprint_bundle_dir, locale_from_args,
-    normalize_bundle_fingerprint, normalize_expected_sha256, normalize_install_arch,
-    parse_prompt_choice, parse_start_cli_options, parse_start_request, parse_stop_cli_options,
-    parse_stop_request, remove_admin_registry_entry, resolve_admin_cert_dir,
+    StartTarget, admin_registry_path, build_cli, build_wizard_args, collect_tail,
+    default_operator_image_for_target, detect_bundle_root, detect_locale, ensure_admin_certs_ready,
+    extract_tar_archive, fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
+    normalize_expected_sha256, normalize_install_arch, parse_prompt_choice,
+    parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
+    remove_admin_registry_entry, resolve_admin_cert_dir,
     resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
     resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
     resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
     save_admin_registry, select_start_target, should_send_auth_header, tenant_env_var_name,
-    upsert_admin_registry_entry, verify_sha256_digest, write_single_vm_spec,
+    upsert_admin_registry_entry, verify_sha256_digest,
 };
 #[cfg(unix)]
 use super::{
-    DEFAULT_OPERATOR_IMAGE_DIGEST, apply_default_deploy_env_for_target, extract_zip_bytes,
-    validate_cloud_deploy_inputs,
+    DEFAULT_OPERATOR_IMAGE_DIGEST, StartBundleResolution, apply_default_deploy_env_for_target,
+    extract_zip_bytes, validate_cloud_deploy_inputs, write_single_vm_spec,
 };
 use clap::{Arg, ArgMatches, Command};
 use std::collections::BTreeMap;
@@ -727,6 +727,7 @@ fn ensure_admin_certs_ready_preserves_explicit_dir() {
     assert_eq!(resolved, certs);
 }
 
+#[cfg(unix)]
 #[test]
 fn write_single_vm_spec_uses_bundle_local_server_certs() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -781,6 +782,7 @@ fn write_single_vm_spec_uses_bundle_local_server_certs() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn resolve_deploy_app_pack_path_prefers_bundle_metadata_app_pack() {
     let dir = tempfile::tempdir().expect("tempdir");
