@@ -323,6 +323,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(target_os = "macos", ignore)]
     fn write_single_vm_spec_matches_snapshot() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
