@@ -1093,6 +1093,7 @@ fn rust_cargo_binstall_tool_program(log_file: &Path, fail_on_contains: Option<&s
         r#"
 use std::fs::OpenOptions;
 use std::io::Write;
+use std::path::PathBuf;
 
 fn main() {{
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -1113,6 +1114,15 @@ fn main() {{
     {{
         println!("cargo-binstall 1.0.0");
         return;
+    }}
+    if joined.contains("greentic-deployer") {{
+        let cargo_home = std::env::var_os("CARGO_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from(".cargo"));
+        let dist_dir = cargo_home.join("bin").join("dist");
+        std::fs::create_dir_all(&dist_dir).expect("create dist dir");
+        std::fs::write(dist_dir.join("terraform.gtpack"), b"pack-bytes")
+            .expect("write fake terraform pack");
     }}
 {fail_check}
 }}

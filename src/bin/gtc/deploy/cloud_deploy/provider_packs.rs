@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_yaml_bw::Value as YamlValue;
 
 use super::super::StartTarget;
+use super::canonical_provider_pack_filename_for_gtc;
 use crate::DEPLOYER_BIN;
 use crate::process::resolve_companion_binary;
 
@@ -41,9 +42,11 @@ pub(crate) fn resolve_target_provider_pack(
 }
 
 fn resolve_canonical_target_provider_pack(target: StartTarget) -> Option<PathBuf> {
-    let filename = canonical_target_provider_pack_filename(target)?;
+    let filename = canonical_target_provider_pack_filename(target)
+        .ok()
+        .flatten()?;
     let deployer_bin = resolve_companion_binary(DEPLOYER_BIN)?;
-    resolve_canonical_target_provider_pack_from(Some(deployer_bin.as_path()), filename)
+    resolve_canonical_target_provider_pack_from(Some(deployer_bin.as_path()), &filename)
 }
 
 pub(crate) fn resolve_canonical_target_provider_pack_from(
@@ -60,11 +63,8 @@ pub(crate) fn resolve_canonical_target_provider_pack_from(
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
-fn canonical_target_provider_pack_filename(target: StartTarget) -> Option<&'static str> {
-    match target {
-        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => Some("terraform.gtpack"),
-        StartTarget::Runtime | StartTarget::SingleVm => None,
-    }
+fn canonical_target_provider_pack_filename(target: StartTarget) -> GtcResult<Option<String>> {
+    canonical_provider_pack_filename_for_gtc(target, "en")
 }
 
 fn resolve_target_provider_pack_from_metadata(
@@ -235,17 +235,20 @@ mod tests {
         resolve_target_provider_pack_from_metadata,
     };
     use crate::deploy::StartTarget;
+    use crate::tests::fake_deployer_contract;
     use std::fs;
     use std::path::Path;
 
     #[test]
     fn canonical_target_provider_pack_filename_matches_cloud_targets() {
+        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
         assert_eq!(
-            canonical_target_provider_pack_filename(StartTarget::Aws),
-            Some("terraform.gtpack")
+            canonical_target_provider_pack_filename(StartTarget::Aws).expect("aws filename"),
+            Some("terraform.gtpack".to_string())
         );
         assert_eq!(
-            canonical_target_provider_pack_filename(StartTarget::Runtime),
+            canonical_target_provider_pack_filename(StartTarget::Runtime)
+                .expect("runtime filename"),
             None
         );
     }

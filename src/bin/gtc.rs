@@ -82,15 +82,13 @@ const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
+#[cfg(test)]
 const DEFAULT_GHCR_OPERATOR_IMAGE: &str = "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b";
+#[cfg(test)]
 const DEFAULT_GCP_OPERATOR_IMAGE: &str = "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db";
+#[cfg(test)]
 const DEFAULT_OPERATOR_IMAGE_DIGEST: &str =
     "sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b";
-const EMBEDDED_TERRAFORM_GTPACK: &[u8] = include_bytes!(concat!(
-    env!("CARGO_MANIFEST_DIR"),
-    "/assets/deployer/terraform.gtpack"
-));
-
 fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
     let exit_code = run(raw_args);

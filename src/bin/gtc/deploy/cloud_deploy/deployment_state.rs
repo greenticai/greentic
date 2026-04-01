@@ -18,12 +18,13 @@ use super::single_vm::{
     run_single_vm_destroy, stop_request_to_start_request, write_single_vm_spec,
 };
 use super::{
-    append_bundle_registry_args, default_operator_image_for_target, validate_cloud_deploy_inputs,
+    append_bundle_registry_args, default_operator_image_for_target,
+    describe_cloud_target_requirements_for_gtc, validate_cloud_deploy_inputs,
 };
 use crate::process::{
     run_binary_checked, run_binary_checked_with_target, run_binary_checked_with_target_and_env,
 };
-use crate::{DEFAULT_OPERATOR_IMAGE_DIGEST, DEPLOYER_BIN, SETUP_BIN};
+use crate::{DEPLOYER_BIN, SETUP_BIN};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct StartDeploymentState {
@@ -314,7 +315,7 @@ fn run_multi_target_deployer_apply(
             "Note: no GREENTIC_DEPLOY_BUNDLE_SOURCE override set; cloud deploy will use the local artifact path above."
         );
     }
-    print_cloud_deploy_contract_hint(target);
+    print_cloud_deploy_contract_hint(target, locale)?;
     let mut args = vec![
         target_name,
         "apply".to_string(),
@@ -349,40 +350,67 @@ fn run_multi_target_deployer_apply(
     .map_err(|e| GtcError::message(e.to_string()))
 }
 
-fn print_cloud_deploy_contract_hint(target: StartTarget) {
+fn print_cloud_deploy_contract_hint(target: StartTarget, locale: &str) -> GtcResult<()> {
+    let requirements = describe_cloud_target_requirements_for_gtc(target, locale)?;
     println!("Cloud deploy contract:");
-    println!("  required remote bundle source:");
-    println!("    --deploy-bundle-source https://.../bundle.gtbundle");
-    match target {
-        StartTarget::Aws => {
-            println!("  required external Terraform vars:");
-            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
-            println!("  optional Terraform vars:");
-            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
-            println!(
-                "      default: {}",
-                default_operator_image_for_target(target).unwrap_or_default()
-            );
-            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
-            println!("      fallback default: {DEFAULT_OPERATOR_IMAGE_DIGEST}");
-            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_DNS_NAME (personalized mode only)");
-            println!("  internal AWS bootstrap now handles:");
-            println!("    admin TLS server secrets");
-        }
-        StartTarget::Gcp | StartTarget::Azure => {
-            println!("  optional Terraform vars:");
-            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
-            println!(
-                "      default: {}",
-                default_operator_image_for_target(target).unwrap_or_default()
-            );
-            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
-            println!("      fallback default: {DEFAULT_OPERATOR_IMAGE_DIGEST}");
-            println!("  additional target-specific Terraform vars may still be required via:");
-            println!("    GREENTIC_DEPLOY_TERRAFORM_VAR_*");
-        }
-        StartTarget::SingleVm | StartTarget::Runtime => {}
+    if requirements.remote_bundle_source_required {
+        println!("  required remote bundle source:");
+        println!(
+            "    {}",
+            requirements
+                .remote_bundle_source_help
+                .as_deref()
+                .unwrap_or("--deploy-bundle-source https://.../bundle.gtbundle")
+        );
     }
+    let required_vars: Vec<_> = requirements
+        .variable_requirements
+        .iter()
+        .filter(|requirement| requirement.required)
+        .collect();
+    if !required_vars.is_empty() {
+        println!("  required external Terraform vars:");
+        for requirement in required_vars {
+            println!("    {}", requirement.name);
+        }
+    }
+    let optional_vars: Vec<_> = requirements
+        .variable_requirements
+        .iter()
+        .filter(|requirement| !requirement.required)
+        .collect();
+    if !optional_vars.is_empty() {
+        println!("  optional Terraform vars:");
+        for requirement in optional_vars {
+            println!("    {}", requirement.name);
+            if requirement.name == "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE" {
+                println!(
+                    "      default: {}",
+                    default_operator_image_for_target(target).unwrap_or_default()
+                );
+                continue;
+            }
+            if requirement.name == "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST" {
+                if let Some(default_value) = requirement.default_value.as_deref() {
+                    println!("      fallback default: {default_value}");
+                }
+                continue;
+            }
+            if let Some(default_value) = requirement.default_value.as_deref() {
+                println!("      default: {default_value}");
+            }
+            if requirement.name == "GREENTIC_DEPLOY_TERRAFORM_VAR_DNS_NAME" {
+                println!("      personalized mode only");
+            }
+        }
+    }
+    if !requirements.informational_notes.is_empty() {
+        println!("  deployer-managed notes:");
+        for note in &requirements.informational_notes {
+            println!("    {note}");
+        }
+    }
+    Ok(())
 }
 
 fn run_multi_target_deployer_destroy(
@@ -453,7 +481,7 @@ mod tests {
     use crate::deploy::{StartBundleResolution, StartTarget};
     #[cfg(unix)]
     use crate::deploy::{StartCliOptions, StopCliOptions};
-    use crate::tests::env_test_lock;
+    use crate::tests::{env_test_lock, write_fake_deployer_contract_script};
     #[cfg(unix)]
     use greentic_start::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
@@ -594,15 +622,7 @@ mod tests {
 
         let log = dir.path().join("deployer.log");
         let deployer = dir.path().join("greentic-deployer");
-        fs::write(
-            &deployer,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-                log.display()
-            ),
-        )
-        .expect("write");
-        fs::set_permissions(&deployer, fs::Permissions::from_mode(0o755)).expect("chmod");
+        write_fake_deployer_contract_script(&deployer, Some(&log));
 
         let request = StartRequest {
             bundle: Some(bundle_dir.display().to_string()),
@@ -642,10 +662,12 @@ mod tests {
         };
 
         let original_path = env::var_os("PATH");
+        let original_deployer_bin = env::var_os("GREENTIC_DEPLOYER_BIN");
         unsafe {
             env::set_var("PATH", &terraform_dir);
             env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
             env::set_var("CLOUDSDK_AUTH_ACCESS_TOKEN", "token");
+            env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "gcs");
             env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID", "project");
             env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION", "europe-west1");
         }
@@ -666,8 +688,12 @@ mod tests {
                 Some(path) => env::set_var("PATH", path),
                 None => env::remove_var("PATH"),
             }
-            env::remove_var("GREENTIC_DEPLOYER_BIN");
+            match original_deployer_bin {
+                Some(path) => env::set_var("GREENTIC_DEPLOYER_BIN", path),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
             env::remove_var("CLOUDSDK_AUTH_ACCESS_TOKEN");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION");
         }
@@ -692,17 +718,21 @@ mod tests {
 
         let log = dir.path().join("deployer.log");
         let deployer = dir.path().join("greentic-deployer");
-        fs::write(
-            &deployer,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-                log.display()
-            ),
-        )
-        .expect("write");
-        fs::set_permissions(&deployer, fs::Permissions::from_mode(0o755)).expect("chmod");
+        write_fake_deployer_contract_script(&deployer, Some(&log));
+        let original_deployer_bin = env::var_os("GREENTIC_DEPLOYER_BIN");
+        let original_operator_image = env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
+        let original_operator_digest =
+            env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
         unsafe {
             env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE",
+                "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b",
+            );
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
+                "sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b",
+            );
         }
 
         let request = StopRequest {
@@ -735,9 +765,21 @@ mod tests {
             "en",
         )
         .expect("destroy");
-
         unsafe {
-            env::remove_var("GREENTIC_DEPLOYER_BIN");
+            match original_deployer_bin {
+                Some(path) => env::set_var("GREENTIC_DEPLOYER_BIN", path),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+            match original_operator_image {
+                Some(path) => env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE", path),
+                None => env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE"),
+            }
+            match original_operator_digest {
+                Some(path) => {
+                    env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST", path)
+                }
+                None => env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST"),
+            }
         }
 
         let logged = fs::read_to_string(log).expect("read");

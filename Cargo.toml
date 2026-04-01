@@ -1,6 +1,6 @@
 [package]
 name = "gtc"
-version = "0.9.41"
+version = "0.9.42"
 edition = "2024"
 rust-version = "1.91"
 description = "Greentic - The operation system for digital workers"

@@ -377,6 +377,7 @@ fn parse_start_cli_options_strips_deploy_flags() {
 fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_present() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
+    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
     unsafe {
@@ -412,6 +413,7 @@ fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_pre
 fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
+    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
     unsafe {
@@ -449,6 +451,7 @@ fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
 fn validate_cloud_deploy_inputs_does_not_accept_partial_aws_access_key_env() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
+    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
     unsafe {
@@ -537,6 +540,106 @@ fn temp_path_with_binary(binary: &str) -> PathGuard {
         _temp_dir: dir,
         original,
     }
+}
+
+#[cfg(unix)]
+pub(crate) struct EnvVarGuard {
+    name: &'static str,
+    original: Option<std::ffi::OsString>,
+}
+
+#[cfg(unix)]
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        unsafe {
+            match &self.original {
+                Some(value) => env::set_var(self.name, value),
+                None => env::remove_var(self.name),
+            }
+        }
+    }
+}
+
+#[cfg(unix)]
+pub(crate) fn write_fake_deployer_contract_script(script: &Path, log_path: Option<&Path>) {
+    let log_snippet = log_path.map_or_else(String::new, |path| {
+        format!("printf '%s\\n' \"$*\" >> '{}'\n", path.display())
+    });
+    let body_template = r#"#!/bin/sh
+__LOG_SNIPPET__if [ "$1" = "target-requirements" ] && [ "$2" = "--provider" ]; then
+  provider="$3"
+  source="ghcr"
+  case "$provider" in
+    aws)
+      label="AWS"
+      help="Pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE"
+      creds='[{"label":"AWS credentials","env_vars":["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY","AWS_PROFILE","AWS_DEFAULT_PROFILE","AWS_WEB_IDENTITY_TOKEN_FILE","AWS_ROLE_ARN"],"satisfaction_env_groups":[["AWS_PROFILE"],["AWS_DEFAULT_PROFILE"],["AWS_ACCESS_KEY_ID","AWS_SECRET_ACCESS_KEY"],["AWS_WEB_IDENTITY_TOKEN_FILE","AWS_ROLE_ARN"]],"prompt_fields":[],"help":"AWS credentials"}]'
+      ;;
+    gcp)
+      label="GCP"
+      source="${GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP:-gcp-artifact-registry}"
+      help="Pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE"
+      creds='[{"label":"GCP credentials","env_vars":["GOOGLE_APPLICATION_CREDENTIALS","GOOGLE_OAUTH_ACCESS_TOKEN","CLOUDSDK_AUTH_ACCESS_TOKEN"],"satisfaction_env_groups":[["GOOGLE_APPLICATION_CREDENTIALS"],["GOOGLE_OAUTH_ACCESS_TOKEN"],["CLOUDSDK_AUTH_ACCESS_TOKEN"]],"prompt_fields":[],"help":"GCP credentials"}]'
+      ;;
+    azure)
+      label="Azure"
+      source="${GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AZURE:-ghcr}"
+      help="Pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE"
+      creds='[{"label":"Azure credentials","env_vars":["ARM_CLIENT_ID","ARM_TENANT_ID","ARM_SUBSCRIPTION_ID","ARM_USE_OIDC","AZURE_CLIENT_ID","AZURE_TENANT_ID","AZURE_SUBSCRIPTION_ID"],"satisfaction_env_groups":[["ARM_CLIENT_ID","ARM_TENANT_ID","ARM_SUBSCRIPTION_ID","ARM_USE_OIDC"],["AZURE_CLIENT_ID","AZURE_TENANT_ID","AZURE_SUBSCRIPTION_ID"]],"prompt_fields":[],"help":"Azure credentials"}]'
+      ;;
+    *)
+      echo "unknown provider: $provider" >&2
+      exit 1
+      ;;
+  esac
+
+  if [ "$source" = "gcp-artifact-registry" ]; then
+    image="europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db"
+  else
+    image="ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
+  fi
+
+  case "$provider" in
+    aws)
+      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE\",\"required\":false,\"prompt\":null,\"default_value\":\"$image\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST\",\"required\":false,\"prompt\":null,\"default_value\":\"sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null}]"
+      ;;
+    gcp)
+      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE\",\"required\":false,\"prompt\":null,\"default_value\":\"$image\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST\",\"required\":false,\"prompt\":null,\"default_value\":\"sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID\",\"required\":true,\"prompt\":null,\"default_value\":null},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION\",\"required\":true,\"prompt\":null,\"default_value\":\"us-central1\"}]"
+      ;;
+    azure)
+      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE\",\"required\":false,\"prompt\":null,\"default_value\":\"$image\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST\",\"required\":false,\"prompt\":null,\"default_value\":\"sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null}]"
+      ;;
+  esac
+  printf '%s\n' "{\"target\":\"$provider\",\"target_label\":\"$label\",\"provider_pack_filename\":\"terraform.gtpack\",\"remote_bundle_source_required\":true,\"remote_bundle_source_help\":\"$help\",\"informational_notes\":[],\"credential_requirements\":$creds,\"variable_requirements\":$vars}"
+  exit 0
+fi
+exit 0
+"#;
+    let body = body_template.replace("__LOG_SNIPPET__", &log_snippet);
+    fs::write(script, body).expect("write fake deployer");
+    let mut perms = fs::metadata(script).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(script, perms).expect("chmod");
+}
+
+#[cfg(unix)]
+pub(crate) fn fake_deployer_contract(log_path: Option<&Path>) -> (tempfile::TempDir, EnvVarGuard) {
+    let dir = tempdir().expect("tempdir");
+    let script = dir.path().join("greentic-deployer");
+    write_fake_deployer_contract_script(&script, log_path);
+
+    let original = env::var_os("GREENTIC_DEPLOYER_BIN");
+    unsafe {
+        env::set_var("GREENTIC_DEPLOYER_BIN", &script);
+    }
+
+    (
+        dir,
+        EnvVarGuard {
+            name: "GREENTIC_DEPLOYER_BIN",
+            original,
+        },
+    )
 }
 
 #[test]
@@ -975,6 +1078,7 @@ fn rewrite_store_tenant_placeholder_substitutes_template_segment() {
 #[test]
 fn default_operator_image_for_target_uses_cloud_specific_refs() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
     unsafe {
         env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AWS");
         env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP");
@@ -982,15 +1086,15 @@ fn default_operator_image_for_target_uses_cloud_specific_refs() {
     }
     assert_eq!(
         default_operator_image_for_target(StartTarget::Aws),
-        Some(DEFAULT_GHCR_OPERATOR_IMAGE)
+        Some(DEFAULT_GHCR_OPERATOR_IMAGE.to_string())
     );
     assert_eq!(
         default_operator_image_for_target(StartTarget::Gcp),
-        Some(DEFAULT_GCP_OPERATOR_IMAGE)
+        Some(DEFAULT_GCP_OPERATOR_IMAGE.to_string())
     );
     assert_eq!(
         default_operator_image_for_target(StartTarget::Azure),
-        Some(DEFAULT_GHCR_OPERATOR_IMAGE)
+        Some(DEFAULT_GHCR_OPERATOR_IMAGE.to_string())
     );
     assert_eq!(
         default_operator_image_for_target(StartTarget::Runtime),
@@ -1001,6 +1105,7 @@ fn default_operator_image_for_target_uses_cloud_specific_refs() {
 #[test]
 fn default_operator_image_for_target_allows_source_override() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
     unsafe {
         env::set_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP", "ghcr");
         env::set_var(
@@ -1011,11 +1116,11 @@ fn default_operator_image_for_target_allows_source_override() {
 
     assert_eq!(
         default_operator_image_for_target(StartTarget::Gcp),
-        Some(DEFAULT_GHCR_OPERATOR_IMAGE)
+        Some(DEFAULT_GHCR_OPERATOR_IMAGE.to_string())
     );
     assert_eq!(
         default_operator_image_for_target(StartTarget::Azure),
-        Some(DEFAULT_GCP_OPERATOR_IMAGE)
+        Some(DEFAULT_GCP_OPERATOR_IMAGE.to_string())
     );
 
     unsafe {
@@ -1028,6 +1133,7 @@ fn default_operator_image_for_target_allows_source_override() {
 #[cfg(unix)]
 fn apply_default_deploy_env_for_target_prefers_explicit_env() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
     unsafe {
         env::set_var(
             "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE",
@@ -1037,7 +1143,8 @@ fn apply_default_deploy_env_for_target_prefers_explicit_env() {
     }
     let mut process = ProcessCommand::new("env");
 
-    apply_default_deploy_env_for_target(&mut process, Some(StartTarget::Gcp));
+    apply_default_deploy_env_for_target(&mut process, Some(StartTarget::Gcp), "en")
+        .expect("default deploy env");
 
     let envs: HashMap<_, _> = process
         .get_envs()

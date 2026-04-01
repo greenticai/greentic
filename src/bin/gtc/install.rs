@@ -16,11 +16,10 @@ use super::archive::{
     extract_squashfs_file, extract_tar_bytes, extract_targz_bytes, extract_zip_bytes,
     looks_like_gzip, looks_like_squashfs, looks_like_zip, safe_join, set_executable_if_unix,
 };
+use super::deploy::required_provider_pack_filenames_for_gtc;
 use super::i18n_support::{t, tf};
 use super::process::{passthrough, resolve_cargo_bin_dir};
-use super::{
-    BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, EMBEDDED_TERRAFORM_GTPACK, OP_BIN, SETUP_BIN, sha256_file,
-};
+use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, sha256_file};
 
 pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     println!("{}", t(locale, "gtc.install.public_mode"));
@@ -36,13 +35,13 @@ pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -
         return public_status;
     }
 
-    if let Err(err) = ensure_deployer_dist_pack(debug) {
+    if let Err(err) = ensure_deployer_dist_pack(debug, locale) {
         eprintln!(
             "{}: {err}",
             tf(
                 locale,
                 "gtc.install.item_fail",
-                &[("kind", "asset"), ("name", "terraform.gtpack")]
+                &[("kind", "asset"), ("name", "deployer dist packs")]
             )
         );
         return 1;
@@ -348,28 +347,23 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
     0
 }
 
-fn ensure_deployer_dist_pack(debug: bool) -> GtcResult<()> {
+fn ensure_deployer_dist_pack(debug: bool, locale: &str) -> GtcResult<()> {
     let cargo_bin_dir = resolve_cargo_bin_dir()?;
     let dist_dir = cargo_bin_dir.join("dist");
-    let target = dist_dir.join("terraform.gtpack");
-    fs::create_dir_all(&dist_dir)
-        .map_err(|e| GtcError::io(format!("failed to create {}", dist_dir.display()), e))?;
-
-    let needs_write = match fs::read(&target) {
-        Ok(existing) => existing != EMBEDDED_TERRAFORM_GTPACK,
-        Err(_) => true,
-    };
-    if !needs_write {
-        return Ok(());
+    let filenames = required_provider_pack_filenames_for_gtc(locale)?;
+    for filename in filenames {
+        let target = dist_dir.join(&filename);
+        if !target.is_file() {
+            return Err(GtcError::message(format!(
+                "greentic-deployer dist pack is missing at {}; reinstall greentic-deployer so it provides dist/{}",
+                target.display(),
+                filename
+            )));
+        }
+        if debug {
+            eprintln!("verified deployer pack at {}", target.display());
+        }
     }
-
-    fs::write(&target, EMBEDDED_TERRAFORM_GTPACK)
-        .map_err(|e| GtcError::io(format!("failed to write {}", target.display()), e))?;
-
-    if debug {
-        eprintln!("updated deployer pack at {}", target.display());
-    }
-
     Ok(())
 }
 
@@ -1332,12 +1326,11 @@ mod tests {
     use super::{
         TenantManifestReference, detect_binstall_version, ensure_deployer_dist_pack,
         ensure_install_prereqs, install_tenant_doc_reference, install_tenant_tool_reference,
-        is_binstall_available, latest_binstall_version, recurse_files, run_update,
+        is_binstall_available, latest_binstall_version, recurse_files,
+        required_provider_pack_filenames_for_gtc, run_update,
     };
     #[cfg(unix)]
-    use crate::EMBEDDED_TERRAFORM_GTPACK;
-    #[cfg(unix)]
-    use crate::tests::env_test_lock;
+    use crate::tests::{env_test_lock, fake_deployer_contract};
     #[cfg(unix)]
     use sha2::Digest;
     use std::cmp::Ordering;
@@ -1888,21 +1881,27 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn ensure_deployer_dist_pack_writes_embedded_pack_into_cargo_home() {
+    fn ensure_deployer_dist_pack_requires_installed_dist_pack() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let original_cargo_home = env::var_os("CARGO_HOME");
         unsafe {
             env::set_var("CARGO_HOME", dir.path());
         }
 
-        ensure_deployer_dist_pack(false).expect("write pack");
-        let target = dir.path().join("bin/dist/terraform.gtpack");
-        assert_eq!(fs::read(&target).expect("read"), EMBEDDED_TERRAFORM_GTPACK);
+        let err = ensure_deployer_dist_pack(false, "en").expect_err("missing pack should fail");
+        assert!(
+            err.to_string()
+                .contains("greentic-deployer dist pack is missing")
+        );
 
-        fs::write(&target, b"stale").expect("overwrite");
-        ensure_deployer_dist_pack(false).expect("rewrite pack");
-        assert_eq!(fs::read(&target).expect("read"), EMBEDDED_TERRAFORM_GTPACK);
+        let dist_dir = dir.path().join("bin/dist");
+        fs::create_dir_all(&dist_dir).expect("mkdirs");
+        for filename in required_provider_pack_filenames_for_gtc("en").expect("filenames") {
+            fs::write(dist_dir.join(filename), b"pack-bytes").expect("write pack");
+        }
+        ensure_deployer_dist_pack(false, "en").expect("existing pack should pass");
 
         unsafe {
             match original_cargo_home {

@@ -9,15 +9,16 @@ use std::fs;
 use std::io::Read;
 use std::path::Path;
 
-use crate::process::resolve_binary_in_dir;
+use crate::DEPLOYER_BIN;
+use crate::process::{resolve_binary_in_dir, run_binary_capture};
 use crate::prompt::{
     can_prompt_interactively, prompt_choice, prompt_non_empty, prompt_optional,
     prompt_optional_secret, prompt_secret, prompt_value_with_default,
 };
-use crate::{DEFAULT_GCP_OPERATOR_IMAGE, DEFAULT_GHCR_OPERATOR_IMAGE};
 use greentic_types::decode_pack_manifest;
-use gtc::config::{GtcConfig, OperatorImageSource};
+use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
+use serde::Deserialize;
 use zip::ZipArchive;
 
 use super::{ChildProcessEnv, StartTarget};
@@ -29,21 +30,64 @@ pub(crate) use provider_packs::{
 };
 pub(crate) use single_vm::write_single_vm_spec;
 
-pub(crate) fn default_operator_image_for_target(target: StartTarget) -> Option<&'static str> {
-    let config = GtcConfig::from_env();
+pub(crate) fn default_operator_image_for_target(target: StartTarget) -> Option<String> {
     match target {
-        StartTarget::Aws => Some(default_operator_image_for_name("aws", &config)),
-        StartTarget::Gcp => Some(default_operator_image_for_name("gcp", &config)),
-        StartTarget::Azure => Some(default_operator_image_for_name("azure", &config)),
+        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
+            default_target_variable_for_gtc(
+                target,
+                "en",
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE",
+            )
+            .ok()
+            .flatten()
+        }
         StartTarget::SingleVm | StartTarget::Runtime => None,
     }
 }
 
-fn default_operator_image_for_name(target: &str, config: &GtcConfig) -> &'static str {
-    match config.operator_image_source(target) {
-        OperatorImageSource::Ghcr => DEFAULT_GHCR_OPERATOR_IMAGE,
-        OperatorImageSource::GcpArtifactRegistry => DEFAULT_GCP_OPERATOR_IMAGE,
+pub(crate) fn describe_cloud_target_requirements_for_gtc(
+    target: StartTarget,
+    locale: &str,
+) -> GtcResult<CloudTargetRequirementsV1> {
+    describe_cloud_target_requirements(target, locale)
+}
+
+pub(crate) fn default_target_variable_for_gtc(
+    target: StartTarget,
+    locale: &str,
+    name: &str,
+) -> GtcResult<Option<String>> {
+    let requirements = describe_cloud_target_requirements(target, locale)?;
+    Ok(requirements
+        .variable_requirements
+        .into_iter()
+        .find(|requirement| requirement.name == name)
+        .and_then(|requirement| requirement.default_value))
+}
+
+pub(crate) fn canonical_provider_pack_filename_for_gtc(
+    target: StartTarget,
+    locale: &str,
+) -> GtcResult<Option<String>> {
+    match target {
+        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
+            let requirements = describe_cloud_target_requirements(target, locale)?;
+            Ok(Some(requirements.provider_pack_filename))
+        }
+        StartTarget::Runtime | StartTarget::SingleVm => Ok(None),
     }
+}
+
+pub(crate) fn required_provider_pack_filenames_for_gtc(locale: &str) -> GtcResult<Vec<String>> {
+    let mut filenames = Vec::new();
+    for target in [StartTarget::Aws, StartTarget::Azure, StartTarget::Gcp] {
+        if let Some(filename) = canonical_provider_pack_filename_for_gtc(target, locale)?
+            && !filenames.contains(&filename)
+        {
+            filenames.push(filename);
+        }
+    }
+    Ok(filenames)
 }
 
 pub(crate) fn validate_cloud_deploy_inputs(
@@ -59,36 +103,29 @@ pub(crate) fn validate_cloud_deploy_inputs(
     )?;
     validate_public_base_url_for_static_routes(bundle_dir)?;
     match target {
-        StartTarget::Aws => {
+        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
+            let requirements = describe_cloud_target_requirements(target, locale)?;
             child_env.extend(ensure_cloud_credentials(target, locale)?);
-            child_env.extend(ensure_target_terraform_inputs(target)?);
-            let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
-                GtcError::message("aws deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE")
-            })?;
-            if !is_remote_bundle_source(remote_bundle_source) {
-                return Err(GtcError::message(format!(
-                    "aws deploy requires a remote bundle source, got local path: {remote_bundle_source}"
-                )));
+            child_env.extend(ensure_target_terraform_inputs(target, locale)?);
+            if requirements.remote_bundle_source_required {
+                let remote_bundle_help = requirements
+                    .remote_bundle_source_help
+                    .as_deref()
+                    .unwrap_or("Pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE");
+                let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
+                    GtcError::message(format!(
+                        "{} deploy requires a remote bundle source; {}",
+                        requirements.target, remote_bundle_help
+                    ))
+                })?;
+                if !is_remote_bundle_source(remote_bundle_source) {
+                    return Err(GtcError::message(format!(
+                        "{} deploy requires a remote bundle source, got local path: {remote_bundle_source}",
+                        requirements.target
+                    )));
+                }
+                validate_bundle_registry_mapping_env(remote_bundle_source)?;
             }
-            validate_bundle_registry_mapping_env(remote_bundle_source)?;
-            Ok(child_env)
-        }
-        StartTarget::Gcp | StartTarget::Azure => {
-            child_env.extend(ensure_cloud_credentials(target, locale)?);
-            child_env.extend(ensure_target_terraform_inputs(target)?);
-            let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
-                GtcError::message(format!(
-                    "{} deploy requires a remote bundle source; pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE",
-                    target.as_str()
-                ))
-            })?;
-            if !is_remote_bundle_source(remote_bundle_source) {
-                return Err(GtcError::message(format!(
-                    "{} deploy requires a remote bundle source, got local path: {remote_bundle_source}",
-                    target.as_str()
-                )));
-            }
-            validate_bundle_registry_mapping_env(remote_bundle_source)?;
             Ok(child_env)
         }
         StartTarget::SingleVm | StartTarget::Runtime => Ok(child_env),
@@ -225,98 +262,137 @@ fn missing_cloud_credentials_error(names: &[&str], help: &str) -> GtcError {
     ))
 }
 
-fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> GtcResult<ChildProcessEnv> {
-    let (names, help) = match target {
-        StartTarget::Aws => (
-            &[
-                "AWS_ACCESS_KEY_ID",
-                "AWS_PROFILE",
-                "AWS_DEFAULT_PROFILE",
-                "AWS_WEB_IDENTITY_TOKEN_FILE",
-            ][..],
-            "set AWS credentials (for example AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or AWS_PROFILE)",
-        ),
-        StartTarget::Azure => (
-            &[
-                "ARM_CLIENT_ID",
-                "ARM_USE_OIDC",
-                "AZURE_CLIENT_ID",
-                "AZURE_TENANT_ID",
-                "AZURE_SUBSCRIPTION_ID",
-            ][..],
-            "set Azure credentials (for example ARM_CLIENT_ID/ARM_TENANT_ID/ARM_SUBSCRIPTION_ID or the corresponding AZURE_* variables)",
-        ),
-        StartTarget::Gcp => (
-            &[
-                "GOOGLE_APPLICATION_CREDENTIALS",
-                "GOOGLE_OAUTH_ACCESS_TOKEN",
-                "CLOUDSDK_AUTH_ACCESS_TOKEN",
-            ][..],
-            "set GCP credentials (for example GOOGLE_APPLICATION_CREDENTIALS or CLOUDSDK_AUTH_ACCESS_TOKEN)",
-        ),
-        StartTarget::SingleVm | StartTarget::Runtime => return Ok(ChildProcessEnv::new()),
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum PromptFieldKindV1 {
+    Required,
+    Optional,
+    Secret,
+    OptionalSecret,
+    Static,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct PromptFieldSpecV1 {
+    env_name: String,
+    prompt: String,
+    kind: PromptFieldKindV1,
+    #[serde(default)]
+    static_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CredentialRequirementV1 {
+    label: String,
+    env_vars: Vec<String>,
+    #[serde(default)]
+    satisfaction_env_groups: Vec<Vec<String>>,
+    #[serde(default)]
+    prompt_fields: Vec<PromptFieldSpecV1>,
+    help: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct VariableRequirementV1 {
+    pub(crate) name: String,
+    #[serde(default)]
+    pub(crate) required: bool,
+    #[serde(default)]
+    pub(crate) prompt: Option<String>,
+    #[serde(default)]
+    pub(crate) default_value: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub(crate) struct CloudTargetRequirementsV1 {
+    pub(crate) target: String,
+    #[allow(dead_code)]
+    pub(crate) target_label: String,
+    pub(crate) provider_pack_filename: String,
+    pub(crate) remote_bundle_source_required: bool,
+    #[serde(default)]
+    pub(crate) remote_bundle_source_help: Option<String>,
+    #[serde(default)]
+    pub(crate) informational_notes: Vec<String>,
+    #[serde(default)]
+    credential_requirements: Vec<CredentialRequirementV1>,
+    #[serde(default)]
+    pub(crate) variable_requirements: Vec<VariableRequirementV1>,
+}
+
+fn describe_cloud_target_requirements(
+    target: StartTarget,
+    locale: &str,
+) -> GtcResult<CloudTargetRequirementsV1> {
+    let provider = match target {
+        StartTarget::Aws => "aws",
+        StartTarget::Azure => "azure",
+        StartTarget::Gcp => "gcp",
+        StartTarget::SingleVm | StartTarget::Runtime => {
+            return Err(GtcError::message(format!(
+                "cloud target requirements are not available for {}",
+                target.as_str()
+            )));
+        }
     };
-    if cloud_credentials_satisfied(target) {
+    let args = vec![
+        "target-requirements".to_string(),
+        "--provider".to_string(),
+        provider.to_string(),
+    ];
+    let output = run_binary_capture(DEPLOYER_BIN, &args, false, locale)?;
+    let requirements: CloudTargetRequirementsV1 = serde_json::from_str(&output).map_err(|err| {
+        GtcError::message(format!(
+            "failed to parse greentic-deployer target requirements for {provider}: {err}"
+        ))
+    })?;
+    if requirements.target != provider {
+        return Err(GtcError::message(format!(
+            "greentic-deployer returned target requirements for {}, expected {provider}",
+            requirements.target
+        )));
+    }
+    Ok(requirements)
+}
+
+fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> GtcResult<ChildProcessEnv> {
+    let requirements = describe_cloud_target_requirements(target, locale)?;
+    if cloud_credentials_satisfied(&requirements) {
         return Ok(ChildProcessEnv::new());
     }
+    let names: Vec<&str> = requirements
+        .credential_requirements
+        .iter()
+        .flat_map(|req| req.env_vars.iter().map(String::as_str))
+        .collect();
+    let help = requirements
+        .credential_requirements
+        .iter()
+        .map(|req| req.help.as_str())
+        .collect::<Vec<_>>()
+        .join("; ");
     if !can_prompt_interactively() {
-        return Err(missing_cloud_credentials_error(names, help));
+        return Err(missing_cloud_credentials_error(&names, &help));
     }
     let _ = locale;
     println!(
         "Cloud credentials for {} are missing. gtc can collect them for this run.",
         target.as_str()
     );
-    let env = match target {
-        StartTarget::Aws => prompt_aws_credentials()?,
-        StartTarget::Azure => prompt_azure_credentials()?,
-        StartTarget::Gcp => prompt_gcp_credentials()?,
-        StartTarget::SingleVm | StartTarget::Runtime => ChildProcessEnv::new(),
-    };
-    if cloud_credentials_satisfied(target) || !env.vars.is_empty() {
+    let env = prompt_cloud_credentials_for_requirements(target.as_str(), &requirements)?;
+    if cloud_credentials_satisfied(&requirements) || !env.vars.is_empty() {
         Ok(env)
     } else {
-        Err(missing_cloud_credentials_error(names, help))
+        Err(missing_cloud_credentials_error(&names, &help))
     }
 }
 
-fn ensure_target_terraform_inputs(target: StartTarget) -> GtcResult<ChildProcessEnv> {
-    let requirements: &[(&str, bool, Option<&str>)] = match target {
-        StartTarget::Aws => &[(
-            "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
-            true,
-            None,
-        )],
-        StartTarget::Gcp => &[
-            ("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID", true, None),
-            (
-                "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION",
-                true,
-                Some("us-central1"),
-            ),
-        ],
-        StartTarget::Azure => &[
-            (
-                "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_KEY_VAULT_ID",
-                true,
-                None,
-            ),
-            (
-                "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_LOCATION",
-                true,
-                Some("westeurope"),
-            ),
-        ],
-        StartTarget::SingleVm | StartTarget::Runtime => return Ok(ChildProcessEnv::new()),
-    };
-    if requirements.is_empty() {
+fn ensure_target_terraform_inputs(target: StartTarget, locale: &str) -> GtcResult<ChildProcessEnv> {
+    let requirements = describe_cloud_target_requirements(target, locale)?;
+    if requirements.variable_requirements.is_empty() {
         return Ok(ChildProcessEnv::new());
     }
-    let missing: Vec<_> = requirements
-        .iter()
-        .filter(|(name, required, _)| *required && !env_var_present(name))
-        .copied()
-        .collect();
+    let missing = collect_missing_required_variables(&requirements);
     if missing.is_empty() {
         return Ok(ChildProcessEnv::new());
     }
@@ -325,7 +401,7 @@ fn ensure_target_terraform_inputs(target: StartTarget) -> GtcResult<ChildProcess
             "missing required deployment configuration: {}",
             missing
                 .iter()
-                .map(|(name, _, _)| *name)
+                .map(|requirement| requirement.name.as_str())
                 .collect::<Vec<_>>()
                 .join(", ")
         )));
@@ -335,79 +411,70 @@ fn ensure_target_terraform_inputs(target: StartTarget) -> GtcResult<ChildProcess
         target.as_str()
     );
     let mut env = ChildProcessEnv::new();
-    for (name, _, default) in missing {
-        let prompt = match name {
-            "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND" => {
-                "Terraform remote state backend:"
-            }
-            "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID" => "GCP project ID:",
-            "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION" => "GCP region:",
-            "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_KEY_VAULT_ID" => "Azure Key Vault resource ID:",
-            "GREENTIC_DEPLOY_TERRAFORM_VAR_AZURE_LOCATION" => "Azure location:",
-            _ => name,
-        };
-        let value = prompt_value_with_default(prompt, default)?;
-        env.set(name, value);
+    for requirement in missing {
+        let prompt = requirement
+            .prompt
+            .as_deref()
+            .unwrap_or(requirement.name.as_str());
+        let value = prompt_value_with_default(prompt, requirement.default_value.as_deref())?;
+        env.set(requirement.name, value);
     }
     Ok(env)
 }
 
-fn cloud_credentials_satisfied(target: StartTarget) -> bool {
-    match target {
-        StartTarget::Aws => {
-            env_var_present("AWS_PROFILE")
-                || env_var_present("AWS_DEFAULT_PROFILE")
-                || env_var_present("AWS_WEB_IDENTITY_TOKEN_FILE")
-                || (env_var_present("AWS_ACCESS_KEY_ID")
-                    && env_var_present("AWS_SECRET_ACCESS_KEY"))
-        }
-        StartTarget::Azure => {
-            (env_var_present("ARM_CLIENT_ID")
-                && env_var_present("ARM_TENANT_ID")
-                && env_var_present("ARM_SUBSCRIPTION_ID")
-                && (env_var_present("ARM_CLIENT_SECRET") || env_var_present("ARM_USE_OIDC")))
-                || (env_var_present("AZURE_CLIENT_ID")
-                    && env_var_present("AZURE_TENANT_ID")
-                    && env_var_present("AZURE_SUBSCRIPTION_ID"))
-        }
-        StartTarget::Gcp => {
-            env_var_present("GOOGLE_APPLICATION_CREDENTIALS")
-                || env_var_present("GOOGLE_OAUTH_ACCESS_TOKEN")
-                || env_var_present("CLOUDSDK_AUTH_ACCESS_TOKEN")
-        }
-        StartTarget::SingleVm | StartTarget::Runtime => true,
-    }
+fn collect_missing_required_variables(
+    requirements: &CloudTargetRequirementsV1,
+) -> Vec<VariableRequirementV1> {
+    requirements
+        .variable_requirements
+        .iter()
+        .filter(|requirement| requirement.required && !env_var_present(&requirement.name))
+        .cloned()
+        .collect()
+}
+
+fn cloud_credentials_satisfied(requirements: &CloudTargetRequirementsV1) -> bool {
+    requirements
+        .credential_requirements
+        .iter()
+        .any(credential_requirement_satisfied)
+}
+
+fn credential_requirement_satisfied(requirement: &CredentialRequirementV1) -> bool {
+    let groups = if requirement.satisfaction_env_groups.is_empty() {
+        vec![requirement.env_vars.clone()]
+    } else {
+        requirement.satisfaction_env_groups.clone()
+    };
+    groups
+        .iter()
+        .any(|group| group.iter().all(|name| env_var_present(name)))
 }
 
 fn env_var_present(name: &str) -> bool {
     GtcConfig::from_env().non_empty_var(name).is_some()
 }
 
-enum PromptFieldKind {
-    Required,
-    Optional,
-    Secret,
-    OptionalSecret,
-    Static(&'static str),
-}
-
-struct PromptField {
-    env_name: &'static str,
-    prompt: &'static str,
-    kind: PromptFieldKind,
-}
-
-struct CredentialModeSpec {
-    label: &'static str,
-    fields: &'static [PromptField],
+fn prompt_cloud_credentials_for_requirements(
+    provider_name: &str,
+    requirements: &CloudTargetRequirementsV1,
+) -> GtcResult<ChildProcessEnv> {
+    if requirements.credential_requirements.is_empty() {
+        return Ok(ChildProcessEnv::new());
+    }
+    prompt_cloud_credentials(
+        &format!("Select {provider_name} credential input mode:"),
+        provider_name,
+        &requirements.credential_requirements,
+    )
 }
 
 fn prompt_cloud_credentials(
     selection_prompt: &str,
     provider_name: &str,
-    modes: &[CredentialModeSpec],
+    modes: &[CredentialRequirementV1],
 ) -> GtcResult<ChildProcessEnv> {
-    let mut options: Vec<&str> = modes.iter().map(|mode| mode.label).collect();
+    let mut options: Vec<&str> = modes.iter().map(|mode| mode.label.as_str()).collect();
     options.push("Abort");
     let mode = prompt_choice(selection_prompt, &options)?;
     if mode >= modes.len() {
@@ -417,198 +484,33 @@ fn prompt_cloud_credentials(
     }
 
     let mut env = ChildProcessEnv::new();
-    for field in modes[mode].fields {
+    for field in &modes[mode].prompt_fields {
         match field.kind {
-            PromptFieldKind::Required => {
-                env.set(field.env_name, prompt_non_empty(field.prompt)?);
+            PromptFieldKindV1::Required => {
+                env.set(field.env_name.clone(), prompt_non_empty(&field.prompt)?);
             }
-            PromptFieldKind::Optional => {
-                if let Some(value) = prompt_optional(field.prompt)? {
-                    env.set(field.env_name, value);
+            PromptFieldKindV1::Optional => {
+                if let Some(value) = prompt_optional(&field.prompt)? {
+                    env.set(field.env_name.clone(), value);
                 }
             }
-            PromptFieldKind::Secret => {
+            PromptFieldKindV1::Secret => {
                 env.vars
-                    .push((field.env_name.to_string(), prompt_secret(field.prompt)?));
+                    .push((field.env_name.clone(), prompt_secret(&field.prompt)?));
             }
-            PromptFieldKind::OptionalSecret => {
-                if let Some(value) = prompt_optional_secret(field.prompt)? {
-                    env.vars.push((field.env_name.to_string(), value));
+            PromptFieldKindV1::OptionalSecret => {
+                if let Some(value) = prompt_optional_secret(&field.prompt)? {
+                    env.vars.push((field.env_name.clone(), value));
                 }
             }
-            PromptFieldKind::Static(value) => env.set(field.env_name, value),
+            PromptFieldKindV1::Static => env.set(
+                field.env_name.clone(),
+                field.static_value.clone().unwrap_or_default(),
+            ),
         }
     }
 
     Ok(env)
-}
-
-const AWS_ACCESS_KEY_PAIR_FIELDS: &[PromptField] = &[
-    PromptField {
-        env_name: "AWS_ACCESS_KEY_ID",
-        prompt: "AWS access key ID:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "AWS_SECRET_ACCESS_KEY",
-        prompt: "AWS secret access key:",
-        kind: PromptFieldKind::Secret,
-    },
-    PromptField {
-        env_name: "AWS_SESSION_TOKEN",
-        prompt: "AWS session token (optional):",
-        kind: PromptFieldKind::OptionalSecret,
-    },
-    PromptField {
-        env_name: "AWS_DEFAULT_REGION",
-        prompt: "AWS default region (optional):",
-        kind: PromptFieldKind::Optional,
-    },
-];
-
-const AWS_PROFILE_FIELDS: &[PromptField] = &[
-    PromptField {
-        env_name: "AWS_PROFILE",
-        prompt: "AWS profile:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "AWS_DEFAULT_REGION",
-        prompt: "AWS default region (optional):",
-        kind: PromptFieldKind::Optional,
-    },
-];
-
-const AWS_WEB_IDENTITY_FIELDS: &[PromptField] = &[
-    PromptField {
-        env_name: "AWS_WEB_IDENTITY_TOKEN_FILE",
-        prompt: "AWS web identity token file:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "AWS_ROLE_ARN",
-        prompt: "AWS role ARN (optional):",
-        kind: PromptFieldKind::Optional,
-    },
-];
-
-const AWS_CREDENTIAL_MODES: &[CredentialModeSpec] = &[
-    CredentialModeSpec {
-        label: "Access key pair",
-        fields: AWS_ACCESS_KEY_PAIR_FIELDS,
-    },
-    CredentialModeSpec {
-        label: "AWS profile",
-        fields: AWS_PROFILE_FIELDS,
-    },
-    CredentialModeSpec {
-        label: "Web identity token file",
-        fields: AWS_WEB_IDENTITY_FIELDS,
-    },
-];
-
-const AZURE_SERVICE_PRINCIPAL_FIELDS: &[PromptField] = &[
-    PromptField {
-        env_name: "ARM_SUBSCRIPTION_ID",
-        prompt: "Azure subscription ID:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "ARM_TENANT_ID",
-        prompt: "Azure tenant ID:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "ARM_CLIENT_ID",
-        prompt: "Azure client ID:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "ARM_CLIENT_SECRET",
-        prompt: "Azure client secret:",
-        kind: PromptFieldKind::Secret,
-    },
-];
-
-const AZURE_OIDC_FIELDS: &[PromptField] = &[
-    PromptField {
-        env_name: "ARM_SUBSCRIPTION_ID",
-        prompt: "Azure subscription ID:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "ARM_TENANT_ID",
-        prompt: "Azure tenant ID:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "ARM_CLIENT_ID",
-        prompt: "Azure client ID:",
-        kind: PromptFieldKind::Required,
-    },
-    PromptField {
-        env_name: "ARM_USE_OIDC",
-        prompt: "",
-        kind: PromptFieldKind::Static("true"),
-    },
-];
-
-const AZURE_CREDENTIAL_MODES: &[CredentialModeSpec] = &[
-    CredentialModeSpec {
-        label: "ARM service principal",
-        fields: AZURE_SERVICE_PRINCIPAL_FIELDS,
-    },
-    CredentialModeSpec {
-        label: "Azure OIDC",
-        fields: AZURE_OIDC_FIELDS,
-    },
-];
-
-const GCP_SERVICE_ACCOUNT_FIELDS: &[PromptField] = &[PromptField {
-    env_name: "GOOGLE_APPLICATION_CREDENTIALS",
-    prompt: "GOOGLE_APPLICATION_CREDENTIALS path:",
-    kind: PromptFieldKind::Required,
-}];
-
-const GCP_ACCESS_TOKEN_FIELDS: &[PromptField] = &[PromptField {
-    env_name: "CLOUDSDK_AUTH_ACCESS_TOKEN",
-    prompt: "GCP access token:",
-    kind: PromptFieldKind::Secret,
-}];
-
-const GCP_CREDENTIAL_MODES: &[CredentialModeSpec] = &[
-    CredentialModeSpec {
-        label: "Service account credentials file",
-        fields: GCP_SERVICE_ACCOUNT_FIELDS,
-    },
-    CredentialModeSpec {
-        label: "Access token",
-        fields: GCP_ACCESS_TOKEN_FIELDS,
-    },
-];
-
-fn prompt_aws_credentials() -> GtcResult<ChildProcessEnv> {
-    prompt_cloud_credentials(
-        "Select AWS credential input mode:",
-        "AWS",
-        AWS_CREDENTIAL_MODES,
-    )
-}
-
-fn prompt_azure_credentials() -> GtcResult<ChildProcessEnv> {
-    prompt_cloud_credentials(
-        "Select Azure credential input mode:",
-        "Azure",
-        AZURE_CREDENTIAL_MODES,
-    )
-}
-
-fn prompt_gcp_credentials() -> GtcResult<ChildProcessEnv> {
-    prompt_cloud_credentials(
-        "Select GCP credential input mode:",
-        "GCP",
-        GCP_CREDENTIAL_MODES,
-    )
 }
 
 fn require_tool_in_path(binary: &str, help: &str) -> GtcResult<()> {
@@ -632,15 +534,16 @@ fn binary_in_path(binary: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
+        CloudTargetRequirementsV1, CredentialRequirementV1, VariableRequirementV1,
         append_bundle_registry_args, binary_in_path, cloud_credentials_satisfied,
-        default_operator_image_for_target, dir_declares_static_routes,
-        ensure_target_terraform_inputs, env_var_present, matches_remote_bundle_ref,
+        collect_missing_required_variables, default_operator_image_for_target,
+        dir_declares_static_routes, env_var_present, matches_remote_bundle_ref,
         validate_bundle_registry_mapping_env, validate_public_base_url_for_static_routes,
     };
     #[cfg(unix)]
     use super::{require_tool_in_path, validate_cloud_deploy_inputs};
     use crate::deploy::StartTarget;
-    use crate::tests::env_test_lock;
+    use crate::tests::{env_test_lock, fake_deployer_contract};
     use gtc::config::GtcConfig;
     use std::env;
     use std::fs;
@@ -761,11 +664,53 @@ mod tests {
             env::remove_var("AWS_WEB_IDENTITY_TOKEN_FILE");
         }
         assert!(env_var_present("AWS_ACCESS_KEY_ID"));
-        assert!(!cloud_credentials_satisfied(StartTarget::Aws));
+        assert!(!cloud_credentials_satisfied(&CloudTargetRequirementsV1 {
+            target: "aws".to_string(),
+            target_label: "AWS".to_string(),
+            provider_pack_filename: "terraform.gtpack".to_string(),
+            remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
+            credential_requirements: vec![CredentialRequirementV1 {
+                label: "Access key pair".to_string(),
+                env_vars: vec![
+                    "AWS_ACCESS_KEY_ID".to_string(),
+                    "AWS_SECRET_ACCESS_KEY".to_string(),
+                ],
+                satisfaction_env_groups: vec![vec![
+                    "AWS_ACCESS_KEY_ID".to_string(),
+                    "AWS_SECRET_ACCESS_KEY".to_string(),
+                ]],
+                prompt_fields: Vec::new(),
+                help: "AWS access key credentials".to_string(),
+            }],
+            variable_requirements: Vec::new(),
+        }));
         unsafe {
             env::set_var("AWS_SECRET_ACCESS_KEY", "secret");
         }
-        assert!(cloud_credentials_satisfied(StartTarget::Aws));
+        assert!(cloud_credentials_satisfied(&CloudTargetRequirementsV1 {
+            target: "aws".to_string(),
+            target_label: "AWS".to_string(),
+            provider_pack_filename: "terraform.gtpack".to_string(),
+            remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
+            credential_requirements: vec![CredentialRequirementV1 {
+                label: "Access key pair".to_string(),
+                env_vars: vec![
+                    "AWS_ACCESS_KEY_ID".to_string(),
+                    "AWS_SECRET_ACCESS_KEY".to_string(),
+                ],
+                satisfaction_env_groups: vec![vec![
+                    "AWS_ACCESS_KEY_ID".to_string(),
+                    "AWS_SECRET_ACCESS_KEY".to_string(),
+                ]],
+                prompt_fields: Vec::new(),
+                help: "AWS access key credentials".to_string(),
+            }],
+            variable_requirements: Vec::new(),
+        }));
         unsafe {
             env::remove_var("AWS_ACCESS_KEY_ID");
             env::remove_var("AWS_SECRET_ACCESS_KEY");
@@ -774,6 +719,7 @@ mod tests {
 
     #[test]
     fn default_operator_image_for_target_returns_cloud_defaults_only() {
+        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
         assert!(default_operator_image_for_target(StartTarget::Aws).is_some());
         assert!(default_operator_image_for_target(StartTarget::Gcp).is_some());
         assert!(default_operator_image_for_target(StartTarget::Azure).is_some());
@@ -790,13 +736,33 @@ mod tests {
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION");
         }
-        let err = match ensure_target_terraform_inputs(StartTarget::Gcp) {
-            Ok(_) => panic!("expected missing terraform inputs to fail"),
-            Err(err) => err,
-        };
-        assert!(
-            err.to_string()
-                .contains("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID")
+        let missing = collect_missing_required_variables(&CloudTargetRequirementsV1 {
+            target: "gcp".to_string(),
+            target_label: "GCP".to_string(),
+            provider_pack_filename: "terraform.gtpack".to_string(),
+            remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
+            credential_requirements: Vec::new(),
+            variable_requirements: vec![
+                VariableRequirementV1 {
+                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID".to_string(),
+                    required: true,
+                    prompt: None,
+                    default_value: None,
+                },
+                VariableRequirementV1 {
+                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION".to_string(),
+                    required: true,
+                    prompt: None,
+                    default_value: Some("us-central1".to_string()),
+                },
+            ],
+        });
+        assert_eq!(missing.len(), 2);
+        assert_eq!(
+            missing[0].name,
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID"
         );
     }
 
@@ -811,8 +777,61 @@ mod tests {
             env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
             env::set_var("CLOUDSDK_AUTH_ACCESS_TOKEN", "token");
         }
-        assert!(cloud_credentials_satisfied(StartTarget::Azure));
-        assert!(cloud_credentials_satisfied(StartTarget::Gcp));
+        assert!(cloud_credentials_satisfied(&CloudTargetRequirementsV1 {
+            target: "azure".to_string(),
+            target_label: "Azure".to_string(),
+            provider_pack_filename: "terraform.gtpack".to_string(),
+            remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
+            credential_requirements: vec![CredentialRequirementV1 {
+                label: "Azure OIDC".to_string(),
+                env_vars: vec![
+                    "ARM_USE_OIDC".to_string(),
+                    "AZURE_CLIENT_ID".to_string(),
+                    "AZURE_TENANT_ID".to_string(),
+                    "AZURE_SUBSCRIPTION_ID".to_string(),
+                ],
+                satisfaction_env_groups: vec![
+                    vec![
+                        "ARM_CLIENT_ID".to_string(),
+                        "ARM_TENANT_ID".to_string(),
+                        "ARM_SUBSCRIPTION_ID".to_string(),
+                        "ARM_USE_OIDC".to_string(),
+                    ],
+                    vec![
+                        "AZURE_CLIENT_ID".to_string(),
+                        "AZURE_TENANT_ID".to_string(),
+                        "AZURE_SUBSCRIPTION_ID".to_string(),
+                    ],
+                ],
+                prompt_fields: Vec::new(),
+                help: "Azure OIDC credentials".to_string(),
+            }],
+            variable_requirements: Vec::new(),
+        }));
+        assert!(cloud_credentials_satisfied(&CloudTargetRequirementsV1 {
+            target: "gcp".to_string(),
+            target_label: "GCP".to_string(),
+            provider_pack_filename: "terraform.gtpack".to_string(),
+            remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
+            credential_requirements: vec![CredentialRequirementV1 {
+                label: "Access token".to_string(),
+                env_vars: vec![
+                    "GOOGLE_OAUTH_ACCESS_TOKEN".to_string(),
+                    "CLOUDSDK_AUTH_ACCESS_TOKEN".to_string(),
+                ],
+                satisfaction_env_groups: vec![
+                    vec!["GOOGLE_OAUTH_ACCESS_TOKEN".to_string()],
+                    vec!["CLOUDSDK_AUTH_ACCESS_TOKEN".to_string()],
+                ],
+                prompt_fields: Vec::new(),
+                help: "GCP access token credentials".to_string(),
+            }],
+            variable_requirements: Vec::new(),
+        }));
         unsafe {
             env::remove_var("ARM_CLIENT_ID");
             env::remove_var("ARM_TENANT_ID");
