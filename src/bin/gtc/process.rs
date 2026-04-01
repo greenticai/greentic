@@ -383,7 +383,7 @@ mod tests {
     use super::{first_non_empty_line, resolve_cargo_bin_dir};
     #[cfg(unix)]
     use crate::deploy::StartTarget;
-    use crate::tests::env_test_lock;
+    use crate::tests::{env_test_lock, fake_deployer_contract};
     use std::env;
     #[cfg(unix)]
     use std::process::Command as ProcessCommand;
@@ -417,6 +417,7 @@ mod tests {
     #[cfg(unix)]
     fn apply_default_deploy_env_for_target_sets_expected_vars() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
         unsafe {
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");

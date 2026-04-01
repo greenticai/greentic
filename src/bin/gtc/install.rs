@@ -1330,7 +1330,7 @@ mod tests {
         required_provider_pack_filenames_for_gtc, run_update,
     };
     #[cfg(unix)]
-    use crate::tests::env_test_lock;
+    use crate::tests::{env_test_lock, fake_deployer_contract};
     #[cfg(unix)]
     use sha2::Digest;
     use std::cmp::Ordering;
@@ -1883,6 +1883,7 @@ mod tests {
     #[test]
     fn ensure_deployer_dist_pack_requires_installed_dist_pack() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let original_cargo_home = env::var_os("CARGO_HOME");
         unsafe {

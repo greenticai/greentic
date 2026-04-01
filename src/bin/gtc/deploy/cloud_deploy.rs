@@ -543,7 +543,7 @@ mod tests {
     #[cfg(unix)]
     use super::{require_tool_in_path, validate_cloud_deploy_inputs};
     use crate::deploy::StartTarget;
-    use crate::tests::env_test_lock;
+    use crate::tests::{env_test_lock, fake_deployer_contract};
     use gtc::config::GtcConfig;
     use std::env;
     use std::fs;
@@ -666,8 +666,11 @@ mod tests {
         assert!(env_var_present("AWS_ACCESS_KEY_ID"));
         assert!(!cloud_credentials_satisfied(&CloudTargetRequirementsV1 {
             target: "aws".to_string(),
+            target_label: "AWS".to_string(),
             provider_pack_filename: "terraform.gtpack".to_string(),
             remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
             credential_requirements: vec![CredentialRequirementV1 {
                 label: "Access key pair".to_string(),
                 env_vars: vec![
@@ -688,8 +691,11 @@ mod tests {
         }
         assert!(cloud_credentials_satisfied(&CloudTargetRequirementsV1 {
             target: "aws".to_string(),
+            target_label: "AWS".to_string(),
             provider_pack_filename: "terraform.gtpack".to_string(),
             remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
             credential_requirements: vec![CredentialRequirementV1 {
                 label: "Access key pair".to_string(),
                 env_vars: vec![
@@ -713,6 +719,7 @@ mod tests {
 
     #[test]
     fn default_operator_image_for_target_returns_cloud_defaults_only() {
+        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
         assert!(default_operator_image_for_target(StartTarget::Aws).is_some());
         assert!(default_operator_image_for_target(StartTarget::Gcp).is_some());
         assert!(default_operator_image_for_target(StartTarget::Azure).is_some());
@@ -731,8 +738,11 @@ mod tests {
         }
         let missing = collect_missing_required_variables(&CloudTargetRequirementsV1 {
             target: "gcp".to_string(),
+            target_label: "GCP".to_string(),
             provider_pack_filename: "terraform.gtpack".to_string(),
             remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
             credential_requirements: Vec::new(),
             variable_requirements: vec![
                 VariableRequirementV1 {
@@ -769,8 +779,11 @@ mod tests {
         }
         assert!(cloud_credentials_satisfied(&CloudTargetRequirementsV1 {
             target: "azure".to_string(),
+            target_label: "Azure".to_string(),
             provider_pack_filename: "terraform.gtpack".to_string(),
             remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
             credential_requirements: vec![CredentialRequirementV1 {
                 label: "Azure OIDC".to_string(),
                 env_vars: vec![
@@ -799,8 +812,11 @@ mod tests {
         }));
         assert!(cloud_credentials_satisfied(&CloudTargetRequirementsV1 {
             target: "gcp".to_string(),
+            target_label: "GCP".to_string(),
             provider_pack_filename: "terraform.gtpack".to_string(),
             remote_bundle_source_required: true,
+            remote_bundle_source_help: None,
+            informational_notes: Vec::new(),
             credential_requirements: vec![CredentialRequirementV1 {
                 label: "Access token".to_string(),
                 env_vars: vec![

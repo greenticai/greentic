@@ -481,7 +481,7 @@ mod tests {
     use crate::deploy::{StartBundleResolution, StartTarget};
     #[cfg(unix)]
     use crate::deploy::{StartCliOptions, StopCliOptions};
-    use crate::tests::env_test_lock;
+    use crate::tests::{env_test_lock, write_fake_deployer_contract_script};
     #[cfg(unix)]
     use greentic_start::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
@@ -622,15 +622,7 @@ mod tests {
 
         let log = dir.path().join("deployer.log");
         let deployer = dir.path().join("greentic-deployer");
-        fs::write(
-            &deployer,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-                log.display()
-            ),
-        )
-        .expect("write");
-        fs::set_permissions(&deployer, fs::Permissions::from_mode(0o755)).expect("chmod");
+        write_fake_deployer_contract_script(&deployer, Some(&log));
 
         let request = StartRequest {
             bundle: Some(bundle_dir.display().to_string()),
@@ -670,10 +662,12 @@ mod tests {
         };
 
         let original_path = env::var_os("PATH");
+        let original_deployer_bin = env::var_os("GREENTIC_DEPLOYER_BIN");
         unsafe {
             env::set_var("PATH", &terraform_dir);
             env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
             env::set_var("CLOUDSDK_AUTH_ACCESS_TOKEN", "token");
+            env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "gcs");
             env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID", "project");
             env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION", "europe-west1");
         }
@@ -694,8 +688,12 @@ mod tests {
                 Some(path) => env::set_var("PATH", path),
                 None => env::remove_var("PATH"),
             }
-            env::remove_var("GREENTIC_DEPLOYER_BIN");
+            match original_deployer_bin {
+                Some(path) => env::set_var("GREENTIC_DEPLOYER_BIN", path),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
             env::remove_var("CLOUDSDK_AUTH_ACCESS_TOKEN");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION");
         }
@@ -720,17 +718,21 @@ mod tests {
 
         let log = dir.path().join("deployer.log");
         let deployer = dir.path().join("greentic-deployer");
-        fs::write(
-            &deployer,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-                log.display()
-            ),
-        )
-        .expect("write");
-        fs::set_permissions(&deployer, fs::Permissions::from_mode(0o755)).expect("chmod");
+        write_fake_deployer_contract_script(&deployer, Some(&log));
+        let original_deployer_bin = env::var_os("GREENTIC_DEPLOYER_BIN");
+        let original_operator_image = env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
+        let original_operator_digest =
+            env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
         unsafe {
             env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE",
+                "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b",
+            );
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
+                "sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b",
+            );
         }
 
         let request = StopRequest {
@@ -763,9 +765,21 @@ mod tests {
             "en",
         )
         .expect("destroy");
-
         unsafe {
-            env::remove_var("GREENTIC_DEPLOYER_BIN");
+            match original_deployer_bin {
+                Some(path) => env::set_var("GREENTIC_DEPLOYER_BIN", path),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+            match original_operator_image {
+                Some(path) => env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE", path),
+                None => env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE"),
+            }
+            match original_operator_digest {
+                Some(path) => {
+                    env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST", path)
+                }
+                None => env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST"),
+            }
         }
 
         let logged = fs::read_to_string(log).expect("read");

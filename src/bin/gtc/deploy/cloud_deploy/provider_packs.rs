@@ -235,17 +235,20 @@ mod tests {
         resolve_target_provider_pack_from_metadata,
     };
     use crate::deploy::StartTarget;
+    use crate::tests::fake_deployer_contract;
     use std::fs;
     use std::path::Path;
 
     #[test]
     fn canonical_target_provider_pack_filename_matches_cloud_targets() {
+        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
         assert_eq!(
-            canonical_target_provider_pack_filename(StartTarget::Aws),
-            Some("terraform.gtpack")
+            canonical_target_provider_pack_filename(StartTarget::Aws).expect("aws filename"),
+            Some("terraform.gtpack".to_string())
         );
         assert_eq!(
-            canonical_target_provider_pack_filename(StartTarget::Runtime),
+            canonical_target_provider_pack_filename(StartTarget::Runtime)
+                .expect("runtime filename"),
             None
         );
     }
