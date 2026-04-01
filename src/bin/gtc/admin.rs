@@ -4,15 +4,14 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::ArgMatches;
-use directories::BaseDirs;
 use gtc::error::{GtcError, GtcResult};
 use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose, SanType,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
+use crate::DEPLOYER_BIN;
 use crate::deploy::resolve_local_mutable_bundle_dir;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
@@ -322,145 +321,16 @@ pub(super) fn run_admin_tunnel(sub_matches: &ArgMatches, _locale: &str) -> i32 {
         }
     };
 
-    let deploy_dir = match resolve_latest_aws_deploy_dir(&bundle_dir) {
-        Ok(path) => path,
-        Err(err) => {
-            eprintln!("{err}");
-            return 1;
-        }
-    };
-    let outputs_path = deploy_dir.join("terraform-outputs.json");
-    let outputs = match load_terraform_outputs(&outputs_path) {
-        Ok(value) => value,
-        Err(err) => {
-            eprintln!("{err}");
-            return 1;
-        }
-    };
-    let Some(admin_ca_secret_ref) = terraform_output_string(&outputs, "admin_ca_secret_ref") else {
-        eprintln!(
-            "missing admin_ca_secret_ref in {}; deploy the bundle first",
-            outputs_path.display()
-        );
-        return 1;
-    };
-
-    let Some(region) = aws_region_from_secret_arn(&admin_ca_secret_ref) else {
-        eprintln!("failed to derive AWS region from admin secret ref");
-        return 1;
-    };
-    let Some(name_prefix) = deploy_name_prefix_from_secret_arn(&admin_ca_secret_ref) else {
-        eprintln!("failed to derive deploy name prefix from admin secret ref");
-        return 1;
-    };
-
-    let cluster = format!("{name_prefix}-cluster");
-    let service = format!("{name_prefix}-service");
-
-    let task_arn = match aws_cli_capture(
-        &[
-            "ecs",
-            "list-tasks",
-            "--region",
-            &region,
-            "--cluster",
-            &cluster,
-            "--service-name",
-            &service,
-            "--query",
-            "taskArns[0]",
-            "--output",
-            "text",
-        ],
-        "aws ecs list-tasks",
-    ) {
-        Ok(value) if !value.is_empty() && value != "None" => value,
-        Ok(_) => {
-            eprintln!("no running ECS task found for service {service}");
-            return 1;
-        }
-        Err(err) => {
-            eprintln!("{err}");
-            return 1;
-        }
-    };
-
-    let runtime_query = format!("tasks[0].containers[?name=='{container}'].runtimeId | [0]");
-    let runtime_id = match aws_cli_capture(
-        &[
-            "ecs",
-            "describe-tasks",
-            "--region",
-            &region,
-            "--cluster",
-            &cluster,
-            "--tasks",
-            &task_arn,
-            "--query",
-            &runtime_query,
-            "--output",
-            "text",
-        ],
-        "aws ecs describe-tasks",
-    ) {
-        Ok(value) if !value.is_empty() && value != "None" => value,
-        Ok(_) => {
-            eprintln!("no runtimeId found for container {container}");
-            return 1;
-        }
-        Err(err) => {
-            eprintln!("{err}");
-            return 1;
-        }
-    };
-
-    let Some(task_id) = task_id_from_arn(&task_arn) else {
-        eprintln!("failed to derive task id from task ARN");
-        return 1;
-    };
-
-    if let Err(err) = maybe_write_tunnel_admin_certs(&bundle_dir, &outputs, &region, &name_prefix) {
-        eprintln!("{err}");
-        return 1;
-    }
-
-    let target = format!("ecs:{cluster}_{task_id}_{runtime_id}");
-    let parameters = format!(
-        "{{\"host\":[\"127.0.0.1\"],\"portNumber\":[\"8433\"],\"localPortNumber\":[\"{local_port}\"]}}"
-    );
-
-    println!("Opening admin tunnel on https://127.0.0.1:{local_port}");
-    let cert_dir = tunnel_admin_cert_dir(&bundle_dir, &name_prefix);
-    if cert_dir.is_dir() {
-        println!("admin certs: {}", cert_dir.display());
-        println!(
-            "example: curl --cacert {0}/ca.crt --cert {0}/client.crt --key {0}/client.key https://127.0.0.1:{1}/admin/v1/health",
-            cert_dir.display(),
-            local_port
-        );
-    }
-    if let Some(value) = terraform_output_string(&outputs, "admin_client_cert_secret_ref") {
-        println!("admin_client_cert_secret_ref: {value}");
-    } else {
-        println!("note: this deployment does not publish admin client cert refs yet");
-    }
-    if let Some(value) = terraform_output_string(&outputs, "admin_client_key_secret_ref") {
-        println!("admin_client_key_secret_ref: {value}");
-    }
-    println!("Press Ctrl+C to stop.");
-
-    let status = ProcessCommand::new("aws")
+    let status = ProcessCommand::new(DEPLOYER_BIN)
         .args([
-            "ssm",
-            "start-session",
-            "--region",
-            &region,
-            "--target",
-            &target,
-            "--document-name",
-            "AWS-StartPortForwardingSessionToRemoteHost",
-            "--parameters",
-            &parameters,
+            "aws",
+            "admin-tunnel",
+            "--bundle-dir",
+            &bundle_dir.display().to_string(),
+            "--local-port",
+            local_port,
+            "--container",
+            container,
         ])
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
@@ -474,217 +344,8 @@ pub(super) fn run_admin_tunnel(sub_matches: &ArgMatches, _locale: &str) -> i32 {
             1
         }
         Err(err) => {
-            eprintln!("failed to start aws ssm session: {err}");
+            eprintln!("failed to start greentic-deployer aws admin tunnel: {err}");
             1
         }
     }
-}
-
-fn resolve_latest_aws_deploy_dir(bundle_dir: &Path) -> Result<PathBuf, String> {
-    let base_dirs = BaseDirs::new()
-        .ok_or_else(|| "failed to resolve base directories for aws deploy state".to_string())?;
-    let candidates = [
-        bundle_dir.join(".greentic").join("deploy").join("aws"),
-        bundle_dir
-            .parent()
-            .map(|parent| parent.join(".greentic").join("deploy").join("aws"))
-            .unwrap_or_default(),
-        base_dirs
-            .home_dir()
-            .join(".greentic")
-            .join("deploy")
-            .join("aws"),
-    ];
-    let mut latest: Option<(SystemTime, PathBuf)> = None;
-    for root in candidates {
-        if root.as_os_str().is_empty() || !root.exists() {
-            continue;
-        }
-        let mut stack = vec![root];
-        while let Some(dir) = stack.pop() {
-            let entries = fs::read_dir(&dir)
-                .map_err(|err| format!("failed to read deploy dir {}: {err}", dir.display()))?;
-            for entry in entries.flatten() {
-                let path = entry.path();
-                if path.is_dir() {
-                    let outputs = path.join("terraform-outputs.json");
-                    if outputs.is_file() {
-                        let modified = fs::metadata(&outputs)
-                            .and_then(|meta| meta.modified())
-                            .unwrap_or(UNIX_EPOCH);
-                        match latest.as_ref() {
-                            Some((current, _)) if modified <= *current => {}
-                            _ => latest = Some((modified, path.clone())),
-                        }
-                    }
-                    stack.push(path);
-                }
-            }
-        }
-    }
-
-    latest
-        .map(|(_, path)| path)
-        .ok_or_else(|| {
-            format!(
-                "aws deploy state not found under {}, its parent workspace, or ~/.greentic/deploy/aws; deploy the bundle first",
-                bundle_dir.join(".greentic").join("deploy").join("aws").display()
-            )
-        })
-}
-
-fn load_terraform_outputs(path: &Path) -> Result<Value, String> {
-    let raw = fs::read_to_string(path)
-        .map_err(|err| format!("failed to read terraform outputs {}: {err}", path.display()))?;
-    serde_json::from_str(&raw).map_err(|err| {
-        format!(
-            "failed to parse terraform outputs {}: {err}",
-            path.display()
-        )
-    })
-}
-
-fn terraform_output_string(outputs: &Value, key: &str) -> Option<String> {
-    outputs
-        .get(key)
-        .and_then(|value| value.get("value"))
-        .and_then(Value::as_str)
-        .map(|value| value.to_string())
-}
-
-fn aws_region_from_secret_arn(secret_arn: &str) -> Option<String> {
-    secret_arn.split(':').nth(3).map(|value| value.to_string())
-}
-
-fn tunnel_admin_cert_dir(bundle_dir: &Path, deploy_name_prefix: &str) -> PathBuf {
-    bundle_dir
-        .join(".greentic")
-        .join("admin")
-        .join("tunnels")
-        .join(deploy_name_prefix)
-}
-
-fn maybe_write_tunnel_admin_certs(
-    bundle_dir: &Path,
-    outputs: &Value,
-    region: &str,
-    deploy_name_prefix: &str,
-) -> Result<(), String> {
-    let Some(client_cert_ref) = terraform_output_string(outputs, "admin_client_cert_secret_ref")
-    else {
-        return Ok(());
-    };
-    let Some(client_key_ref) = terraform_output_string(outputs, "admin_client_key_secret_ref")
-    else {
-        return Ok(());
-    };
-    let Some(ca_ref) = terraform_output_string(outputs, "admin_ca_secret_ref") else {
-        return Ok(());
-    };
-
-    let cert_dir = tunnel_admin_cert_dir(bundle_dir, deploy_name_prefix);
-    fs::create_dir_all(&cert_dir).map_err(|err| {
-        format!(
-            "failed to create tunnel cert dir {}: {err}",
-            cert_dir.display()
-        )
-    })?;
-
-    let ca_pem = aws_cli_capture(
-        &[
-            "secretsmanager",
-            "get-secret-value",
-            "--region",
-            region,
-            "--secret-id",
-            &ca_ref,
-            "--query",
-            "SecretString",
-            "--output",
-            "text",
-        ],
-        "aws secretsmanager get-secret-value (admin ca)",
-    )?;
-    let client_cert_pem = aws_cli_capture(
-        &[
-            "secretsmanager",
-            "get-secret-value",
-            "--region",
-            region,
-            "--secret-id",
-            &client_cert_ref,
-            "--query",
-            "SecretString",
-            "--output",
-            "text",
-        ],
-        "aws secretsmanager get-secret-value (admin client cert)",
-    )?;
-    let client_key_pem = aws_cli_capture(
-        &[
-            "secretsmanager",
-            "get-secret-value",
-            "--region",
-            region,
-            "--secret-id",
-            &client_key_ref,
-            "--query",
-            "SecretString",
-            "--output",
-            "text",
-        ],
-        "aws secretsmanager get-secret-value (admin client key)",
-    )?;
-
-    fs::write(cert_dir.join("ca.crt"), ca_pem).map_err(|err| {
-        format!(
-            "failed to write {}: {err}",
-            cert_dir.join("ca.crt").display()
-        )
-    })?;
-    fs::write(cert_dir.join("client.crt"), client_cert_pem).map_err(|err| {
-        format!(
-            "failed to write {}: {err}",
-            cert_dir.join("client.crt").display()
-        )
-    })?;
-    fs::write(cert_dir.join("client.key"), client_key_pem).map_err(|err| {
-        format!(
-            "failed to write {}: {err}",
-            cert_dir.join("client.key").display()
-        )
-    })?;
-
-    Ok(())
-}
-
-fn deploy_name_prefix_from_secret_arn(secret_arn: &str) -> Option<String> {
-    let marker = ":secret:greentic/admin/";
-    let start = secret_arn.find(marker)? + marker.len();
-    let rest = &secret_arn[start..];
-    let prefix = rest.split('/').next()?;
-    if prefix.is_empty() {
-        None
-    } else {
-        Some(prefix.to_string())
-    }
-}
-
-fn task_id_from_arn(task_arn: &str) -> Option<String> {
-    task_arn.rsplit('/').next().map(|value| value.to_string())
-}
-
-fn aws_cli_capture(args: &[&str], label: &str) -> Result<String, String> {
-    let output = ProcessCommand::new("aws")
-        .args(args)
-        .output()
-        .map_err(|err| format!("failed to launch {label}: {err}"))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        if stderr.is_empty() {
-            return Err(format!("{label} failed with status {}", output.status));
-        }
-        return Err(format!("{label} failed: {stderr}"));
-    }
-    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

@@ -982,15 +982,15 @@ fn default_operator_image_for_target_uses_cloud_specific_refs() {
     }
     assert_eq!(
         default_operator_image_for_target(StartTarget::Aws),
-        Some(DEFAULT_GHCR_OPERATOR_IMAGE)
+        Some(DEFAULT_GHCR_OPERATOR_IMAGE.to_string())
     );
     assert_eq!(
         default_operator_image_for_target(StartTarget::Gcp),
-        Some(DEFAULT_GCP_OPERATOR_IMAGE)
+        Some(DEFAULT_GCP_OPERATOR_IMAGE.to_string())
     );
     assert_eq!(
         default_operator_image_for_target(StartTarget::Azure),
-        Some(DEFAULT_GHCR_OPERATOR_IMAGE)
+        Some(DEFAULT_GHCR_OPERATOR_IMAGE.to_string())
     );
     assert_eq!(
         default_operator_image_for_target(StartTarget::Runtime),
@@ -1011,11 +1011,11 @@ fn default_operator_image_for_target_allows_source_override() {
 
     assert_eq!(
         default_operator_image_for_target(StartTarget::Gcp),
-        Some(DEFAULT_GHCR_OPERATOR_IMAGE)
+        Some(DEFAULT_GHCR_OPERATOR_IMAGE.to_string())
     );
     assert_eq!(
         default_operator_image_for_target(StartTarget::Azure),
-        Some(DEFAULT_GCP_OPERATOR_IMAGE)
+        Some(DEFAULT_GCP_OPERATOR_IMAGE.to_string())
     );
 
     unsafe {
@@ -1037,7 +1037,8 @@ fn apply_default_deploy_env_for_target_prefers_explicit_env() {
     }
     let mut process = ProcessCommand::new("env");
 
-    apply_default_deploy_env_for_target(&mut process, Some(StartTarget::Gcp));
+    apply_default_deploy_env_for_target(&mut process, Some(StartTarget::Gcp), "en")
+        .expect("default deploy env");
 
     let envs: HashMap<_, _> = process
         .get_envs()

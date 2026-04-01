@@ -2,12 +2,6 @@ use std::env;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OperatorImageSource {
-    Ghcr,
-    GcpArtifactRegistry,
-}
-
 #[derive(Debug, Default, Clone, Copy)]
 pub struct GtcConfig;
 
@@ -95,19 +89,6 @@ impl GtcConfig {
     pub fn tenant_key(&self, tenant: &str) -> Option<String> {
         self.non_empty_var(&format!("GREENTIC_{}_KEY", tenant_key_segment(tenant)))
     }
-
-    pub fn operator_image_source(&self, target: &str) -> OperatorImageSource {
-        let env_name = format!(
-            "GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_{}",
-            target.to_ascii_uppercase().replace('-', "_")
-        );
-        match self.non_empty_var(&env_name).as_deref() {
-            Some("gcp-artifact-registry") => OperatorImageSource::GcpArtifactRegistry,
-            Some("ghcr") => OperatorImageSource::Ghcr,
-            _ if target.eq_ignore_ascii_case("gcp") => OperatorImageSource::GcpArtifactRegistry,
-            _ => OperatorImageSource::Ghcr,
-        }
-    }
 }
 
 fn tenant_key_segment(tenant: &str) -> String {
@@ -126,7 +107,7 @@ fn tenant_key_segment(tenant: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{GtcConfig, OperatorImageSource};
+    use super::GtcConfig;
     use std::env;
 
     #[test]
@@ -157,25 +138,6 @@ mod tests {
         assert_eq!(cfg.tenant_key("acme-dev").as_deref(), Some("secret"));
         unsafe {
             env::remove_var("GREENTIC_ACME_DEV_KEY");
-        }
-    }
-
-    #[test]
-    fn operator_image_source_uses_env_override() {
-        unsafe {
-            env::set_var(
-                "GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP",
-                "gcp-artifact-registry",
-            );
-        }
-        let cfg = GtcConfig::from_env();
-        assert_eq!(
-            cfg.operator_image_source("gcp"),
-            OperatorImageSource::GcpArtifactRegistry
-        );
-        assert_eq!(cfg.operator_image_source("aws"), OperatorImageSource::Ghcr);
-        unsafe {
-            env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP");
         }
     }
 }

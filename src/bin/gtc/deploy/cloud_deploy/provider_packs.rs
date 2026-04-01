@@ -6,6 +6,7 @@ use serde::Deserialize;
 use serde_yaml_bw::Value as YamlValue;
 
 use super::super::StartTarget;
+use super::canonical_provider_pack_filename_for_gtc;
 use crate::DEPLOYER_BIN;
 use crate::process::resolve_companion_binary;
 
@@ -41,9 +42,11 @@ pub(crate) fn resolve_target_provider_pack(
 }
 
 fn resolve_canonical_target_provider_pack(target: StartTarget) -> Option<PathBuf> {
-    let filename = canonical_target_provider_pack_filename(target)?;
+    let filename = canonical_target_provider_pack_filename(target)
+        .ok()
+        .flatten()?;
     let deployer_bin = resolve_companion_binary(DEPLOYER_BIN)?;
-    resolve_canonical_target_provider_pack_from(Some(deployer_bin.as_path()), filename)
+    resolve_canonical_target_provider_pack_from(Some(deployer_bin.as_path()), &filename)
 }
 
 pub(crate) fn resolve_canonical_target_provider_pack_from(
@@ -60,11 +63,8 @@ pub(crate) fn resolve_canonical_target_provider_pack_from(
     candidates.into_iter().find(|candidate| candidate.is_file())
 }
 
-fn canonical_target_provider_pack_filename(target: StartTarget) -> Option<&'static str> {
-    match target {
-        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => Some("terraform.gtpack"),
-        StartTarget::Runtime | StartTarget::SingleVm => None,
-    }
+fn canonical_target_provider_pack_filename(target: StartTarget) -> GtcResult<Option<String>> {
+    canonical_provider_pack_filename_for_gtc(target, "en")
 }
 
 fn resolve_target_provider_pack_from_metadata(

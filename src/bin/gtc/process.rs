@@ -6,8 +6,11 @@ use directories::BaseDirs;
 use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 
-use super::deploy::{ChildProcessEnv, StartTarget, default_operator_image_for_target};
-use super::{BUNDLE_BIN, DEFAULT_OPERATOR_IMAGE_DIGEST, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN};
+use super::deploy::{
+    ChildProcessEnv, StartTarget, default_operator_image_for_target,
+    default_target_variable_for_gtc,
+};
+use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN};
 use crate::i18n_support::{t, t_or};
 
 pub(super) fn run_binary_checked(
@@ -73,7 +76,7 @@ pub(super) fn run_binary_capture_with_target(
     let command = resolve_binary_command(binary);
     let mut process = ProcessCommand::new(&command);
     process.args(args).env("GREENTIC_LOCALE", locale);
-    apply_default_deploy_env_for_target(&mut process, target);
+    apply_default_deploy_env_for_target(&mut process, target, locale)?;
     let output = process
         .output()
         .map_err(|err| GtcError::io(format!("failed to execute {binary}"), err))?;
@@ -110,7 +113,7 @@ pub(super) fn run_binary_status_with_target_and_env(
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    apply_default_deploy_env_for_target(&mut process, target);
+    apply_default_deploy_env_for_target(&mut process, target, locale)?;
     if let Some(extra_env) = extra_env {
         extra_env.apply(&mut process);
     }
@@ -122,7 +125,8 @@ pub(super) fn run_binary_status_with_target_and_env(
 pub(super) fn apply_default_deploy_env_for_target(
     process: &mut ProcessCommand,
     target: Option<StartTarget>,
-) {
+    locale: &str,
+) -> GtcResult<()> {
     let cfg = GtcConfig::from_env();
     if cfg.terraform_operator_image().is_none()
         && let Some(target) = target
@@ -130,12 +134,20 @@ pub(super) fn apply_default_deploy_env_for_target(
     {
         process.env("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE", image);
     }
-    if cfg.terraform_operator_image_digest().is_none() {
+    if cfg.terraform_operator_image_digest().is_none()
+        && let Some(target) = target
+        && let Some(digest) = default_target_variable_for_gtc(
+            target,
+            locale,
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
+        )?
+    {
         process.env(
             "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
-            DEFAULT_OPERATOR_IMAGE_DIGEST,
+            digest,
         );
     }
+    Ok(())
 }
 
 pub(super) fn resolve_cargo_bin_dir() -> GtcResult<PathBuf> {
@@ -411,7 +423,8 @@ mod tests {
         }
 
         let mut cmd = ProcessCommand::new("env");
-        apply_default_deploy_env_for_target(&mut cmd, Some(StartTarget::Aws));
+        apply_default_deploy_env_for_target(&mut cmd, Some(StartTarget::Aws), "en")
+            .expect("default deploy env");
         let envs: Vec<_> = cmd.get_envs().collect();
 
         assert!(envs.iter().any(|(key, value)| {
