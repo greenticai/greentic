@@ -168,6 +168,20 @@ fn build_wizard_args_preserves_explicit_locale() {
 }
 
 #[test]
+fn build_wizard_args_includes_schema_passthrough() {
+    let args = build_wizard_args(&["--schema".to_string()], "en");
+    assert_eq!(
+        args,
+        vec![
+            "wizard".to_string(),
+            "--locale".to_string(),
+            "en".to_string(),
+            "--schema".to_string()
+        ]
+    );
+}
+
+#[test]
 fn route_passthrough_subcommand_routes_wizard_to_greentic_dev() {
     let tail = vec!["--help".to_string()];
     let (binary, args) = route_passthrough_subcommand("wizard", &tail, "en").expect("wizard route");
