@@ -292,6 +292,7 @@ fn doctor_uses_greentic_dev_bin_override() {
     sandbox.write_version_tool("greentic-operator", "greentic-operator 0.0.0");
     sandbox.write_version_tool("greentic-bundle", "greentic-bundle 0.0.0");
     sandbox.write_version_tool("greentic-setup", "greentic-setup 0.0.0");
+    sandbox.write_version_tool("greentic-start", "greentic-start 0.0.0");
     sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
 
     let mut extra = HashMap::new();
@@ -350,16 +351,65 @@ fn op_start_routes_to_demo_start_with_default_tenant_team_and_cloudflared_off() 
 }
 
 #[test]
+fn runtime_start_routes_to_greentic_start_cli() {
+    let sandbox = TestSandbox::new("runtime_start_routes_to_greentic_start_cli");
+    let bundle_dir = sandbox.path().join("bundle");
+    create_minimal_bundle_dir(&bundle_dir);
+    let log_file = sandbox.path().join("start.log");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_arg_logger_tool("greentic-start", &log_file, 0);
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "start",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "runtime",
+            "--tenant",
+            "demo",
+            "--team",
+            "ops",
+            "--cloudflared=off",
+            "--admin",
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let logged = fs::read_to_string(log_file).expect("read start log");
+    assert!(logged.contains("--locale en start"));
+    assert!(logged.contains("--bundle"));
+    assert!(logged.contains(bundle_dir.to_str().expect("bundle utf8")));
+    assert!(logged.contains("--tenant demo"));
+    assert!(logged.contains("--team ops"));
+    assert!(logged.contains("--cloudflared off"));
+    assert!(logged.contains("--admin"));
+}
+
+#[test]
 fn install_public_mode_calls_greentic_dev_install_tools() {
     let sandbox = TestSandbox::new("install_public_mode_calls_greentic_dev_install_tools");
     let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
 
     sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
 
-    let output = sandbox.run_gtc_capture(["install"], HashMap::new());
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+
+    let output = sandbox.run_gtc_capture(["install"], extra);
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -386,6 +436,7 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
 
     sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
 
     let mock_root = sandbox.path().join("mock-dist");
@@ -591,6 +642,7 @@ fn update_calls_binstall_force_for_all_companions() {
     assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-operator"));
     assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-bundle"));
     assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-setup"));
+    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-start"));
     assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-deployer"));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -617,6 +669,7 @@ fn update_reports_failure_and_continues() {
     let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
     assert!(cargo_logged.contains("greentic-dev"));
     assert!(cargo_logged.contains("greentic-bundle"));
+    assert!(cargo_logged.contains("greentic-start"));
     assert!(cargo_logged.contains("greentic-deployer"));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1019,6 +1072,11 @@ impl TestSandbox {
         self.compile_rust_tool_at(&path, &rust_single_vm_deployer_tool_program(log_file));
     }
 
+    fn write_contract_deployer_tool(&self, name: &str) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_contract_deployer_tool_program());
+    }
+
     fn run_gtc<const N: usize>(
         &self,
         args: [&str; N],
@@ -1045,6 +1103,7 @@ impl TestSandbox {
             ("greentic-operator", "GREENTIC_OPERATOR_BIN"),
             ("greentic-setup", "GREENTIC_SETUP_BIN"),
             ("greentic-bundle", "GREENTIC_BUNDLE_BIN"),
+            ("greentic-start", "GREENTIC_START_BIN"),
             ("greentic-deployer", "GREENTIC_DEPLOYER_BIN"),
         ] {
             let path = self.binary_path(binary);
@@ -1265,4 +1324,28 @@ fn main() {{
 }}
 "#
     )
+}
+
+fn rust_contract_deployer_tool_program() -> String {
+    r#"
+fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().map(String::as_str) == Some("target-requirements") {
+        let provider = args
+            .windows(2)
+            .find(|pair| pair[0] == "--provider")
+            .map(|pair| pair[1].as_str())
+            .unwrap_or("aws");
+        println!(
+            "{{\"target\":\"{provider}\",\"target_label\":\"{provider}\",\"credential_requirements\":[],\"variable_requirements\":[],\"remote_bundle_source_required\":true,\"remote_bundle_source_help\":null,\"provider_pack_filename\":\"terraform.gtpack\",\"informational_notes\":[]}}"
+        );
+        return;
+    }
+
+    if args.first().map(String::as_str) == Some("--version") {
+        println!("greentic-deployer 0.0.0");
+    }
+}
+"#
+    .to_string()
 }

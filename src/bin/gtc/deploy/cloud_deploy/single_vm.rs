@@ -2,8 +2,10 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use directories::BaseDirs;
-use greentic_start::{CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest};
 use gtc::error::{GtcError, GtcResult};
+use gtc::start_stop_parsing::{
+    CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
+};
 use serde_json::Value;
 
 use super::super::{StartBundleResolution, StartTarget};
@@ -213,7 +215,7 @@ mod tests {
     use crate::deploy::cloud_deploy::deployment_state::deployment_state_path;
     #[cfg(unix)]
     use crate::tests::env_test_lock;
-    use greentic_start::{
+    use gtc::start_stop_parsing::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
     };
     #[cfg(unix)]
@@ -238,12 +240,12 @@ mod tests {
 
     #[test]
     fn deployment_name_combines_tenant_team_and_bundle() {
-        let request = greentic_start::StartRequest {
+        let request = StartRequest {
             bundle: None,
             tenant: Some("tenant".to_string()),
             team: Some("team".to_string()),
             no_nats: false,
-            nats: greentic_start::NatsModeArg::Off,
+            nats: NatsModeArg::Off,
             nats_url: None,
             config: None,
             cloudflared: CloudflaredModeArg::Off,

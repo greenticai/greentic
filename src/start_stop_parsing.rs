@@ -1,10 +1,68 @@
 use std::path::PathBuf;
 
-use greentic_start::{
-    CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
-};
-
 use crate::error::{GtcError, GtcResult};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NatsModeArg {
+    Off,
+    On,
+    External,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudflaredModeArg {
+    On,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NgrokModeArg {
+    On,
+    Off,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RestartTarget {
+    All,
+    Cloudflared,
+    Ngrok,
+    Nats,
+    Gateway,
+    Egress,
+    Subscriptions,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartRequest {
+    pub bundle: Option<String>,
+    pub tenant: Option<String>,
+    pub team: Option<String>,
+    pub no_nats: bool,
+    pub nats: NatsModeArg,
+    pub nats_url: Option<String>,
+    pub config: Option<PathBuf>,
+    pub cloudflared: CloudflaredModeArg,
+    pub cloudflared_binary: Option<PathBuf>,
+    pub ngrok: NgrokModeArg,
+    pub ngrok_binary: Option<PathBuf>,
+    pub runner_binary: Option<PathBuf>,
+    pub restart: Vec<RestartTarget>,
+    pub log_dir: Option<PathBuf>,
+    pub verbose: bool,
+    pub quiet: bool,
+    pub admin: bool,
+    pub admin_port: u16,
+    pub admin_certs_dir: Option<PathBuf>,
+    pub admin_allowed_clients: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StopRequest {
+    pub bundle: Option<String>,
+    pub state_dir: Option<PathBuf>,
+    pub tenant: String,
+    pub team: String,
+}
 
 pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<StartRequest> {
     let mut request = StartRequest {

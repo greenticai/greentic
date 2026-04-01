@@ -5,8 +5,6 @@ mod provider_packs;
 #[path = "cloud_deploy/single_vm.rs"]
 mod single_vm;
 
-use std::fs;
-use std::io::Read;
 use std::path::Path;
 
 use crate::DEPLOYER_BIN;
@@ -15,11 +13,9 @@ use crate::prompt::{
     can_prompt_interactively, prompt_choice, prompt_non_empty, prompt_optional,
     prompt_optional_secret, prompt_secret, prompt_value_with_default,
 };
-use greentic_types::decode_pack_manifest;
 use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 use serde::Deserialize;
-use zip::ZipArchive;
 
 use super::{ChildProcessEnv, StartTarget};
 
@@ -101,7 +97,7 @@ pub(crate) fn validate_cloud_deploy_inputs(
         "terraform",
         "install terraform and make sure it is available in PATH",
     )?;
-    validate_public_base_url_for_static_routes(bundle_dir)?;
+    let _ = bundle_dir;
     match target {
         StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
             let requirements = describe_cloud_target_requirements(target, locale)?;
@@ -130,87 +126,6 @@ pub(crate) fn validate_cloud_deploy_inputs(
         }
         StartTarget::SingleVm | StartTarget::Runtime => Ok(child_env),
     }
-}
-
-fn validate_public_base_url_for_static_routes(bundle_dir: &Path) -> GtcResult<()> {
-    if !bundle_declares_static_routes(bundle_dir)? {
-        return Ok(());
-    }
-    Ok(())
-}
-
-fn bundle_declares_static_routes(bundle_dir: &Path) -> GtcResult<bool> {
-    for root in [bundle_dir.join("providers"), bundle_dir.join("packs")] {
-        if !root.exists() {
-            continue;
-        }
-        if dir_declares_static_routes(&root)? {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
-fn dir_declares_static_routes(root: &Path) -> GtcResult<bool> {
-    let mut stack = vec![root.to_path_buf()];
-    while let Some(dir) = stack.pop() {
-        let entries = fs::read_dir(&dir)
-            .map_err(|err| GtcError::io(format!("failed to read {}", dir.display()), err))?;
-        for entry in entries {
-            let entry = entry
-                .map_err(|err| GtcError::message(format!("failed to read dir entry: {err}")))?;
-            let path = entry.path();
-            let file_type = entry
-                .file_type()
-                .map_err(|err| GtcError::io(format!("failed to stat {}", path.display()), err))?;
-            if file_type.is_dir() {
-                stack.push(path);
-                continue;
-            }
-            if path.extension().and_then(|ext| ext.to_str()) != Some("gtpack") {
-                continue;
-            }
-            if pack_declares_static_routes(&path)? {
-                return Ok(true);
-            }
-        }
-    }
-    Ok(false)
-}
-
-fn pack_declares_static_routes(path: &Path) -> GtcResult<bool> {
-    const EXT_STATIC_ROUTES_V1: &str = "greentic.static-routes.v1";
-    let file = fs::File::open(path)
-        .map_err(|err| GtcError::io(format!("failed to open {}", path.display()), err))?;
-    let mut archive = ZipArchive::new(file).map_err(|err| {
-        GtcError::message(format!(
-            "failed to open zip archive {}: {err}",
-            path.display()
-        ))
-    })?;
-    let mut manifest_entry = archive.by_name("manifest.cbor").map_err(|err| {
-        GtcError::message(format!(
-            "failed to open manifest.cbor in {}: {err}",
-            path.display()
-        ))
-    })?;
-    let mut bytes = Vec::new();
-    manifest_entry.read_to_end(&mut bytes).map_err(|err| {
-        GtcError::message(format!(
-            "failed to read manifest.cbor in {}: {err}",
-            path.display()
-        ))
-    })?;
-    let manifest = decode_pack_manifest(&bytes).map_err(|err| {
-        GtcError::message(format!(
-            "failed to decode pack manifest in {}: {err}",
-            path.display()
-        ))
-    })?;
-    Ok(manifest
-        .extensions
-        .as_ref()
-        .is_some_and(|extensions| extensions.contains_key(EXT_STATIC_ROUTES_V1)))
 }
 
 fn validate_bundle_registry_mapping_env(bundle_source: &str) -> GtcResult<()> {
@@ -536,9 +451,8 @@ mod tests {
     use super::{
         CloudTargetRequirementsV1, CredentialRequirementV1, VariableRequirementV1,
         append_bundle_registry_args, binary_in_path, cloud_credentials_satisfied,
-        collect_missing_required_variables, default_operator_image_for_target,
-        dir_declares_static_routes, env_var_present, matches_remote_bundle_ref,
-        validate_bundle_registry_mapping_env, validate_public_base_url_for_static_routes,
+        collect_missing_required_variables, default_operator_image_for_target, env_var_present,
+        matches_remote_bundle_ref, validate_bundle_registry_mapping_env,
     };
     #[cfg(unix)]
     use super::{require_tool_in_path, validate_cloud_deploy_inputs};
@@ -871,19 +785,6 @@ mod tests {
     #[test]
     fn binary_in_path_returns_false_for_missing_tools() {
         assert!(!binary_in_path("definitely-not-a-real-terraform-binary"));
-    }
-
-    #[test]
-    fn validate_public_base_url_for_static_routes_accepts_bundles_without_pack_dirs() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        validate_public_base_url_for_static_routes(dir.path()).expect("validate");
-    }
-
-    #[test]
-    fn dir_declares_static_routes_ignores_non_pack_files() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        fs::write(dir.path().join("notes.txt"), "hello").expect("write");
-        assert!(!dir_declares_static_routes(dir.path()).expect("scan"));
     }
 
     #[cfg(unix)]
