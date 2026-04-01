@@ -124,6 +124,62 @@ fn wizard_passthrough_routes_to_greentic_dev_without_args() {
 }
 
 #[test]
+fn wizard_schema_passthrough_emits_dev_schema() {
+    let sandbox = TestSandbox::new("wizard_schema_passthrough_emits_dev_schema");
+    let schema = serde_json::json!({
+        "title": "greentic-dev launcher wizard answers",
+        "type": "object",
+        "properties": {
+            "schema_id": { "const": "greentic-dev.launcher.main" },
+            "answers": {
+                "type": "object",
+                "properties": {
+                    "selected_action": { "enum": ["pack", "bundle"] }
+                }
+            }
+        }
+    });
+    sandbox.write_stdout_tool(
+        "greentic-dev",
+        &format!("{}\n", serde_json::to_string(&schema).expect("schema json")),
+        0,
+    );
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let output = sandbox.run_gtc_capture(["wizard", "--schema"], HashMap::new());
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let emitted: serde_json::Value = serde_json::from_str(&stdout).expect("valid schema JSON");
+    assert_eq!(
+        emitted.get("title").and_then(serde_json::Value::as_str),
+        Some("greentic-dev launcher wizard answers")
+    );
+    assert_eq!(
+        emitted
+            .pointer("/properties/schema_id/const")
+            .and_then(serde_json::Value::as_str),
+        Some("greentic-dev.launcher.main")
+    );
+    assert_eq!(
+        emitted
+            .pointer("/properties/answers/properties/selected_action/enum")
+            .and_then(serde_json::Value::as_array)
+            .expect("selected_action enum")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect::<Vec<_>>(),
+        vec!["pack", "bundle"]
+    );
+}
+
+#[test]
 fn wizard_emit_answers_writes_requested_file_via_dev_wizard() {
     let sandbox = TestSandbox::new("wizard_emit_answers_writes_requested_file_via_dev_wizard");
     let answers_path = sandbox.path().join("answers.json");
@@ -940,6 +996,11 @@ impl TestSandbox {
         self.compile_rust_tool_at(&path, &rust_emit_answers_tool_program());
     }
 
+    fn write_stdout_tool(&self, name: &str, stdout: &str, exit_code: i32) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_stdout_tool_program(stdout, exit_code));
+    }
+
     fn write_cargo_binstall_tool(&self, log_file: &Path, fail_on_contains: Option<&str>) {
         let path = self.binary_path("cargo");
         self.compile_rust_tool_at(
@@ -1073,6 +1134,18 @@ fn main() {
 }
 "#
     .to_string()
+}
+
+fn rust_stdout_tool_program(stdout: &str, exit_code: i32) -> String {
+    let stdout_literal = rust_string_literal(stdout);
+    format!(
+        r#"
+fn main() {{
+    print!("{{}}", {stdout_literal});
+    std::process::exit({exit_code});
+}}
+"#
+    )
 }
 
 fn rust_cargo_binstall_tool_program(log_file: &Path, fail_on_contains: Option<&str>) -> String {

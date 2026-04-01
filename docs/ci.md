@@ -22,8 +22,27 @@ This repository also defines local workflows that cover repo-specific needs:
 
 - [`perf.yml`](../.github/workflows/perf.yml)
   Lightweight performance and concurrency guardrails for pull requests and `main`
+- [`nightly-coverage.yml`](../.github/workflows/nightly-coverage.yml)
+  Scheduled and on-demand coverage policy validation using `greentic-dev coverage`
 - [`release.yml`](../.github/workflows/release.yml)
   Main-branch release packaging and publication
+
+## Nightly coverage expectations
+
+The nightly coverage workflow is intentionally separate from pull request gating:
+
+- it runs on a nightly schedule and via manual dispatch
+- it installs `cargo-binstall` via the first-party `cargo-bins/cargo-binstall`
+  action
+- it uses `cargo binstall` for every required coverage binary:
+  - `cargo-llvm-cov`
+  - `cargo-nextest`
+  - `greentic-dev`
+- it adds the Rust `llvm-tools-preview` component required by `cargo-llvm-cov`
+- it runs `greentic-dev coverage`, which generates a coverage report and checks
+  the repo-local [`coverage-policy.json`](../coverage-policy.json)
+- it uploads the generated JSON coverage report as an artifact for inspection when
+  the policy fails
 
 ## Release workflow expectations
 

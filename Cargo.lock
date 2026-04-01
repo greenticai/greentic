@@ -2015,9 +2015,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-flow"
-version = "0.4.65"
+version = "0.4.66"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc55fd3540586807f03aae7dfbe29a49adbc8f73a92827a43f4cc92b6e0e7d14"
+checksum = "dc732cf9d93204c804447f6c87a89cf731024dd84ad7f05ff2b8238f4fe953f9"
 dependencies = [
  "anyhow",
  "blake3",
@@ -2162,7 +2162,7 @@ dependencies = [
  "tempfile",
  "time",
  "x509-parser",
- "zip 8.4.0",
+ "zip 8.5.0",
 ]
 
 [[package]]
@@ -2181,9 +2181,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-runner-desktop"
-version = "0.4.70"
+version = "0.4.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6cef021f39e0a459f59924706b325c57c5efdf0669f680bbcfbe4c1f6c43fb82"
+checksum = "9acb324ad54262f7bbf4080df5b5dc78e61b855368079e856e3ea6ef8cf5a238"
 dependencies = [
  "anyhow",
  "greentic-pack-lib",
@@ -2197,14 +2197,14 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
- "zip 8.4.0",
+ "zip 8.5.0",
 ]
 
 [[package]]
 name = "greentic-runner-host"
-version = "0.4.70"
+version = "0.4.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95a056669e2414c76d91f5c8327465bc8892c17d10f518298c9d7feef9407201"
+checksum = "9398f47c69ce80f110be98e35cd237a53b29bdf04aff3352117d625cd948563c"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2262,7 +2262,7 @@ dependencies = [
  "wasmtime-wasi",
  "wasmtime-wasi-http",
  "wasmtime-wasi-tls",
- "zip 8.4.0",
+ "zip 8.5.0",
 ]
 
 [[package]]
@@ -2447,7 +2447,7 @@ dependencies = [
  "unic-langid",
  "ureq",
  "uuid",
- "zip 8.4.0",
+ "zip 8.5.0",
  "zstd",
 ]
 
@@ -2560,7 +2560,7 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "zeroize",
- "zip 8.4.0",
+ "zip 8.5.0",
 ]
 
 [[package]]
@@ -4721,9 +4721,9 @@ dependencies = [
 
 [[package]]
 name = "runner-core"
-version = "0.4.70"
+version = "0.4.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5226a61ee091eeeeba0f158cc74521966022b48991f7f94127e268eaceadfc70"
+checksum = "1678a5f30d19d2a3a5c5dcd80c004cb480fde99ef9d9705b85eb7851fa53bf04"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -7664,9 +7664,9 @@ dependencies = [
 
 [[package]]
 name = "zip"
-version = "8.4.0"
+version = "8.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7756d0206d058333667493c4014f545f4b9603c4330ccd6d9b3f86dcab59f7d9"
+checksum = "2726508a48f38dceb22b35ecbbd2430efe34ff05c62bd3285f965d7911b33464"
 dependencies = [
  "aes",
  "bzip2",
