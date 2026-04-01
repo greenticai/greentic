@@ -10,7 +10,7 @@ use super::deploy::{
     ChildProcessEnv, StartTarget, default_operator_image_for_target,
     default_target_variable_for_gtc,
 };
-use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN};
+use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, START_BIN};
 use crate::i18n_support::{t, t_or};
 
 pub(super) fn run_binary_checked(
@@ -195,7 +195,14 @@ pub(super) fn passthrough(binary: &str, args: &[String], debug: bool, locale: &s
 pub(super) fn run_doctor(locale: &str) -> i32 {
     let mut failed = false;
 
-    for binary in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN, DEPLOYER_BIN] {
+    for binary in [
+        DEV_BIN,
+        OP_BIN,
+        BUNDLE_BIN,
+        SETUP_BIN,
+        DEPLOYER_BIN,
+        START_BIN,
+    ] {
         let command = resolve_binary_command(binary);
         match ProcessCommand::new(&command).arg("--version").output() {
             Ok(output) => {
@@ -353,6 +360,7 @@ fn resolve_workspace_local_binary(current_exe: &Path, binary: &str) -> Option<Pa
         BUNDLE_BIN => "greentic-bundle",
         DEPLOYER_BIN => "greentic-deployer",
         SETUP_BIN => "greentic-setup",
+        START_BIN => "greentic-start",
         _ => return None,
     };
     let candidate = workspace_root

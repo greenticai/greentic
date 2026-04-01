@@ -19,7 +19,7 @@ use super::archive::{
 use super::deploy::required_provider_pack_filenames_for_gtc;
 use super::i18n_support::{t, tf};
 use super::process::{passthrough, resolve_cargo_bin_dir};
-use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, sha256_file};
+use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, START_BIN, sha256_file};
 
 pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     println!("{}", t(locale, "gtc.install.public_mode"));
@@ -264,7 +264,14 @@ pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
 
     let mut any_failed = false;
 
-    for package in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN, DEPLOYER_BIN] {
+    for package in [
+        DEV_BIN,
+        OP_BIN,
+        BUNDLE_BIN,
+        SETUP_BIN,
+        START_BIN,
+        DEPLOYER_BIN,
+    ] {
         println!(
             "{}",
             tf(locale, "gtc.update.updating", &[("package", package)])
@@ -330,7 +337,14 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         }
     }
 
-    for package in [DEV_BIN, OP_BIN, BUNDLE_BIN, SETUP_BIN, DEPLOYER_BIN] {
+    for package in [
+        DEV_BIN,
+        OP_BIN,
+        BUNDLE_BIN,
+        SETUP_BIN,
+        START_BIN,
+        DEPLOYER_BIN,
+    ] {
         let binstall_args = vec![
             "binstall".to_string(),
             "-y".to_string(),
@@ -1974,6 +1988,7 @@ mod tests {
         assert!(logged.contains("binstall -y --version 0.4 greentic-operator"));
         assert!(logged.contains("binstall -y --version 0.4 greentic-bundle"));
         assert!(logged.contains("binstall -y --version 0.4 greentic-setup"));
+        assert!(logged.contains("binstall -y --version 0.4 greentic-start"));
         assert!(logged.contains("binstall -y --version 0.4 greentic-deployer"));
 
         unsafe {
@@ -2023,6 +2038,7 @@ mod tests {
         assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-operator"));
         assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-bundle"));
         assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-setup"));
+        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-start"));
         assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-deployer"));
 
         let dev_logged = fs::read_to_string(dev_log).expect("read dev log");

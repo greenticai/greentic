@@ -292,6 +292,7 @@ fn doctor_uses_greentic_dev_bin_override() {
     sandbox.write_version_tool("greentic-operator", "greentic-operator 0.0.0");
     sandbox.write_version_tool("greentic-bundle", "greentic-bundle 0.0.0");
     sandbox.write_version_tool("greentic-setup", "greentic-setup 0.0.0");
+    sandbox.write_version_tool("greentic-start", "greentic-start 0.0.0");
     sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
 
     let mut extra = HashMap::new();
@@ -347,6 +348,41 @@ fn op_start_routes_to_demo_start_with_default_tenant_team_and_cloudflared_off() 
     assert!(logged.contains("--tenant default"));
     assert!(logged.contains("--team default"));
     assert!(logged.contains("--cloudflared off"));
+}
+
+#[test]
+fn runtime_start_routes_to_greentic_start_cli() {
+    let sandbox = TestSandbox::new("runtime_start_routes_to_greentic_start_cli");
+    let bundle_dir = sandbox.path().join("bundle");
+    create_minimal_bundle_dir(&bundle_dir);
+    let log_file = sandbox.path().join("start.log");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_arg_logger_tool("greentic-start", &log_file, 0);
+
+    let status = sandbox.run_gtc(
+        [
+            "start",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--tenant",
+            "demo",
+            "--team",
+            "ops",
+            "--cloudflared=off",
+            "--admin",
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read start log");
+    assert!(logged.contains("--locale en start"));
+    assert!(logged.contains("--bundle"));
+    assert!(logged.contains(bundle_dir.to_str().expect("bundle utf8")));
+    assert!(logged.contains("--tenant demo"));
+    assert!(logged.contains("--team ops"));
+    assert!(logged.contains("--cloudflared off"));
+    assert!(logged.contains("--admin"));
 }
 
 #[test]
@@ -591,6 +627,7 @@ fn update_calls_binstall_force_for_all_companions() {
     assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-operator"));
     assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-bundle"));
     assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-setup"));
+    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-start"));
     assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-deployer"));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -617,6 +654,7 @@ fn update_reports_failure_and_continues() {
     let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
     assert!(cargo_logged.contains("greentic-dev"));
     assert!(cargo_logged.contains("greentic-bundle"));
+    assert!(cargo_logged.contains("greentic-start"));
     assert!(cargo_logged.contains("greentic-deployer"));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1045,6 +1083,7 @@ impl TestSandbox {
             ("greentic-operator", "GREENTIC_OPERATOR_BIN"),
             ("greentic-setup", "GREENTIC_SETUP_BIN"),
             ("greentic-bundle", "GREENTIC_BUNDLE_BIN"),
+            ("greentic-start", "GREENTIC_START_BIN"),
             ("greentic-deployer", "GREENTIC_DEPLOYER_BIN"),
         ] {
             let path = self.binary_path(binary);

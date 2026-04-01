@@ -3,10 +3,10 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::BaseDirs;
-use greentic_start::{StartRequest, StopRequest};
 use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 use gtc::perf_targets;
+use gtc::start_stop_parsing::{StartRequest, StopRequest};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -483,7 +483,7 @@ mod tests {
     use crate::deploy::{StartCliOptions, StopCliOptions};
     use crate::tests::{env_test_lock, write_fake_deployer_contract_script};
     #[cfg(unix)]
-    use greentic_start::{
+    use gtc::start_stop_parsing::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
     };
     use std::env;
