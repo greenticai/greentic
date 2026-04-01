@@ -360,10 +360,12 @@ fn runtime_start_routes_to_greentic_start_cli() {
     sandbox.write_exit_tool("greentic-dev", 0);
     sandbox.write_arg_logger_tool("greentic-start", &log_file, 0);
 
-    let status = sandbox.run_gtc(
+    let output = sandbox.run_gtc_capture(
         [
             "start",
             bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "runtime",
             "--tenant",
             "demo",
             "--team",
@@ -373,7 +375,13 @@ fn runtime_start_routes_to_greentic_start_cli() {
         ],
         HashMap::new(),
     );
-    assert_eq!(status.code(), Some(0));
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     let logged = fs::read_to_string(log_file).expect("read start log");
     assert!(logged.contains("--locale en start"));

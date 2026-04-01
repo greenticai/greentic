@@ -86,6 +86,10 @@ impl GtcConfig {
         self.non_empty_var_os("GREENTIC_SETUP_BIN")
     }
 
+    pub fn start_bin_override(&self) -> Option<OsString> {
+        self.non_empty_var_os("GREENTIC_START_BIN")
+    }
+
     pub fn tenant_key(&self, tenant: &str) -> Option<String> {
         self.non_empty_var(&format!("GREENTIC_{}_KEY", tenant_key_segment(tenant)))
     }

@@ -380,6 +380,7 @@ fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
         BUNDLE_BIN => cfg.bundle_bin_override(),
         DEPLOYER_BIN => cfg.deployer_bin_override(),
         SETUP_BIN => cfg.setup_bin_override(),
+        START_BIN => cfg.start_bin_override(),
         _ => None,
     }
 }
