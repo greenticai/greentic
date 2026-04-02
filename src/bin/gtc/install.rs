@@ -1415,11 +1415,11 @@ mod tests {
         write_executable(&fail, "#!/bin/sh\nexit 7\n");
 
         assert_eq!(
-            query_command_trimmed(ok.to_str().expect("ok path"), &[]),
+            query_command_trimmed("/bin/sh", &[ok.to_str().expect("ok path")]),
             Some("hello".to_string())
         );
         assert_eq!(
-            query_command_trimmed(fail.to_str().expect("fail path"), &[]),
+            query_command_trimmed("/bin/sh", &[fail.to_str().expect("fail path")]),
             None
         );
     }
