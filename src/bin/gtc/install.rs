@@ -1365,6 +1365,18 @@ mod tests {
         fs::set_permissions(path, fs::Permissions::from_mode(0o755)).expect("chmod");
     }
 
+    #[cfg(unix)]
+    fn executable_tempdir() -> tempfile::TempDir {
+        let root = std::env::current_dir()
+            .expect("current dir")
+            .join(".tmp-tests");
+        fs::create_dir_all(&root).expect("create temp root");
+        tempfile::Builder::new()
+            .prefix("gtc-install-tests-")
+            .tempdir_in(root)
+            .expect("tempdir in workspace")
+    }
+
     #[test]
     fn parse_first_semver_finds_numeric_version_tokens() {
         assert_eq!(
@@ -1408,7 +1420,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn query_command_trimmed_trims_stdout_and_filters_failures() {
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = executable_tempdir();
         let ok = dir.path().join("ok.sh");
         let fail = dir.path().join("fail.sh");
         write_executable(&ok, "#!/bin/sh\nprintf '  hello  \\n'\n");
@@ -1969,7 +1981,7 @@ mod tests {
     #[test]
     fn binstall_detection_helpers_use_fake_cargo_output() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = executable_tempdir();
         let cargo = dir.path().join("cargo");
         write_executable(
             &cargo,
@@ -2003,7 +2015,7 @@ mod tests {
     #[test]
     fn ensure_install_prereqs_installs_missing_binstall_and_required_packages() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = executable_tempdir();
         let log = dir.path().join("cargo.log");
         let cargo = dir.path().join("cargo");
         write_executable(
@@ -2043,7 +2055,7 @@ mod tests {
     #[test]
     fn run_update_reports_failure_after_attempting_all_packages_and_tools() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().expect("tempdir");
+        let dir = executable_tempdir();
         let cargo_log = dir.path().join("cargo.log");
         let dev_log = dir.path().join("dev.log");
         let cargo = dir.path().join("cargo");
