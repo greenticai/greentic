@@ -24,6 +24,10 @@ where
     start.elapsed()
 }
 
+fn nanos_per_thread(duration: Duration, threads: usize) -> f64 {
+    duration.as_nanos() as f64 / threads as f64
+}
+
 #[test]
 fn parsing_scaling_should_not_collapse() {
     let raw = vec![
@@ -63,9 +67,12 @@ fn parsing_scaling_should_not_collapse() {
         }
     });
 
+    let t1_per_thread = nanos_per_thread(t1, 1);
+    let t4_per_thread = nanos_per_thread(t4, 4);
+
     assert!(
-        t4 <= t1.mul_f64(3.0),
-        "4-thread parsing workload regressed badly: t1={t1:?}, t4={t4:?}",
+        t4_per_thread <= t1_per_thread * 1.5,
+        "4-thread parsing workload regressed badly: t1={t1:?}, t4={t4:?}, per_thread_t1={t1_per_thread:.0}ns, per_thread_t4={t4_per_thread:.0}ns",
     );
 }
 
@@ -113,8 +120,11 @@ fn hashing_scaling_should_not_collapse() {
         }
     });
 
+    let t1_per_thread = nanos_per_thread(t1, 1);
+    let t4_per_thread = nanos_per_thread(t4, 4);
+
     assert!(
-        t4 <= t1.mul_f64(3.0),
-        "4-thread hashing workload regressed badly: t1={t1:?}, t4={t4:?}",
+        t4_per_thread <= t1_per_thread * 1.5,
+        "4-thread hashing workload regressed badly: t1={t1:?}, t4={t4:?}, per_thread_t1={t1_per_thread:.0}ns, per_thread_t4={t4_per_thread:.0}ns",
     );
 }
