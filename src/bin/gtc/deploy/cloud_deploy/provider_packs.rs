@@ -232,16 +232,17 @@ mod tests {
     use super::{
         canonical_target_provider_pack_filename, load_deployment_targets_document,
         resolve_app_pack_path_from_bundle_metadata, resolve_canonical_target_provider_pack_from,
-        resolve_target_provider_pack_from_metadata,
+        resolve_deploy_app_pack_path, resolve_target_provider_pack_from_metadata,
     };
     use crate::deploy::StartTarget;
-    use crate::tests::fake_deployer_contract;
+    use crate::tests::{env_test_lock, fake_deployer_contract};
     use std::fs;
     use std::path::Path;
 
     #[test]
     fn canonical_target_provider_pack_filename_matches_cloud_targets() {
-        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _deployer = fake_deployer_contract(None);
         assert_eq!(
             canonical_target_provider_pack_filename(StartTarget::Aws).expect("aws filename"),
             Some("terraform.gtpack".to_string())
@@ -345,5 +346,25 @@ mod tests {
 
         let resolved = resolve_canonical_target_provider_pack_from(Some(&exe), "terraform.gtpack");
         assert_eq!(resolved.as_deref(), Some(pack.as_path()));
+    }
+
+    #[test]
+    fn resolve_deploy_app_pack_path_uses_default_gtpack_reference_when_present() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let packs = dir.path().join("packs");
+        fs::create_dir_all(&packs).expect("mkdir");
+        let pack = packs.join("demo.gtpack");
+        fs::write(&pack, b"fixture").expect("write");
+        fs::write(dir.path().join("default.gtpack"), "packs/demo.gtpack\n").expect("write");
+
+        let resolved = resolve_deploy_app_pack_path(dir.path(), None).expect("app pack");
+        assert_eq!(resolved, pack);
+    }
+
+    #[test]
+    fn resolve_deploy_app_pack_path_errors_when_packs_dir_is_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = resolve_deploy_app_pack_path(dir.path(), None).unwrap_err();
+        assert!(err.contains("bundle has no packs directory"));
     }
 }

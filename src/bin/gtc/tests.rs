@@ -9,8 +9,8 @@ use super::{
     resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
     resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
     resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
-    save_admin_registry, select_start_target, should_send_auth_header, tenant_env_var_name,
-    upsert_admin_registry_entry, verify_sha256_digest,
+    run_admin_tunnel, save_admin_registry, select_start_target, should_send_auth_header,
+    tenant_env_var_name, upsert_admin_registry_entry, verify_sha256_digest,
 };
 #[cfg(unix)]
 use super::{
@@ -391,7 +391,7 @@ fn parse_start_cli_options_strips_deploy_flags() {
 fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_present() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
-    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
+    let _deployer = fake_deployer_contract(None);
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
     unsafe {
@@ -427,7 +427,7 @@ fn validate_cloud_deploy_inputs_accepts_aws_remote_bundle_when_required_envs_pre
 fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
-    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
+    let _deployer = fake_deployer_contract(None);
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
     unsafe {
@@ -465,7 +465,7 @@ fn validate_cloud_deploy_inputs_rejects_local_bundle_for_aws() {
 fn validate_cloud_deploy_inputs_does_not_accept_partial_aws_access_key_env() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let _path_guard = temp_path_with_binary("terraform");
-    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
+    let _deployer = fake_deployer_contract(None);
     let bundle_dir = TempDir::new().expect("tempdir");
     clear_aws_credential_env();
     unsafe {
@@ -563,6 +563,12 @@ pub(crate) struct EnvVarGuard {
 }
 
 #[cfg(unix)]
+pub(crate) struct FakeDeployerGuard {
+    _temp_dir: tempfile::TempDir,
+    _env_guard: EnvVarGuard,
+}
+
+#[cfg(unix)]
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
         unsafe {
@@ -637,7 +643,7 @@ exit 0
 }
 
 #[cfg(unix)]
-pub(crate) fn fake_deployer_contract(log_path: Option<&Path>) -> (tempfile::TempDir, EnvVarGuard) {
+pub(crate) fn fake_deployer_contract(log_path: Option<&Path>) -> FakeDeployerGuard {
     let dir = tempdir().expect("tempdir");
     let script = dir.path().join("greentic-deployer");
     write_fake_deployer_contract_script(&script, log_path);
@@ -647,13 +653,13 @@ pub(crate) fn fake_deployer_contract(log_path: Option<&Path>) -> (tempfile::Temp
         env::set_var("GREENTIC_DEPLOYER_BIN", &script);
     }
 
-    (
-        dir,
-        EnvVarGuard {
+    FakeDeployerGuard {
+        _temp_dir: dir,
+        _env_guard: EnvVarGuard {
             name: "GREENTIC_DEPLOYER_BIN",
             original,
         },
-    )
+    }
 }
 
 #[test]
@@ -1092,7 +1098,7 @@ fn rewrite_store_tenant_placeholder_substitutes_template_segment() {
 #[test]
 fn default_operator_image_for_target_uses_cloud_specific_refs() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
+    let _deployer = fake_deployer_contract(None);
     unsafe {
         env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AWS");
         env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP");
@@ -1119,7 +1125,7 @@ fn default_operator_image_for_target_uses_cloud_specific_refs() {
 #[test]
 fn default_operator_image_for_target_allows_source_override() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
+    let _deployer = fake_deployer_contract(None);
     unsafe {
         env::set_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP", "ghcr");
         env::set_var(
@@ -1147,7 +1153,7 @@ fn default_operator_image_for_target_allows_source_override() {
 #[cfg(unix)]
 fn apply_default_deploy_env_for_target_prefers_explicit_env() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
+    let _deployer = fake_deployer_contract(None);
     unsafe {
         env::set_var(
             "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE",
@@ -1192,6 +1198,69 @@ fn build_cli_can_be_constructed_multiple_times_with_localized_strings() {
 
     assert_eq!(first.get_name(), "gtc");
     assert_eq!(second.get_name(), "gtc");
+}
+
+#[test]
+fn admin_tunnel_rejects_non_aws_target() {
+    let matches = Command::new("test")
+        .arg(Arg::new("bundle-ref").required(true))
+        .arg(Arg::new("target").long("target").num_args(1))
+        .arg(
+            Arg::new("local-port")
+                .long("local-port")
+                .default_value("8443"),
+        )
+        .arg(
+            Arg::new("container")
+                .long("container")
+                .default_value("greentic-admin"),
+        )
+        .try_get_matches_from(["test", "./bundle", "--target", "gcp"])
+        .expect("matches");
+
+    assert_eq!(run_admin_tunnel(&matches, "en"), 2);
+}
+
+#[test]
+fn admin_tunnel_errors_when_bundle_dir_is_missing() {
+    let cli = build_cli("en");
+    let matches = cli
+        .try_get_matches_from(["gtc", "admin", "tunnel", "/definitely/missing/bundle"])
+        .expect("matches");
+    let (_, admin_matches) = matches.subcommand().expect("admin");
+    let ("tunnel", tunnel_matches) = admin_matches.subcommand().expect("tunnel") else {
+        panic!("expected tunnel subcommand");
+    };
+
+    assert_eq!(run_admin_tunnel(tunnel_matches, "en"), 1);
+}
+
+#[cfg(unix)]
+#[test]
+fn admin_tunnel_runs_deployer_for_local_bundle() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _path_guard = temp_path_with_binary("greentic-deployer");
+    let bundle = tempdir().expect("tempdir");
+
+    let cli = build_cli("en");
+    let matches = cli
+        .try_get_matches_from([
+            "gtc",
+            "admin",
+            "tunnel",
+            bundle.path().to_str().expect("bundle path"),
+            "--local-port",
+            "9443",
+            "--container",
+            "ops",
+        ])
+        .expect("matches");
+    let (_, admin_matches) = matches.subcommand().expect("admin");
+    let ("tunnel", tunnel_matches) = admin_matches.subcommand().expect("tunnel") else {
+        panic!("expected tunnel subcommand");
+    };
+
+    assert_eq!(run_admin_tunnel(tunnel_matches, "en"), 0);
 }
 
 #[test]

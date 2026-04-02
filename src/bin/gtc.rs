@@ -25,7 +25,7 @@ use std::path::Path;
 #[allow(unused_imports)]
 use admin::{
     AdminRegistryDocument, admin_registry_path, ensure_admin_certs_ready,
-    remove_admin_registry_entry, resolve_admin_cert_dir, save_admin_registry,
+    remove_admin_registry_entry, resolve_admin_cert_dir, run_admin_tunnel, save_admin_registry,
     upsert_admin_registry_entry,
 };
 #[cfg(test)]

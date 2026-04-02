@@ -1,6 +1,7 @@
 use std::fs;
+use std::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use gtc::dist::stage_resolved_artifact;
 use gtc::perf_targets::{
     collect_bundle_entries, detect_locale, parse_raw_passthrough, rewrite_legacy_op_args,

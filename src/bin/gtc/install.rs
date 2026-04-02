@@ -1333,8 +1333,8 @@ mod tests {
         fetch_json_bytes_with_auth as fetch_json_bytes, fetch_json_with_auth, file_url_path,
         gather_tool_candidates, install_tool_artifact, list_files_recursive,
         normalize_expected_sha256, parse_first_semver, parse_numeric_version,
-        resolve_github_release_asset_api_url, semver_compare, store_asset_file_name,
-        store_asset_target_path, url_file_name,
+        query_command_trimmed, resolve_github_release_asset_api_url, semver_compare,
+        store_asset_file_name, store_asset_target_path, url_file_name,
     };
     #[cfg(unix)]
     use super::{
@@ -1397,6 +1397,31 @@ mod tests {
             Some(Path::new("/tmp/demo.json").to_path_buf())
         );
         assert_eq!(file_url_path("https://example.com/demo.json"), None);
+    }
+
+    #[test]
+    fn url_and_file_helpers_reject_empty_paths() {
+        assert_eq!(url_file_name(""), None);
+        assert_eq!(file_url_path("file://"), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn query_command_trimmed_trims_stdout_and_filters_failures() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ok = dir.path().join("ok.sh");
+        let fail = dir.path().join("fail.sh");
+        write_executable(&ok, "#!/bin/sh\nprintf '  hello  \\n'\n");
+        write_executable(&fail, "#!/bin/sh\nexit 7\n");
+
+        assert_eq!(
+            query_command_trimmed(ok.to_str().expect("ok path"), &[]),
+            Some("hello".to_string())
+        );
+        assert_eq!(
+            query_command_trimmed(fail.to_str().expect("fail path"), &[]),
+            None
+        );
     }
 
     #[test]
@@ -1584,6 +1609,13 @@ mod tests {
     }
 
     #[test]
+    fn download_url_into_dir_rejects_urls_without_a_usable_file_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = download_url_into_dir("", "", dir.path(), None, "en").unwrap_err();
+        assert!(err.to_string().contains("unable to derive file name"));
+    }
+
+    #[test]
     fn store_asset_target_path_rejects_traversal_like_names() {
         let root = tempfile::tempdir().expect("tempdir");
         let err = store_asset_target_path(root.path(), "../bad.gtpack").unwrap_err();
@@ -1753,7 +1785,15 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let artifact = dir.path().join("greentic-demo");
         fs::write(&artifact, b"tool-bytes").expect("write");
-        let digest = format!("sha256:{:x}", sha2::Sha256::digest(b"tool-bytes"));
+        let digest = {
+            let digest = sha2::Sha256::digest(b"tool-bytes");
+            let mut out = String::from("sha256:");
+            for byte in digest {
+                use std::fmt::Write as _;
+                let _ = write!(&mut out, "{byte:02x}");
+            }
+            out
+        };
 
         let current_os = current_install_os().expect("os");
         let current_arch = current_install_arch().expect("arch");
@@ -1897,7 +1937,7 @@ mod tests {
     #[test]
     fn ensure_deployer_dist_pack_requires_installed_dist_pack() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
+        let _deployer = fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let original_cargo_home = env::var_os("CARGO_HOME");
         unsafe {

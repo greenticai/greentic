@@ -209,6 +209,17 @@ mod tests {
     }
 
     #[test]
+    fn stage_resolved_artifact_errors_when_source_is_missing() {
+        let staging = tempfile::tempdir().expect("tempdir");
+        let source = staging.path().join("missing.bin");
+
+        let err = stage_resolved_artifact(&source, staging.path()).unwrap_err();
+
+        assert!(matches!(err, GtcError::Io { .. }));
+        assert!(err.to_string().contains("failed to copy resolved artifact"));
+    }
+
+    #[test]
     fn dist_source_uses_shared_runtime_and_copy_based_staging() {
         let source = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/src/dist.rs"));
         let production = source
@@ -239,6 +250,10 @@ mod tests {
             .map_ref("oci://ghcr.io/demo/app:latest")
             .expect("mapped");
         assert_eq!(mapped, dir.path().join("fixtures/demo.gtpack"));
+        let resolved = adapter
+            .resolve_ref_to_cached_file("oci://ghcr.io/demo/app:latest")
+            .expect("resolved");
+        assert_eq!(resolved, dir.path().join("fixtures/demo.gtpack"));
     }
 
     #[test]
@@ -320,5 +335,17 @@ mod tests {
         };
         assert!(matches!(err, GtcError::Json { .. }));
         assert!(err.to_string().contains("invalid"));
+    }
+
+    #[test]
+    fn file_dist_adapter_errors_when_index_file_is_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+
+        let err = match FileDistAdapter::new(dir.path().to_path_buf()) {
+            Ok(_) => panic!("expected missing index to fail"),
+            Err(err) => err,
+        };
+        assert!(matches!(err, GtcError::Io { .. }));
+        assert!(err.to_string().contains("failed to read"));
     }
 }

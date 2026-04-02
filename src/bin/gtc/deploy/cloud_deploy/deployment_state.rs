@@ -621,7 +621,7 @@ mod tests {
         fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755)).expect("chmod");
 
         let log = dir.path().join("deployer.log");
-        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(Some(&log));
+        let _deployer = fake_deployer_contract(Some(&log));
 
         let request = StartRequest {
             bundle: Some(bundle_dir.display().to_string()),
@@ -711,7 +711,7 @@ mod tests {
         fs::write(&provider_pack, b"provider").expect("write");
 
         let log = dir.path().join("deployer.log");
-        let (_deployer_dir, _deployer_guard) = fake_deployer_contract(Some(&log));
+        let _deployer = fake_deployer_contract(Some(&log));
         let original_operator_image = env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE");
         let original_operator_digest =
             env::var_os("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST");
