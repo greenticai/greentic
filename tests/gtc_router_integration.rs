@@ -934,7 +934,13 @@ fn sha256_file(path: &Path) -> String {
     let bytes = fs::read(path).expect("read file for sha256");
     let mut hasher = Sha256::new();
     hasher.update(bytes);
-    format!("{:x}", hasher.finalize())
+    let digest = hasher.finalize();
+    let mut hex = String::with_capacity(digest.len() * 2);
+    for byte in digest {
+        use std::fmt::Write as _;
+        write!(&mut hex, "{byte:02x}").expect("hex digest write");
+    }
+    hex
 }
 
 fn create_minimal_bundle_dir(path: &Path) {

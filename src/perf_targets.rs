@@ -14,26 +14,26 @@ pub struct RawPassthrough {
 }
 
 pub fn parse_raw_passthrough(raw_args: &[String]) -> Option<RawPassthrough> {
-    let mut iter = raw_args.iter().skip(1).peekable();
-
-    while let Some(arg) = iter.next() {
+    let mut idx = 1usize;
+    while idx < raw_args.len() {
+        let arg = &raw_args[idx];
         if arg == "--locale" {
-            iter.next();
+            idx += 2;
             continue;
         }
-        if arg == "--debug-router" {
-            continue;
-        }
-        if arg.starts_with("--locale=") {
+        if arg == "--debug-router" || arg.starts_with("--locale=") {
+            idx += 1;
             continue;
         }
         if arg.starts_with('-') {
+            idx += 1;
             continue;
         }
 
-        let subcommand = arg.to_string();
-        let tail = iter.cloned().collect();
-        return Some(RawPassthrough { subcommand, tail });
+        return Some(RawPassthrough {
+            subcommand: arg.clone(),
+            tail: raw_args[idx + 1..].to_vec(),
+        });
     }
 
     None
@@ -46,22 +46,86 @@ pub fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
 
     match first.as_str() {
         "setup" => {
-            let mut out = vec!["demo".to_string(), "setup".to_string()];
+            let mut has_tenant = false;
+            let mut has_team = false;
+            for arg in &args[1..] {
+                if !arg.starts_with("--") {
+                    continue;
+                }
+                if flag_matches(arg, "tenant") {
+                    has_tenant = true;
+                } else if flag_matches(arg, "team") {
+                    has_team = true;
+                }
+            }
+
+            let mut out = Vec::with_capacity(
+                2 + args.len() - 1 + if has_tenant { 0 } else { 2 } + if has_team { 0 } else { 2 },
+            );
+            out.push("demo".to_string());
+            out.push("setup".to_string());
             out.extend_from_slice(&args[1..]);
-            ensure_flag_value(&mut out, "tenant", "default");
-            ensure_flag_value(&mut out, "team", "default");
+            if !has_tenant {
+                out.push("--tenant".to_string());
+                out.push("default".to_string());
+            }
+            if !has_team {
+                out.push("--team".to_string());
+                out.push("default".to_string());
+            }
             out
         }
         "start" => {
-            let mut out = vec!["demo".to_string(), "start".to_string()];
+            let mut has_tenant = false;
+            let mut has_team = false;
+            let mut has_cloudflared = false;
+            for arg in &args[1..] {
+                if !arg.starts_with("--") {
+                    continue;
+                }
+                if flag_matches(arg, "tenant") {
+                    has_tenant = true;
+                } else if flag_matches(arg, "team") {
+                    has_team = true;
+                } else if flag_matches(arg, "cloudflared") {
+                    has_cloudflared = true;
+                }
+            }
+
+            let mut out = Vec::with_capacity(
+                2 + args.len() - 1
+                    + if has_tenant { 0 } else { 2 }
+                    + if has_team { 0 } else { 2 }
+                    + if has_cloudflared { 0 } else { 2 },
+            );
+            out.push("demo".to_string());
+            out.push("start".to_string());
             out.extend_from_slice(&args[1..]);
-            ensure_flag_value(&mut out, "tenant", "default");
-            ensure_flag_value(&mut out, "team", "default");
-            ensure_flag_value(&mut out, "cloudflared", "off");
+            if !has_tenant {
+                out.push("--tenant".to_string());
+                out.push("default".to_string());
+            }
+            if !has_team {
+                out.push("--team".to_string());
+                out.push("default".to_string());
+            }
+            if !has_cloudflared {
+                out.push("--cloudflared".to_string());
+                out.push("off".to_string());
+            }
             out
         }
         _ => args.to_vec(),
     }
+}
+
+fn flag_matches(arg: &str, flag: &str) -> bool {
+    arg.strip_prefix("--").is_some_and(|rest| {
+        rest == flag
+            || rest
+                .strip_prefix(flag)
+                .is_some_and(|suffix| suffix.starts_with('='))
+    })
 }
 
 pub fn ensure_flag_value(args: &mut Vec<String>, flag: &str, value: &str) {
@@ -75,14 +139,7 @@ pub fn ensure_flag_value(args: &mut Vec<String>, flag: &str, value: &str) {
 }
 
 pub fn has_flag(args: &[String], flag: &str) -> bool {
-    args.iter().any(|arg| {
-        arg.strip_prefix("--").is_some_and(|rest| {
-            rest == flag
-                || rest
-                    .strip_prefix(flag)
-                    .is_some_and(|suffix| suffix.starts_with('='))
-        })
-    })
+    args.iter().any(|arg| flag_matches(arg, flag))
 }
 
 pub fn detect_locale(
@@ -90,13 +147,16 @@ pub fn detect_locale(
     default_locale: &str,
     env_locale: Option<&str>,
 ) -> String {
-    let cli_locale = locale_from_args(raw_args);
+    if let Some(cli_locale) = locale_from_args(raw_args) {
+        return normalize_locale(&cli_locale);
+    }
+
     let env_locale_owned = env_locale
         .map(|value| value.to_string())
         .or_else(|| GtcConfig::from_env().locale_override());
 
     let selected = select_locale_with_sources(
-        cli_locale.as_deref(),
+        None,
         Some(default_locale),
         env_locale_owned.as_deref(),
         None,
@@ -142,7 +202,14 @@ pub fn sha256_file(path: &Path) -> Result<String, String> {
         hasher.update(&buf[..n]);
     }
 
-    Ok(format!("sha256:{:x}", hasher.finalize()))
+    let digest = hasher.finalize();
+    let mut out = String::with_capacity("sha256:".len() + digest.len() * 2);
+    out.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    Ok(out)
 }
 
 pub fn collect_bundle_entries(
@@ -155,17 +222,18 @@ pub fn collect_bundle_entries(
     {
         let entry = entry.map_err(|err| err.to_string())?;
         let path = entry.path();
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|err| err.to_string())?
-            .to_string_lossy()
-            .replace('\\', "/");
         let file_type = entry.file_type().map_err(|err| err.to_string())?;
         if file_type.is_symlink() {
             continue;
         }
+        let relative_path = path.strip_prefix(root).map_err(|err| err.to_string())?;
+        let relative = relative_path.to_string_lossy();
         if file_type.is_dir() {
-            out.push(format!("dir:{relative}"));
+            if std::path::MAIN_SEPARATOR == '\\' {
+                out.push(format!("dir:{}", relative.replace('\\', "/")));
+            } else {
+                out.push(format!("dir:{relative}"));
+            }
             collect_bundle_entries(root, &path, out)?;
             continue;
         }
@@ -176,7 +244,15 @@ pub fn collect_bundle_entries(
             .and_then(|value| value.duration_since(UNIX_EPOCH).ok())
             .map(|value| value.as_secs())
             .unwrap_or(0);
-        out.push(format!("file:{relative}:{}:{modified}", metadata.len()));
+        if std::path::MAIN_SEPARATOR == '\\' {
+            out.push(format!(
+                "file:{}:{}:{modified}",
+                relative.replace('\\', "/"),
+                metadata.len()
+            ));
+        } else {
+            out.push(format!("file:{relative}:{}:{modified}", metadata.len()));
+        }
     }
     Ok(())
 }
