@@ -1331,11 +1331,33 @@ fn main() {{
         .expect("open log");
     writeln!(file, "{{}}", joined).expect("write log");
 
-    match args.get(1).map(String::as_str) {{
-        Some("status") => {{
+    match (args.first().map(String::as_str), args.get(1).map(String::as_str)) {{
+        (Some("single-vm"), Some("render-spec")) => {{
+            let mut out = None::<String>;
+            let mut name = None::<String>;
+            let mut bundle_source = None::<String>;
+            let mut idx = 2usize;
+            while idx + 1 < args.len() {{
+                match args[idx].as_str() {{
+                    "--out" => out = args.get(idx + 1).cloned(),
+                    "--name" => name = args.get(idx + 1).cloned(),
+                    "--bundle-source" => bundle_source = args.get(idx + 1).cloned(),
+                    _ => {{}}
+                }}
+                idx += 2;
+            }}
+            let out_path = out.expect("out");
+            let spec = format!(
+                "apiVersion: greentic.ai/v1alpha1\nkind: Deployment\nmetadata:\n  name: {{}}\nspec:\n  target: single-vm\n  bundle:\n    source: '{{}}'\n    format: squashfs\n",
+                name.expect("name"),
+                bundle_source.expect("bundle_source"),
+            );
+            std::fs::write(out_path, spec).expect("write spec");
+        }}
+        (Some("single-vm"), Some("status")) => {{
             println!("{{{{\"status\":\"missing\"}}}}");
         }}
-        Some("apply") | Some("destroy") | None | Some(_) => {{}}
+        (Some("single-vm"), Some("apply")) | (Some("single-vm"), Some("destroy")) | _ => {{}}
     }}
 }}
 "#

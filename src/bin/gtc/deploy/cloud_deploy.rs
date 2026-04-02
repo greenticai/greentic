@@ -79,18 +79,6 @@ pub(crate) fn canonical_provider_pack_filename_for_gtc(
     }
 }
 
-pub(crate) fn required_provider_pack_filenames_for_gtc(locale: &str) -> GtcResult<Vec<String>> {
-    let mut filenames = Vec::new();
-    for target in [StartTarget::Aws, StartTarget::Azure, StartTarget::Gcp] {
-        if let Some(filename) = canonical_provider_pack_filename_for_gtc(target, locale)?
-            && !filenames.contains(&filename)
-        {
-            filenames.push(filename);
-        }
-    }
-    Ok(filenames)
-}
-
 pub(crate) fn validate_cloud_deploy_inputs(
     target: StartTarget,
     remote_bundle_source: Option<&str>,

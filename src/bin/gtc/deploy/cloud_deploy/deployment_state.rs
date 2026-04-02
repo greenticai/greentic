@@ -69,8 +69,14 @@ pub(crate) fn destroy_deployment(
             let artifact_path =
                 load_or_prepare_single_vm_artifact(resolved, request, debug, locale)?;
             let start_request = stop_request_to_start_request(request, resolved, &artifact_path);
-            let spec_path =
-                write_single_vm_spec(bundle_ref, resolved, &start_request, &artifact_path)?;
+            let spec_path = write_single_vm_spec(
+                bundle_ref,
+                resolved,
+                &start_request,
+                &artifact_path,
+                debug,
+                locale,
+            )?;
             run_single_vm_destroy(&spec_path, debug, locale)?;
             remove_deployment_state_file(&resolved.deployment_key, target)?;
             Ok(())
@@ -114,7 +120,8 @@ fn ensure_bundle_deployed(
             println!("Preparing deployable artifact for target: single-vm");
             let artifact_path = prepare_deployable_bundle_artifact(resolved, debug, locale)?;
             println!("Deployable artifact: {}", artifact_path.display());
-            let spec_path = write_single_vm_spec(bundle_ref, resolved, request, &artifact_path)?;
+            let spec_path =
+                write_single_vm_spec(bundle_ref, resolved, request, &artifact_path, debug, locale)?;
             println!("Single-vm deployment spec: {}", spec_path.display());
             let current_status = read_single_vm_status(&spec_path, debug, locale)?;
             let status_applied = current_status
@@ -698,7 +705,7 @@ mod tests {
         }
 
         let logged = fs::read_to_string(log).expect("read");
-        assert!(logged.contains("gcp apply"));
+        assert!(logged.contains("apply --tenant demo"));
         assert!(logged.contains("--bundle-source https://example.com/demo.gtbundle"));
         assert!(logged.contains("--environment prod"));
     }

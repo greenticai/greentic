@@ -16,9 +16,8 @@ use super::archive::{
     extract_squashfs_file, extract_tar_bytes, extract_targz_bytes, extract_zip_bytes,
     looks_like_gzip, looks_like_squashfs, looks_like_zip, safe_join, set_executable_if_unix,
 };
-use super::deploy::required_provider_pack_filenames_for_gtc;
 use super::i18n_support::{t, tf};
-use super::process::{passthrough, resolve_cargo_bin_dir};
+use super::process::{passthrough, resolve_cargo_bin_dir, run_binary_capture};
 use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, START_BIN, sha256_file};
 
 pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
@@ -364,7 +363,7 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
 fn ensure_deployer_dist_pack(debug: bool, locale: &str) -> GtcResult<()> {
     let cargo_bin_dir = resolve_cargo_bin_dir()?;
     let dist_dir = cargo_bin_dir.join("dist");
-    let filenames = required_provider_pack_filenames_for_gtc(locale)?;
+    let filenames = required_deployer_dist_pack_filenames(debug, locale)?;
     for filename in filenames {
         let target = dist_dir.join(&filename);
         if !target.is_file() {
@@ -379,6 +378,34 @@ fn ensure_deployer_dist_pack(debug: bool, locale: &str) -> GtcResult<()> {
         }
     }
     Ok(())
+}
+
+#[derive(Deserialize)]
+struct InstallCloudTargetRequirements {
+    provider_pack_filename: String,
+}
+
+fn required_deployer_dist_pack_filenames(debug: bool, locale: &str) -> GtcResult<Vec<String>> {
+    let mut filenames = Vec::new();
+    for provider in ["aws", "azure", "gcp"] {
+        let args = vec![
+            "target-requirements".to_string(),
+            "--provider".to_string(),
+            provider.to_string(),
+        ];
+        let output = run_binary_capture(DEPLOYER_BIN, &args, debug, locale)?;
+        let requirements: InstallCloudTargetRequirements =
+            serde_json::from_str(&output).map_err(|err| {
+                GtcError::json(
+                    format!("failed to parse greentic-deployer target requirements for {provider}"),
+                    err,
+                )
+            })?;
+        if !filenames.contains(&requirements.provider_pack_filename) {
+            filenames.push(requirements.provider_pack_filename);
+        }
+    }
+    Ok(filenames)
 }
 
 fn is_binstall_available(debug: bool, locale: &str) -> bool {
@@ -1342,7 +1369,7 @@ mod tests {
         ensure_install_prereqs, fetch_download_bytes_with_auth, fetch_json_bytes_with_auth,
         install_tenant_doc_reference, install_tenant_tool_reference, is_binstall_available,
         latest_binstall_version, query_command_trimmed, recurse_files,
-        required_provider_pack_filenames_for_gtc, run_update,
+        required_deployer_dist_pack_filenames, run_update,
     };
     #[cfg(unix)]
     use crate::tests::{env_test_lock, fake_deployer_contract};
@@ -1965,7 +1992,7 @@ mod tests {
 
         let dist_dir = dir.path().join("bin/dist");
         fs::create_dir_all(&dist_dir).expect("mkdirs");
-        for filename in required_provider_pack_filenames_for_gtc("en").expect("filenames") {
+        for filename in required_deployer_dist_pack_filenames(false, "en").expect("filenames") {
             fs::write(dist_dir.join(filename), b"pack-bytes").expect("write pack");
         }
         ensure_deployer_dist_pack(false, "en").expect("existing pack should pass");

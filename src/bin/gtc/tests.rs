@@ -633,6 +633,65 @@ __LOG_SNIPPET__if [ "$1" = "target-requirements" ] && [ "$2" = "--provider" ]; t
   printf '%s\n' "{\"target\":\"$provider\",\"target_label\":\"$label\",\"provider_pack_filename\":\"terraform.gtpack\",\"remote_bundle_source_required\":true,\"remote_bundle_source_help\":\"$help\",\"informational_notes\":[],\"credential_requirements\":$creds,\"variable_requirements\":$vars}"
   exit 0
 fi
+if [ "$1" = "single-vm" ] && [ "$2" = "render-spec" ]; then
+  shift 2
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --out) out="$2"; shift 2 ;;
+      --name) name="$2"; shift 2 ;;
+      --bundle-source) bundle_source="$2"; shift 2 ;;
+      --state-dir) state_dir="$2"; shift 2 ;;
+      --cache-dir) cache_dir="$2"; shift 2 ;;
+      --log-dir) log_dir="$2"; shift 2 ;;
+      --temp-dir) temp_dir="$2"; shift 2 ;;
+      --admin-bind) admin_bind="$2"; shift 2 ;;
+      --admin-ca-file) admin_ca_file="$2"; shift 2 ;;
+      --admin-cert-file) admin_cert_file="$2"; shift 2 ;;
+      --admin-key-file) admin_key_file="$2"; shift 2 ;;
+      --image) image="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  : "${admin_bind:=127.0.0.1:8433}"
+  : "${image:=ghcr.io/greentic-ai/operator-distroless:0.1.0-distroless}"
+  mkdir -p "$(dirname "$out")"
+  cat > "$out" <<EOF
+apiVersion: greentic.ai/v1alpha1
+kind: Deployment
+metadata:
+  name: $name
+spec:
+  target: single-vm
+  bundle:
+    source: '$bundle_source'
+    format: squashfs
+  runtime:
+    image: '$image'
+    arch: x86_64
+    admin:
+      bind: $admin_bind
+      mtls:
+        caFile: '$admin_ca_file'
+        certFile: '$admin_cert_file'
+        keyFile: '$admin_key_file'
+  storage:
+    stateDir: '$state_dir'
+    cacheDir: '$cache_dir'
+    logDir: '$log_dir'
+    tempDir: '$temp_dir'
+  service:
+    manager: systemd
+    user: greentic
+    group: greentic
+  health:
+    readinessPath: /ready
+    livenessPath: /health
+    startupTimeoutSeconds: 120
+  rollout:
+    strategy: recreate
+EOF
+  exit 0
+fi
 exit 0
 "#;
     let body = body_template.replace("__LOG_SNIPPET__", &log_snippet);
@@ -853,6 +912,7 @@ fn ensure_admin_certs_ready_preserves_explicit_dir() {
 #[cfg(unix)]
 #[test]
 fn write_single_vm_spec_uses_bundle_local_server_certs() {
+    let (_deployer_dir, _deployer_guard) = fake_deployer_contract(None);
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let dir = tempfile::tempdir().expect("tempdir");
     let state_home = dir.path().join("xdg-state");
@@ -887,8 +947,15 @@ fn write_single_vm_spec_uses_bundle_local_server_certs() {
     )
     .expect("request");
 
-    let spec_path =
-        write_single_vm_spec("demo-bundle", &resolved, &request, &artifact_path).expect("spec");
+    let spec_path = write_single_vm_spec(
+        "demo-bundle",
+        &resolved,
+        &request,
+        &artifact_path,
+        false,
+        "en",
+    )
+    .expect("spec");
     let spec = std::fs::read_to_string(&spec_path).expect("read spec");
 
     assert!(spec.contains("source: 'file://"));

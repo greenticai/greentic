@@ -66,6 +66,114 @@ pub struct StopRequest {
     pub team: String,
 }
 
+impl StartRequest {
+    pub fn to_runtime_start_args(&self, locale: &str) -> Vec<String> {
+        let mut args = vec![
+            "--locale".to_string(),
+            locale.to_string(),
+            "start".to_string(),
+        ];
+        if let Some(bundle) = self.bundle.as_deref() {
+            args.push("--bundle".to_string());
+            args.push(bundle.to_string());
+        }
+        if let Some(tenant) = self.tenant.as_deref() {
+            args.push("--tenant".to_string());
+            args.push(tenant.to_string());
+        }
+        if let Some(team) = self.team.as_deref() {
+            args.push("--team".to_string());
+            args.push(team.to_string());
+        }
+        if self.no_nats {
+            args.push("--no-nats".to_string());
+        }
+        args.push("--nats".to_string());
+        args.push(self.nats.as_cli_value().to_string());
+        if let Some(nats_url) = self.nats_url.as_deref() {
+            args.push("--nats-url".to_string());
+            args.push(nats_url.to_string());
+        }
+        if let Some(config) = self.config.as_deref() {
+            args.push("--config".to_string());
+            args.push(config.display().to_string());
+        }
+        args.push("--cloudflared".to_string());
+        args.push(self.cloudflared.as_cli_value().to_string());
+        if let Some(binary) = self.cloudflared_binary.as_deref() {
+            args.push("--cloudflared-binary".to_string());
+            args.push(binary.display().to_string());
+        }
+        args.push("--ngrok".to_string());
+        args.push(self.ngrok.as_cli_value().to_string());
+        if let Some(binary) = self.ngrok_binary.as_deref() {
+            args.push("--ngrok-binary".to_string());
+            args.push(binary.display().to_string());
+        }
+        if let Some(binary) = self.runner_binary.as_deref() {
+            args.push("--runner-binary".to_string());
+            args.push(binary.display().to_string());
+        }
+        if !self.restart.is_empty() {
+            let value = self
+                .restart
+                .iter()
+                .map(RestartTarget::as_cli_value)
+                .collect::<Vec<_>>()
+                .join(",");
+            args.push("--restart".to_string());
+            args.push(value);
+        }
+        if let Some(log_dir) = self.log_dir.as_deref() {
+            args.push("--log-dir".to_string());
+            args.push(log_dir.display().to_string());
+        }
+        if self.verbose {
+            args.push("--verbose".to_string());
+        }
+        if self.quiet {
+            args.push("--quiet".to_string());
+        }
+        if self.admin {
+            args.push("--admin".to_string());
+        }
+        args.push("--admin-port".to_string());
+        args.push(self.admin_port.to_string());
+        if let Some(certs_dir) = self.admin_certs_dir.as_deref() {
+            args.push("--admin-certs-dir".to_string());
+            args.push(certs_dir.display().to_string());
+        }
+        if !self.admin_allowed_clients.is_empty() {
+            args.push("--admin-allowed-clients".to_string());
+            args.push(self.admin_allowed_clients.join(","));
+        }
+        args
+    }
+}
+
+impl StopRequest {
+    pub fn to_runtime_stop_args(&self, locale: &str) -> Vec<String> {
+        let mut args = vec![
+            "--locale".to_string(),
+            locale.to_string(),
+            "stop".to_string(),
+        ];
+        if let Some(bundle) = self.bundle.as_deref() {
+            args.push("--bundle".to_string());
+            args.push(bundle.to_string());
+        }
+        if let Some(state_dir) = self.state_dir.as_deref() {
+            args.push("--state-dir".to_string());
+            args.push(state_dir.display().to_string());
+        }
+        args.push("--tenant".to_string());
+        args.push(self.tenant.clone());
+        args.push("--team".to_string());
+        args.push(self.team.clone());
+        args
+    }
+}
+
 pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<StartRequest> {
     let mut request = StartRequest {
         bundle: Some(bundle_dir.display().to_string()),
@@ -319,6 +427,16 @@ fn parse_nats_mode(value: &str) -> GtcResult<NatsModeArg> {
     }
 }
 
+impl NatsModeArg {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            NatsModeArg::Off => "off",
+            NatsModeArg::On => "on",
+            NatsModeArg::External => "external",
+        }
+    }
+}
+
 fn parse_cloudflared_mode(value: &str) -> GtcResult<CloudflaredModeArg> {
     match value.trim() {
         "on" => Ok(CloudflaredModeArg::On),
@@ -329,6 +447,15 @@ fn parse_cloudflared_mode(value: &str) -> GtcResult<CloudflaredModeArg> {
     }
 }
 
+impl CloudflaredModeArg {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            CloudflaredModeArg::On => "on",
+            CloudflaredModeArg::Off => "off",
+        }
+    }
+}
+
 fn parse_ngrok_mode(value: &str) -> GtcResult<NgrokModeArg> {
     match value.trim() {
         "on" => Ok(NgrokModeArg::On),
@@ -336,6 +463,15 @@ fn parse_ngrok_mode(value: &str) -> GtcResult<NgrokModeArg> {
         other => Err(GtcError::message(format!(
             "unsupported --ngrok value: {other}"
         ))),
+    }
+}
+
+impl NgrokModeArg {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            NgrokModeArg::On => "on",
+            NgrokModeArg::Off => "off",
+        }
     }
 }
 
@@ -351,5 +487,19 @@ fn parse_restart_target(value: &str) -> GtcResult<RestartTarget> {
         other => Err(GtcError::message(format!(
             "unsupported --restart target: {other}"
         ))),
+    }
+}
+
+impl RestartTarget {
+    fn as_cli_value(&self) -> &'static str {
+        match self {
+            RestartTarget::All => "all",
+            RestartTarget::Cloudflared => "cloudflared",
+            RestartTarget::Ngrok => "ngrok",
+            RestartTarget::Nats => "nats",
+            RestartTarget::Gateway => "gateway",
+            RestartTarget::Egress => "egress",
+            RestartTarget::Subscriptions => "subscriptions",
+        }
     }
 }
