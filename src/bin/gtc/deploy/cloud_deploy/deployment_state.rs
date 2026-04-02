@@ -644,6 +644,7 @@ mod tests {
             admin_port: 8443,
             admin_certs_dir: None,
             admin_allowed_clients: Vec::new(),
+            tunnel_explicit: true,
         };
         let cli_options = StartCliOptions {
             start_args: Vec::new(),

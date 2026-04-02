@@ -809,6 +809,7 @@ mod tests {
             admin_port: 9443,
             admin_certs_dir: Some(PathBuf::from("/tmp/admin-certs")),
             admin_allowed_clients: vec!["ops".to_string(), "local".to_string()],
+            tunnel_explicit: true,
         };
 
         let args = build_runtime_start_args(&request, "fr");

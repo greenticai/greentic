@@ -81,6 +81,7 @@ pub(super) fn stop_request_to_start_request(
         admin_port: 8443,
         admin_certs_dir: None,
         admin_allowed_clients: Vec::new(),
+        tunnel_explicit: true,
     }
 }
 
@@ -261,6 +262,7 @@ mod tests {
             admin_port: 8443,
             admin_certs_dir: None,
             admin_allowed_clients: Vec::new(),
+            tunnel_explicit: true,
         };
 
         let name = deployment_name("Demo Bundle", &request);
@@ -382,6 +384,7 @@ mod tests {
             admin_port: 8443,
             admin_certs_dir: None,
             admin_allowed_clients: Vec::new(),
+            tunnel_explicit: true,
         };
         let artifact = dir.path().join("bundle.gtbundle");
         fs::write(&artifact, "artifact").expect("write artifact");
