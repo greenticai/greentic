@@ -1,8 +1,7 @@
 use super::{
-    AdminRegistryDocument, DEFAULT_GCP_OPERATOR_IMAGE, DEFAULT_GHCR_OPERATOR_IMAGE, DEV_BIN,
-    StartTarget, admin_registry_path, build_cli, build_wizard_args, collect_tail,
-    default_operator_image_for_target, detect_bundle_root, detect_locale, ensure_admin_certs_ready,
-    extract_tar_archive, fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
+    AdminRegistryDocument, DEV_BIN, StartTarget, admin_registry_path, build_cli, build_wizard_args,
+    collect_tail, detect_bundle_root, detect_locale, ensure_admin_certs_ready, extract_tar_archive,
+    fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
     normalize_expected_sha256, normalize_install_arch, parse_prompt_choice,
     parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
     remove_admin_registry_entry, resolve_admin_cert_dir,
@@ -14,7 +13,8 @@ use super::{
 };
 #[cfg(unix)]
 use super::{
-    DEFAULT_OPERATOR_IMAGE_DIGEST, StartBundleResolution, apply_default_deploy_env_for_target,
+    DEFAULT_GCP_OPERATOR_IMAGE, DEFAULT_GHCR_OPERATOR_IMAGE, DEFAULT_OPERATOR_IMAGE_DIGEST,
+    StartBundleResolution, apply_default_deploy_env_for_target, default_operator_image_for_target,
     extract_zip_bytes, validate_cloud_deploy_inputs, write_single_vm_spec,
 };
 use clap::{Arg, ArgMatches, Command};

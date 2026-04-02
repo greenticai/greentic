@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
+#[cfg(unix)]
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(unix)]
 use sha2::{Digest, Sha256};
 
 #[test]
@@ -1274,6 +1276,7 @@ fn main() {{
     )
 }
 
+#[cfg(unix)]
 fn rust_setup_bundle_tool_program(log_file: &Path) -> String {
     let log_literal = rust_string_literal(&log_file.display().to_string());
     format!(
@@ -1310,6 +1313,7 @@ fn main() {{
     )
 }
 
+#[cfg(unix)]
 fn rust_single_vm_deployer_tool_program(log_file: &Path) -> String {
     let log_literal = rust_string_literal(&log_file.display().to_string());
     format!(
