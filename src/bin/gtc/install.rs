@@ -1328,7 +1328,9 @@ impl DocManifest {
 mod tests {
     use super::{
         DocManifest, DocManifestEntry, DocSource, current_install_arch, current_install_os,
-        download_url_into_dir, expand_into_target, fetch_json_with_auth, file_url_path,
+        download_url_into_dir, expand_into_target,
+        fetch_download_bytes_with_auth as fetch_download_bytes,
+        fetch_json_bytes_with_auth as fetch_json_bytes, fetch_json_with_auth, file_url_path,
         gather_tool_candidates, install_tool_artifact, list_files_recursive,
         normalize_expected_sha256, parse_first_semver, parse_numeric_version,
         resolve_github_release_asset_api_url, semver_compare, store_asset_file_name,
@@ -1337,11 +1339,10 @@ mod tests {
     #[cfg(unix)]
     use super::{
         TenantManifestReference, detect_binstall_version, ensure_deployer_dist_pack,
-        ensure_install_prereqs, fetch_download_bytes_with_auth,
-        fetch_download_bytes_with_auth as fetch_download_bytes, fetch_json_bytes_with_auth,
-        fetch_json_bytes_with_auth as fetch_json_bytes, install_tenant_doc_reference,
-        install_tenant_tool_reference, is_binstall_available, latest_binstall_version,
-        query_command_trimmed, recurse_files, required_provider_pack_filenames_for_gtc, run_update,
+        ensure_install_prereqs, fetch_download_bytes_with_auth, fetch_json_bytes_with_auth,
+        install_tenant_doc_reference, install_tenant_tool_reference, is_binstall_available,
+        latest_binstall_version, query_command_trimmed, recurse_files,
+        required_provider_pack_filenames_for_gtc, run_update,
     };
     #[cfg(unix)]
     use crate::tests::{env_test_lock, fake_deployer_contract};
