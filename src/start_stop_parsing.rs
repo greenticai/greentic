@@ -54,6 +54,8 @@ pub struct StartRequest {
     pub admin_port: u16,
     pub admin_certs_dir: Option<PathBuf>,
     pub admin_allowed_clients: Vec<String>,
+    /// Whether the user explicitly set `--cloudflared` or `--ngrok` on the CLI.
+    pub tunnel_explicit: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -73,7 +75,7 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
         nats: NatsModeArg::Off,
         nats_url: None,
         config: None,
-        cloudflared: CloudflaredModeArg::On,
+        cloudflared: CloudflaredModeArg::Off,
         cloudflared_binary: None,
         ngrok: NgrokModeArg::Off,
         ngrok_binary: None,
@@ -86,6 +88,7 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
         admin_port: 8443,
         admin_certs_dir: None,
         admin_allowed_clients: Vec::new(),
+        tunnel_explicit: false,
     };
 
     let mut idx = 0usize;
@@ -117,6 +120,7 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
                 idx += 1;
                 request.cloudflared =
                     parse_cloudflared_mode(&required_value(tail, idx, "--cloudflared")?)?;
+                request.tunnel_explicit = true;
             }
             "--cloudflared-binary" => {
                 idx += 1;
@@ -129,6 +133,7 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
             "--ngrok" => {
                 idx += 1;
                 request.ngrok = parse_ngrok_mode(&required_value(tail, idx, "--ngrok")?)?;
+                request.tunnel_explicit = true;
             }
             "--ngrok-binary" => {
                 idx += 1;
@@ -196,10 +201,12 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
                     request.config = Some(PathBuf::from(value));
                 } else if let Some(value) = other.strip_prefix("--cloudflared=") {
                     request.cloudflared = parse_cloudflared_mode(value)?;
+                    request.tunnel_explicit = true;
                 } else if let Some(value) = other.strip_prefix("--cloudflared-binary=") {
                     request.cloudflared_binary = Some(PathBuf::from(value));
                 } else if let Some(value) = other.strip_prefix("--ngrok=") {
                     request.ngrok = parse_ngrok_mode(value)?;
+                    request.tunnel_explicit = true;
                 } else if let Some(value) = other.strip_prefix("--ngrok-binary=") {
                     request.ngrok_binary = Some(PathBuf::from(value));
                 } else if let Some(value) = other.strip_prefix("--runner-binary=") {
