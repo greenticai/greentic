@@ -631,9 +631,12 @@ mod tests {
     #[cfg(unix)]
     use super::{require_tool_in_path, validate_cloud_deploy_inputs};
     use crate::deploy::StartTarget;
-    use crate::tests::{env_test_lock, fake_deployer_contract};
+    use crate::tests::env_test_lock;
+    #[cfg(unix)]
+    use crate::tests::fake_deployer_contract;
     use gtc::config::GtcConfig;
     use std::env;
+    #[cfg(unix)]
     use std::fs;
 
     #[cfg(unix)]

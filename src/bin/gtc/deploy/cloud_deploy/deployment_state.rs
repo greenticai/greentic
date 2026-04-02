@@ -472,16 +472,21 @@ fn remove_deployment_state_file(deployment_key: &str, target: StartTarget) -> Gt
 #[cfg(test)]
 mod tests {
     use super::{
-        StartDeploymentState, deployment_artifacts_root, deployment_state_path,
-        load_deployment_state, prepare_deployable_bundle_artifact, remove_deployment_state_file,
+        StartDeploymentState, deployment_state_path, load_deployment_state,
+        prepare_deployable_bundle_artifact, remove_deployment_state_file,
         resolve_remote_deploy_bundle_source_override, save_deployment_state,
     };
     #[cfg(unix)]
-    use super::{run_multi_target_deployer_apply, run_multi_target_deployer_destroy};
+    use super::{
+        deployment_artifacts_root, run_multi_target_deployer_apply,
+        run_multi_target_deployer_destroy,
+    };
     use crate::deploy::{StartBundleResolution, StartTarget};
     #[cfg(unix)]
     use crate::deploy::{StartCliOptions, StopCliOptions};
-    use crate::tests::{env_test_lock, fake_deployer_contract};
+    use crate::tests::env_test_lock;
+    #[cfg(unix)]
+    use crate::tests::fake_deployer_contract;
     #[cfg(unix)]
     use gtc::start_stop_parsing::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
