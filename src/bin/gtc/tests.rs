@@ -1095,6 +1095,7 @@ fn rewrite_store_tenant_placeholder_substitutes_template_segment() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn default_operator_image_for_target_uses_cloud_specific_refs() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
@@ -1122,6 +1123,7 @@ fn default_operator_image_for_target_uses_cloud_specific_refs() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn default_operator_image_for_target_allows_source_override() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
