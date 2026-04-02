@@ -920,6 +920,7 @@ fn stop_single_vm_destroy_removes_saved_state() {
     );
 }
 
+#[cfg(unix)]
 fn write_tool_zip(path: &Path, file_name: &str, contents: &[u8]) {
     let file = fs::File::create(path).expect("zip create");
     let mut zip = zip::ZipWriter::new(file);
@@ -930,6 +931,7 @@ fn write_tool_zip(path: &Path, file_name: &str, contents: &[u8]) {
     zip.finish().expect("zip finish");
 }
 
+#[cfg(unix)]
 fn sha256_file(path: &Path) -> String {
     let bytes = fs::read(path).expect("read file for sha256");
     let mut hasher = Sha256::new();
@@ -949,6 +951,7 @@ fn create_minimal_bundle_dir(path: &Path) {
     fs::write(path.join("packs").join("default.gtpack"), b"fixture-pack").expect("default pack");
 }
 
+#[cfg(unix)]
 fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
     if root.is_file() {
         return root
@@ -970,6 +973,7 @@ fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
     None
 }
 
+#[cfg(unix)]
 fn find_single_json_file(root: &Path) -> Option<PathBuf> {
     let mut matches = Vec::new();
     let entries = fs::read_dir(root).ok()?;
@@ -1068,11 +1072,13 @@ impl TestSandbox {
         );
     }
 
+    #[cfg(unix)]
     fn write_setup_bundle_tool(&self, name: &str, log_file: &Path) {
         let path = self.binary_path(name);
         self.compile_rust_tool_at(&path, &rust_setup_bundle_tool_program(log_file));
     }
 
+    #[cfg(unix)]
     fn write_single_vm_deployer_tool(&self, name: &str, log_file: &Path) {
         let path = self.binary_path(name);
         self.compile_rust_tool_at(&path, &rust_single_vm_deployer_tool_program(log_file));
