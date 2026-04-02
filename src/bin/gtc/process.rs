@@ -392,7 +392,9 @@ mod tests {
     use super::{first_non_empty_line, resolve_cargo_bin_dir};
     #[cfg(unix)]
     use crate::deploy::StartTarget;
-    use crate::tests::{env_test_lock, fake_deployer_contract};
+    use crate::tests::env_test_lock;
+    #[cfg(unix)]
+    use crate::tests::fake_deployer_contract;
     use std::env;
     #[cfg(unix)]
     use std::process::Command as ProcessCommand;
