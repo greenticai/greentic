@@ -6,10 +6,7 @@ use directories::BaseDirs;
 use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 
-use super::deploy::{
-    ChildProcessEnv, StartTarget, default_operator_image_for_target,
-    default_target_variable_for_gtc,
-};
+use super::deploy::{ChildProcessEnv, StartTarget};
 use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, START_BIN};
 use crate::i18n_support::{t, t_or};
 
@@ -123,30 +120,10 @@ pub(super) fn run_binary_status_with_target_and_env(
 }
 
 pub(super) fn apply_default_deploy_env_for_target(
-    process: &mut ProcessCommand,
-    target: Option<StartTarget>,
-    locale: &str,
+    _process: &mut ProcessCommand,
+    _target: Option<StartTarget>,
+    _locale: &str,
 ) -> GtcResult<()> {
-    let cfg = GtcConfig::from_env();
-    if cfg.terraform_operator_image().is_none()
-        && let Some(target) = target
-        && let Some(image) = default_operator_image_for_target(target)
-    {
-        process.env("GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE", image);
-    }
-    if cfg.terraform_operator_image_digest().is_none()
-        && let Some(target) = target
-        && let Some(digest) = default_target_variable_for_gtc(
-            target,
-            locale,
-            "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
-        )?
-    {
-        process.env(
-            "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST",
-            digest,
-        );
-    }
     Ok(())
 }
 
@@ -426,7 +403,7 @@ mod tests {
 
     #[test]
     #[cfg(unix)]
-    fn apply_default_deploy_env_for_target_sets_expected_vars() {
+    fn apply_default_deploy_env_for_target_leaves_deployer_defaults_unset() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let _deployer = fake_deployer_contract(None);
         unsafe {
@@ -439,11 +416,11 @@ mod tests {
             .expect("default deploy env");
         let envs: Vec<_> = cmd.get_envs().collect();
 
-        assert!(envs.iter().any(|(key, value)| {
+        assert!(!envs.iter().any(|(key, value)| {
             key.to_string_lossy() == "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE"
                 && value.is_some()
         }));
-        assert!(envs.iter().any(|(key, value)| {
+        assert!(!envs.iter().any(|(key, value)| {
             key.to_string_lossy() == "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST"
                 && value.is_some()
         }));

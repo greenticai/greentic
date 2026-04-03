@@ -26,6 +26,7 @@ pub(crate) use provider_packs::{
 };
 pub(crate) use single_vm::write_single_vm_spec;
 
+#[cfg(test)]
 pub(crate) fn default_operator_image_for_target(target: StartTarget) -> Option<String> {
     match target {
         StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
@@ -48,6 +49,7 @@ pub(crate) fn describe_cloud_target_requirements_for_gtc(
     describe_cloud_target_requirements(target, locale)
 }
 
+#[cfg(test)]
 pub(crate) fn default_target_variable_for_gtc(
     target: StartTarget,
     locale: &str,
@@ -275,75 +277,21 @@ fn can_fallback_cloud_target_requirements(err: &GtcError) -> bool {
 }
 
 fn fallback_cloud_target_requirements(target: StartTarget) -> CloudTargetRequirementsV1 {
-    let (target_name, target_label, operator_image, variable_requirements) = match target {
+    let (target_name, target_label, variable_requirements) = match target {
         StartTarget::Aws => (
             "aws",
             "AWS",
-            "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b",
-            vec![
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE".to_string(),
-                    required: false,
-                    prompt: None,
-                    default_value: Some("ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b".to_string()),
-                },
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST".to_string(),
-                    required: false,
-                    prompt: None,
-                    default_value: Some(
-                        "sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-                            .to_string(),
-                    ),
-                },
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND".to_string(),
-                    required: true,
-                    prompt: None,
-                    default_value: None,
-                },
-            ],
+            vec![VariableRequirementV1 {
+                name: "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND".to_string(),
+                required: true,
+                prompt: None,
+                default_value: None,
+            }],
         ),
         StartTarget::Gcp => (
             "gcp",
             "GCP",
-            if GtcConfig::from_env()
-                .non_empty_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP")
-                .as_deref()
-                == Some("ghcr")
-            {
-                "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-            } else {
-                "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db"
-            },
             vec![
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE".to_string(),
-                    required: false,
-                    prompt: None,
-                    default_value: Some(
-                        if GtcConfig::from_env()
-                            .non_empty_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP")
-                            .as_deref()
-                            == Some("ghcr")
-                        {
-                            "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-                                .to_string()
-                        } else {
-                            "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db"
-                                .to_string()
-                        },
-                    ),
-                },
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST".to_string(),
-                    required: false,
-                    prompt: None,
-                    default_value: Some(
-                        "sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-                            .to_string(),
-                    ),
-                },
                 VariableRequirementV1 {
                     name: "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND".to_string(),
                     required: true,
@@ -367,55 +315,15 @@ fn fallback_cloud_target_requirements(target: StartTarget) -> CloudTargetRequire
         StartTarget::Azure => (
             "azure",
             "Azure",
-            if GtcConfig::from_env()
-                .non_empty_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AZURE")
-                .as_deref()
-                == Some("gcp-artifact-registry")
-            {
-                "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db"
-            } else {
-                "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-            },
-            vec![
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE".to_string(),
-                    required: false,
-                    prompt: None,
-                    default_value: Some(
-                        if GtcConfig::from_env()
-                            .non_empty_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AZURE")
-                            .as_deref()
-                            == Some("gcp-artifact-registry")
-                        {
-                            "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db"
-                                .to_string()
-                        } else {
-                            "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-                                .to_string()
-                        },
-                    ),
-                },
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST".to_string(),
-                    required: false,
-                    prompt: None,
-                    default_value: Some(
-                        "sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-                            .to_string(),
-                    ),
-                },
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND".to_string(),
-                    required: true,
-                    prompt: None,
-                    default_value: None,
-                },
-            ],
+            vec![VariableRequirementV1 {
+                name: "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND".to_string(),
+                required: true,
+                prompt: None,
+                default_value: None,
+            }],
         ),
         StartTarget::SingleVm | StartTarget::Runtime => unreachable!(),
     };
-
-    let _ = operator_image;
 
     CloudTargetRequirementsV1 {
         target: target_name.to_string(),
@@ -620,6 +528,8 @@ mod tests {
     use super::{require_tool_in_path, validate_cloud_deploy_inputs};
     use crate::deploy::StartTarget;
     use crate::tests::env_test_lock;
+    #[cfg(unix)]
+    use crate::tests::fake_deployer_contract;
     use gtc::config::GtcConfig;
     use std::env;
     #[cfg(unix)]
@@ -818,6 +728,7 @@ mod tests {
     #[test]
     fn default_operator_image_for_target_returns_cloud_defaults_only() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _deployer = fake_deployer_contract(None);
         assert!(default_operator_image_for_target(StartTarget::Aws).is_some());
         assert!(default_operator_image_for_target(StartTarget::Gcp).is_some());
         assert!(default_operator_image_for_target(StartTarget::Azure).is_some());

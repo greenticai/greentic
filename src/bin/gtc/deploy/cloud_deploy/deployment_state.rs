@@ -18,8 +18,8 @@ use super::single_vm::{
     run_single_vm_destroy, stop_request_to_start_request, write_single_vm_spec,
 };
 use super::{
-    append_bundle_registry_args, default_operator_image_for_target,
-    describe_cloud_target_requirements_for_gtc, validate_cloud_deploy_inputs,
+    append_bundle_registry_args, describe_cloud_target_requirements_for_gtc,
+    validate_cloud_deploy_inputs,
 };
 use crate::process::{
     run_binary_checked, run_binary_checked_with_target, run_binary_checked_with_target_and_env,
@@ -390,19 +390,6 @@ fn print_cloud_deploy_contract_hint(target: StartTarget, locale: &str) -> GtcRes
         println!("  optional Terraform vars:");
         for requirement in optional_vars {
             println!("    {}", requirement.name);
-            if requirement.name == "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE" {
-                println!(
-                    "      default: {}",
-                    default_operator_image_for_target(target).unwrap_or_default()
-                );
-                continue;
-            }
-            if requirement.name == "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST" {
-                if let Some(default_value) = requirement.default_value.as_deref() {
-                    println!("      fallback default: {default_value}");
-                }
-                continue;
-            }
             if let Some(default_value) = requirement.default_value.as_deref() {
                 println!("      default: {default_value}");
             }

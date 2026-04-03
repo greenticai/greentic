@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn write_single_vm_spec_matches_snapshot() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let (_deployer_dir, _deployer_guard) = crate::tests::fake_deployer_contract(None);
+        let _deployer_guard = crate::tests::fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let state_home = dir.path().join("state-home");
         let data_home = dir.path().join("data-home");
