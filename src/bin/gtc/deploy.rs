@@ -18,11 +18,13 @@ pub(super) use bundle_resolution::{
 };
 #[allow(unused_imports)]
 pub(super) use cloud_deploy::{
-    canonical_provider_pack_filename_for_gtc, default_operator_image_for_target,
-    default_target_variable_for_gtc, required_provider_pack_filenames_for_gtc,
-    resolve_canonical_target_provider_pack_from, resolve_deploy_app_pack_path,
-    resolve_target_provider_pack, validate_cloud_deploy_inputs, write_single_vm_spec,
+    canonical_provider_pack_filename_for_gtc, resolve_canonical_target_provider_pack_from,
+    resolve_deploy_app_pack_path, resolve_target_provider_pack, validate_cloud_deploy_inputs,
+    write_single_vm_spec,
 };
+#[cfg(test)]
+#[allow(unused_imports)]
+pub(super) use cloud_deploy::{default_operator_image_for_target, default_target_variable_for_gtc};
 #[allow(unused_imports)]
 pub(super) use gtc::start_stop_parsing::{parse_start_request, parse_stop_request};
 #[allow(unused_imports)]

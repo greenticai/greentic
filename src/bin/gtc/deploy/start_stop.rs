@@ -4,10 +4,7 @@ use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use gtc::error::{GtcError, GtcResult};
-use gtc::start_stop_parsing::{
-    CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
-    parse_start_request, parse_stop_request,
-};
+use gtc::start_stop_parsing::{parse_start_request, parse_stop_request};
 use serde::Deserialize;
 
 use super::bundle_resolution::resolve_bundle_reference;
@@ -141,7 +138,7 @@ pub(crate) fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> 
         request.tenant.as_deref().unwrap_or("default"),
         request.team.as_deref().unwrap_or("default")
     );
-    let args = build_runtime_start_args(&request, locale);
+    let args = request.to_runtime_start_args(locale);
     match run_binary_checked(START_BIN, &args, debug, locale, "start bundle") {
         Ok(()) => 0,
         Err(err) => {
@@ -237,7 +234,7 @@ pub(crate) fn run_stop(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i
                 );
                 return 2;
             }
-            let args = build_runtime_stop_args(&request, locale);
+            let args = request.to_runtime_stop_args(locale);
             match run_binary_checked(START_BIN, &args, debug, locale, "stop bundle") {
                 Ok(()) => 0,
                 Err(err) => {
@@ -285,137 +282,6 @@ pub(crate) fn run_stop(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i
             }
         }
     }
-}
-
-fn build_runtime_start_args(request: &StartRequest, locale: &str) -> Vec<String> {
-    let mut args = vec![
-        "--locale".to_string(),
-        locale.to_string(),
-        "start".to_string(),
-    ];
-    if let Some(bundle) = request.bundle.as_deref() {
-        args.push("--bundle".to_string());
-        args.push(bundle.to_string());
-    }
-    if let Some(tenant) = request.tenant.as_deref() {
-        args.push("--tenant".to_string());
-        args.push(tenant.to_string());
-    }
-    if let Some(team) = request.team.as_deref() {
-        args.push("--team".to_string());
-        args.push(team.to_string());
-    }
-    if request.no_nats {
-        args.push("--no-nats".to_string());
-    }
-    args.push("--nats".to_string());
-    args.push(
-        match request.nats {
-            NatsModeArg::Off => "off",
-            NatsModeArg::On => "on",
-            NatsModeArg::External => "external",
-        }
-        .to_string(),
-    );
-    if let Some(nats_url) = request.nats_url.as_deref() {
-        args.push("--nats-url".to_string());
-        args.push(nats_url.to_string());
-    }
-    if let Some(config) = request.config.as_deref() {
-        args.push("--config".to_string());
-        args.push(config.display().to_string());
-    }
-    args.push("--cloudflared".to_string());
-    args.push(
-        match request.cloudflared {
-            CloudflaredModeArg::On => "on",
-            CloudflaredModeArg::Off => "off",
-        }
-        .to_string(),
-    );
-    if let Some(binary) = request.cloudflared_binary.as_deref() {
-        args.push("--cloudflared-binary".to_string());
-        args.push(binary.display().to_string());
-    }
-    args.push("--ngrok".to_string());
-    args.push(
-        match request.ngrok {
-            NgrokModeArg::On => "on",
-            NgrokModeArg::Off => "off",
-        }
-        .to_string(),
-    );
-    if let Some(binary) = request.ngrok_binary.as_deref() {
-        args.push("--ngrok-binary".to_string());
-        args.push(binary.display().to_string());
-    }
-    if let Some(binary) = request.runner_binary.as_deref() {
-        args.push("--runner-binary".to_string());
-        args.push(binary.display().to_string());
-    }
-    if !request.restart.is_empty() {
-        let value = request
-            .restart
-            .iter()
-            .map(|target| match target {
-                RestartTarget::All => "all",
-                RestartTarget::Cloudflared => "cloudflared",
-                RestartTarget::Ngrok => "ngrok",
-                RestartTarget::Nats => "nats",
-                RestartTarget::Gateway => "gateway",
-                RestartTarget::Egress => "egress",
-                RestartTarget::Subscriptions => "subscriptions",
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        args.push("--restart".to_string());
-        args.push(value);
-    }
-    if let Some(log_dir) = request.log_dir.as_deref() {
-        args.push("--log-dir".to_string());
-        args.push(log_dir.display().to_string());
-    }
-    if request.verbose {
-        args.push("--verbose".to_string());
-    }
-    if request.quiet {
-        args.push("--quiet".to_string());
-    }
-    if request.admin {
-        args.push("--admin".to_string());
-    }
-    args.push("--admin-port".to_string());
-    args.push(request.admin_port.to_string());
-    if let Some(certs_dir) = request.admin_certs_dir.as_deref() {
-        args.push("--admin-certs-dir".to_string());
-        args.push(certs_dir.display().to_string());
-    }
-    if !request.admin_allowed_clients.is_empty() {
-        args.push("--admin-allowed-clients".to_string());
-        args.push(request.admin_allowed_clients.join(","));
-    }
-    args
-}
-
-fn build_runtime_stop_args(request: &StopRequest, locale: &str) -> Vec<String> {
-    let mut args = vec![
-        "--locale".to_string(),
-        locale.to_string(),
-        "stop".to_string(),
-    ];
-    if let Some(bundle) = request.bundle.as_deref() {
-        args.push("--bundle".to_string());
-        args.push(bundle.to_string());
-    }
-    if let Some(state_dir) = request.state_dir.as_deref() {
-        args.push("--state-dir".to_string());
-        args.push(state_dir.display().to_string());
-    }
-    args.push("--tenant".to_string());
-    args.push(request.tenant.clone());
-    args.push("--team".to_string());
-    args.push(request.team.clone());
-    args
 }
 
 pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOptions> {
@@ -694,9 +560,9 @@ fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        build_runtime_start_args, build_runtime_stop_args, load_default_deployment_target,
-        parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
-        select_start_target, select_start_target_with_mode,
+        load_default_deployment_target, parse_start_cli_options, parse_start_request,
+        parse_stop_cli_options, parse_stop_request, select_start_target,
+        select_start_target_with_mode,
     };
     use crate::deploy::StartTarget;
     use gtc::start_stop_parsing::{
@@ -812,7 +678,7 @@ mod tests {
             tunnel_explicit: true,
         };
 
-        let args = build_runtime_start_args(&request, "fr");
+        let args = request.to_runtime_start_args("fr");
         assert_eq!(args[0], "--locale");
         assert_eq!(args[1], "fr");
         assert_eq!(args[2], "start");
@@ -839,7 +705,7 @@ mod tests {
             team: "ops".to_string(),
         };
 
-        let args = build_runtime_stop_args(&request, "en");
+        let args = request.to_runtime_stop_args("en");
         assert_eq!(
             args,
             vec![

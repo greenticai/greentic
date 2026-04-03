@@ -21,6 +21,8 @@ pub(crate) fn write_single_vm_spec(
     resolved: &StartBundleResolution,
     request: &StartRequest,
     artifact_path: &Path,
+    debug: bool,
+    locale: &str,
 ) -> GtcResult<PathBuf> {
     let cert_dir = resolve_admin_cert_dir(&resolved.bundle_dir);
     let deployment_name = deployment_name(bundle_ref, request);
@@ -33,25 +35,37 @@ pub(crate) fn write_single_vm_spec(
         )
     })?;
     let spec_path = spec_dir.join("single-vm.deployment.yaml");
-    let spec = format!(
-        "apiVersion: greentic.ai/v1alpha1\nkind: Deployment\nmetadata:\n  name: {name}\nspec:\n  target: single-vm\n  bundle:\n    source: {bundle}\n    format: squashfs\n  runtime:\n    image: {image}\n    arch: x86_64\n    admin:\n      bind: 127.0.0.1:8433\n      mtls:\n        caFile: {ca}\n        certFile: {cert}\n        keyFile: {key}\n  storage:\n    stateDir: {state_dir}\n    cacheDir: {cache_dir}\n    logDir: {log_dir}\n    tempDir: {temp_dir}\n  service:\n    manager: systemd\n    user: greentic\n    group: greentic\n  health:\n    readinessPath: /ready\n    livenessPath: /health\n    startupTimeoutSeconds: 120\n  rollout:\n    strategy: recreate\n",
-        name = deployment_name,
-        bundle = yaml_string(&format!("file://{}", artifact_path.display())),
-        image = yaml_string("ghcr.io/greentic-ai/operator-distroless:0.1.0-distroless"),
-        ca = yaml_string(&cert_dir.join("ca.crt").display().to_string()),
-        cert = yaml_string(&cert_dir.join("server.crt").display().to_string()),
-        key = yaml_string(&cert_dir.join("server.key").display().to_string()),
-        state_dir = yaml_string(&state_root.join("state").display().to_string()),
-        cache_dir = yaml_string(&state_root.join("cache").display().to_string()),
-        log_dir = yaml_string(&state_root.join("log").display().to_string()),
-        temp_dir = yaml_string(&state_root.join("tmp").display().to_string()),
-    );
-    fs::write(&spec_path, spec).map_err(|err| {
-        GtcError::io(
-            format!("failed to write deployment spec {}", spec_path.display()),
-            err,
-        )
-    })?;
+    let args = vec![
+        "single-vm".to_string(),
+        "render-spec".to_string(),
+        "--out".to_string(),
+        spec_path.display().to_string(),
+        "--name".to_string(),
+        deployment_name,
+        "--bundle-source".to_string(),
+        format!("file://{}", artifact_path.display()),
+        "--state-dir".to_string(),
+        state_root.join("state").display().to_string(),
+        "--cache-dir".to_string(),
+        state_root.join("cache").display().to_string(),
+        "--log-dir".to_string(),
+        state_root.join("log").display().to_string(),
+        "--temp-dir".to_string(),
+        state_root.join("tmp").display().to_string(),
+        "--admin-ca-file".to_string(),
+        cert_dir.join("ca.crt").display().to_string(),
+        "--admin-cert-file".to_string(),
+        cert_dir.join("server.crt").display().to_string(),
+        "--admin-key-file".to_string(),
+        cert_dir.join("server.key").display().to_string(),
+    ];
+    run_binary_checked(
+        DEPLOYER_BIN,
+        &args,
+        debug,
+        locale,
+        "render single-vm deployment spec",
+    )?;
     Ok(spec_path)
 }
 
@@ -165,10 +179,6 @@ fn deployment_runtime_root(deployment_key: &str) -> GtcResult<PathBuf> {
         .join(deployment_key))
 }
 
-fn yaml_string(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "''"))
-}
-
 fn deployment_name(bundle_ref: &str, request: &StartRequest) -> String {
     let mut parts = Vec::new();
     if let Some(tenant) = request.tenant.as_deref() {
@@ -205,7 +215,6 @@ fn truncate_identifier(value: &str, limit: usize) -> String {
 mod tests {
     use super::{
         deployment_name, sanitize_identifier, stop_request_to_start_request, truncate_identifier,
-        yaml_string,
     };
     #[cfg(unix)]
     use super::{load_or_prepare_single_vm_artifact, write_single_vm_spec};
@@ -227,11 +236,6 @@ mod tests {
     #[cfg(unix)]
     use std::fs;
     use std::path::PathBuf;
-
-    #[test]
-    fn yaml_string_escapes_single_quotes() {
-        assert_eq!(yaml_string("demo's bundle"), "'demo''s bundle'");
-    }
 
     #[test]
     fn sanitize_identifier_and_truncate_identifier_normalize_strings() {
@@ -341,6 +345,7 @@ mod tests {
     #[test]
     fn write_single_vm_spec_matches_snapshot() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _deployer_guard = crate::tests::fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let state_home = dir.path().join("state-home");
         let data_home = dir.path().join("data-home");
@@ -389,8 +394,9 @@ mod tests {
         let artifact = dir.path().join("bundle.gtbundle");
         fs::write(&artifact, "artifact").expect("write artifact");
 
-        let spec_path = write_single_vm_spec("Demo Bundle", &resolved, &request, &artifact)
-            .expect("write spec");
+        let spec_path =
+            write_single_vm_spec("Demo Bundle", &resolved, &request, &artifact, false, "en")
+                .expect("write spec");
         let snapshot = fs::read_to_string(&spec_path)
             .expect("read spec")
             .replace(&dir.path().display().to_string(), "<TMP>");
