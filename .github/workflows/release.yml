@@ -163,11 +163,18 @@ jobs:
       - build_binaries
       - checksums
       - sbom
+      - prepare_deployer_assets
     steps:
       - name: Download build artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
+
+      - name: Download embedded deployer asset
+        uses: actions/download-artifact@v4
+        with:
+          name: embedded-deployer-assets
+          path: dist/embedded-deployer-assets
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2
@@ -175,7 +182,9 @@ jobs:
           tag_name: ${{ needs.metadata.outputs.tag }}
           name: ${{ needs.metadata.outputs.version }}
           target_commitish: main
-          files: dist/**/gtc-*
+          files: |
+            dist/**/gtc-*
+            dist/**/terraform.gtpack
 
   checksums:
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

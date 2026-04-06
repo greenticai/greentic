@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
-use std::io::Write;
+use std::fs::File;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 
@@ -366,17 +367,97 @@ fn ensure_deployer_dist_pack(debug: bool, locale: &str) -> GtcResult<()> {
     let filenames = required_deployer_dist_pack_filenames(debug, locale)?;
     for filename in filenames {
         let target = dist_dir.join(&filename);
+        let mut hydrate_error = None;
+        if !target.is_file() || validate_deployer_dist_pack(&target).is_err() {
+            hydrate_error = hydrate_deployer_dist_pack(&dist_dir, &filename, locale).err();
+        }
         if !target.is_file() {
-            return Err(GtcError::message(format!(
+            let mut message = format!(
                 "greentic-deployer dist pack is missing at {}; reinstall greentic-deployer so it provides dist/{}",
                 target.display(),
                 filename
-            )));
+            );
+            if let Some(err) = hydrate_error {
+                message.push_str(&format!(" (fallback download failed: {err})"));
+            }
+            return Err(GtcError::message(message));
+        }
+        if let Err(err) = validate_deployer_dist_pack(&target) {
+            let mut message = err.to_string();
+            if let Some(hydrate_err) = hydrate_error {
+                message.push_str(&format!(" (fallback download failed: {hydrate_err})"));
+            }
+            return Err(GtcError::message(message));
         }
         if debug {
             eprintln!("verified deployer pack at {}", target.display());
         }
     }
+    Ok(())
+}
+
+fn hydrate_deployer_dist_pack(dist_dir: &Path, filename: &str, locale: &str) -> GtcResult<()> {
+    fs::create_dir_all(dist_dir)
+        .map_err(|e| GtcError::io(format!("failed to create {}", dist_dir.display()), e))?;
+    let target = dist_dir.join(filename);
+    let release_url = format!(
+        "https://github.com/greenticai/greentic/releases/download/v{}/{}",
+        env!("CARGO_PKG_VERSION"),
+        filename
+    );
+    let bytes = fetch_download_bytes_with_auth(&release_url, "", locale)?;
+    fs::write(&target, bytes)
+        .map_err(|e| GtcError::io(format!("failed to write {}", target.display()), e))?;
+    Ok(())
+}
+
+fn validate_deployer_dist_pack(path: &Path) -> GtcResult<()> {
+    match validate_deployer_dist_pack_tar(path) {
+        Ok(()) => Ok(()),
+        Err(err) if matches!(err.kind(), ErrorKind::InvalidData | ErrorKind::Other) => {
+            validate_deployer_dist_pack_zip(path)
+        }
+        Err(err) => Err(GtcError::message(format!(
+            "greentic-deployer dist pack is invalid at {}: {err}",
+            path.display()
+        ))),
+    }
+}
+
+fn validate_deployer_dist_pack_tar(path: &Path) -> std::io::Result<()> {
+    let file = File::open(path)?;
+    let mut archive = tar::Archive::new(file);
+    for entry in archive.entries()? {
+        let entry = entry?;
+        if entry.path()?.as_ref() == Path::new("manifest.cbor") {
+            return Ok(());
+        }
+    }
+    Err(std::io::Error::new(
+        ErrorKind::InvalidData,
+        "manifest.cbor missing in tar pack",
+    ))
+}
+
+fn validate_deployer_dist_pack_zip(path: &Path) -> GtcResult<()> {
+    let file = File::open(path).map_err(|err| {
+        GtcError::message(format!(
+            "failed to read greentic-deployer dist pack at {}: {err}",
+            path.display()
+        ))
+    })?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|err| {
+        GtcError::message(format!(
+            "greentic-deployer dist pack is invalid at {}: {err}",
+            path.display()
+        ))
+    })?;
+    archive.by_name("manifest.cbor").map_err(|err| {
+        GtcError::message(format!(
+            "greentic-deployer dist pack is invalid at {}: {err}",
+            path.display()
+        ))
+    })?;
     Ok(())
 }
 
@@ -1995,7 +2076,26 @@ mod tests {
         for filename in required_deployer_dist_pack_filenames(false, "en").expect("filenames") {
             fs::write(dist_dir.join(filename), b"pack-bytes").expect("write pack");
         }
-        ensure_deployer_dist_pack(false, "en").expect("existing pack should pass");
+        let err = ensure_deployer_dist_pack(false, "en").expect_err("invalid pack should fail");
+        assert!(
+            err.to_string()
+                .contains("greentic-deployer dist pack is invalid")
+        );
+
+        for filename in required_deployer_dist_pack_filenames(false, "en").expect("filenames") {
+            let pack_path = dist_dir.join(filename);
+            let file = fs::File::create(&pack_path).expect("create pack");
+            let mut tar = tar::Builder::new(file);
+            let manifest = b"manifest-bytes";
+            let mut header = tar::Header::new_gnu();
+            header.set_size(manifest.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, "manifest.cbor", &manifest[..])
+                .expect("append manifest");
+            tar.finish().expect("finish pack");
+        }
+        ensure_deployer_dist_pack(false, "en").expect("valid pack should pass");
 
         unsafe {
             match original_cargo_home {
