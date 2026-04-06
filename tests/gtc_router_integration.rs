@@ -1241,6 +1241,43 @@ use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::PathBuf;
 
+fn write_minimal_tar_pack(path: &std::path::Path) {{
+    fn write_octal(field: &mut [u8], value: u64) {{
+        let width = field.len();
+        let digits = width.saturating_sub(1);
+        let formatted = format!("{{:0width$o}}", value, width = digits);
+        let bytes = formatted.as_bytes();
+        let start = digits.saturating_sub(bytes.len());
+        field[..digits].fill(b'0');
+        field[start..start + bytes.len()].copy_from_slice(bytes);
+        field[digits] = 0;
+    }}
+
+    let payload = b"fixture-manifest";
+    let mut header = [0u8; 512];
+    let name = b"manifest.cbor";
+    header[..name.len()].copy_from_slice(name);
+    write_octal(&mut header[100..108], 0o644);
+    write_octal(&mut header[108..116], 0);
+    write_octal(&mut header[116..124], 0);
+    write_octal(&mut header[124..136], payload.len() as u64);
+    write_octal(&mut header[136..148], 0);
+    header[148..156].fill(b' ');
+    header[156] = b'0';
+    header[257..263].copy_from_slice(b"ustar\0");
+    header[263..265].copy_from_slice(b"00");
+    let checksum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
+    write_octal(&mut header[148..156], u64::from(checksum));
+
+    let mut out = Vec::new();
+    out.extend_from_slice(&header);
+    out.extend_from_slice(payload);
+    let payload_padding = (512 - (payload.len() % 512)) % 512;
+    out.resize(out.len() + payload_padding, 0);
+    out.resize(out.len() + 1024, 0);
+    std::fs::write(path, out).expect("write fake terraform pack");
+}}
+
 fn main() {{
     let args = std::env::args().skip(1).collect::<Vec<_>>();
     let joined = args.join(" ");
@@ -1267,8 +1304,7 @@ fn main() {{
             .unwrap_or_else(|| PathBuf::from(".cargo"));
         let dist_dir = cargo_home.join("bin").join("dist");
         std::fs::create_dir_all(&dist_dir).expect("create dist dir");
-        std::fs::write(dist_dir.join("terraform.gtpack"), b"pack-bytes")
-            .expect("write fake terraform pack");
+        write_minimal_tar_pack(&dist_dir.join("terraform.gtpack"));
     }}
 {fail_check}
 }}
