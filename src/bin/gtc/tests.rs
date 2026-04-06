@@ -911,8 +911,8 @@ fn ensure_admin_certs_ready_preserves_explicit_dir() {
 #[cfg(unix)]
 #[test]
 fn write_single_vm_spec_uses_bundle_local_server_certs() {
-    let _deployer_guard = fake_deployer_contract(None);
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _deployer_guard = fake_deployer_contract(None);
     let dir = tempfile::tempdir().expect("tempdir");
     let state_home = dir.path().join("xdg-state");
     std::fs::create_dir_all(&state_home).expect("mkdir state home");
