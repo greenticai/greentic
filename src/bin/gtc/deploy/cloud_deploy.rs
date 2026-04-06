@@ -725,6 +725,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn default_operator_image_for_target_returns_cloud_defaults_only() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());

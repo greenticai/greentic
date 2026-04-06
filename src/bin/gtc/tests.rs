@@ -653,42 +653,41 @@ if [ "$1" = "single-vm" ] && [ "$2" = "render-spec" ]; then
   done
   : "${admin_bind:=127.0.0.1:8433}"
   : "${image:=ghcr.io/greentic-ai/operator-distroless:0.1.0-distroless}"
-  mkdir -p "$(dirname "$out")"
-  cat > "$out" <<EOF
-apiVersion: greentic.ai/v1alpha1
-kind: Deployment
-metadata:
-  name: $name
-spec:
-  target: single-vm
-  bundle:
-    source: '$bundle_source'
-    format: squashfs
-  runtime:
-    image: '$image'
-    arch: x86_64
-    admin:
-      bind: $admin_bind
-      mtls:
-        caFile: '$admin_ca_file'
-        certFile: '$admin_cert_file'
-        keyFile: '$admin_key_file'
-  storage:
-    stateDir: '$state_dir'
-    cacheDir: '$cache_dir'
-    logDir: '$log_dir'
-    tempDir: '$temp_dir'
-  service:
-    manager: systemd
-    user: greentic
-    group: greentic
-  health:
-    readinessPath: /ready
-    livenessPath: /health
-    startupTimeoutSeconds: 120
-  rollout:
-    strategy: recreate
-EOF
+  {
+    printf '%s\n' "apiVersion: greentic.ai/v1alpha1"
+    printf '%s\n' "kind: Deployment"
+    printf '%s\n' "metadata:"
+    printf '%s\n' "  name: $name"
+    printf '%s\n' "spec:"
+    printf '%s\n' "  target: single-vm"
+    printf '%s\n' "  bundle:"
+    printf '%s\n' "    source: '$bundle_source'"
+    printf '%s\n' "    format: squashfs"
+    printf '%s\n' "  runtime:"
+    printf '%s\n' "    image: '$image'"
+    printf '%s\n' "    arch: x86_64"
+    printf '%s\n' "    admin:"
+    printf '%s\n' "      bind: $admin_bind"
+    printf '%s\n' "      mtls:"
+    printf '%s\n' "        caFile: '$admin_ca_file'"
+    printf '%s\n' "        certFile: '$admin_cert_file'"
+    printf '%s\n' "        keyFile: '$admin_key_file'"
+    printf '%s\n' "  storage:"
+    printf '%s\n' "    stateDir: '$state_dir'"
+    printf '%s\n' "    cacheDir: '$cache_dir'"
+    printf '%s\n' "    logDir: '$log_dir'"
+    printf '%s\n' "    tempDir: '$temp_dir'"
+    printf '%s\n' "  service:"
+    printf '%s\n' "    manager: systemd"
+    printf '%s\n' "    user: greentic"
+    printf '%s\n' "    group: greentic"
+    printf '%s\n' "  health:"
+    printf '%s\n' "    readinessPath: /ready"
+    printf '%s\n' "    livenessPath: /health"
+    printf '%s\n' "    startupTimeoutSeconds: 120"
+    printf '%s\n' "  rollout:"
+    printf '%s\n' "    strategy: recreate"
+  } > "$out"
   exit 0
 fi
 exit 0
