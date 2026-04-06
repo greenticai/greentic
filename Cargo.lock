@@ -1399,7 +1399,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "0.9.46"
+version = "0.9.47"
 dependencies = [
  "clap",
  "criterion",
