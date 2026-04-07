@@ -135,7 +135,7 @@ pub(crate) fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> 
     println!("Deployment mode: local runtime");
     println!(
         "Starting tenant={} team={}",
-        request.tenant.as_deref().unwrap_or("default"),
+        request.tenant.as_deref().unwrap_or("demo"),
         request.team.as_deref().unwrap_or("default")
     );
     let args = request.to_runtime_start_args(locale);
