@@ -18,7 +18,8 @@ use greentic_distributor_client::{
 };
 use greentic_i18n::{normalize_locale, select_locale_with_sources};
 use greentic_start::{
-    CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, run_start_request,
+    CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest,
+    resolve_bundle_target, run_start_request,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -696,7 +697,13 @@ fn run_multi_target_deployer_apply(
         target,
         cli_options.provider_pack.as_ref(),
     )?;
-    let tenant = request.tenant.clone().unwrap_or_else(|| "demo".to_string());
+    let bundle_target = resolve_bundle_target(
+        &resolved.bundle_dir.display().to_string(),
+        request.tenant.as_deref(),
+        request.team.as_deref(),
+    )
+    .map_err(|err| format!("failed to resolve bundle target: {err}"))?;
+    let tenant = bundle_target.tenant;
     let target_name = target.as_str().to_string();
     let mut args = vec![
         target_name,
@@ -925,6 +932,11 @@ fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> Result<StartRequ
         log_dir: None,
         verbose: false,
         quiet: false,
+        admin: false,
+        admin_port: 8443,
+        admin_certs_dir: None,
+        admin_allowed_clients: Vec::new(),
+        tunnel_explicit: false,
     };
 
     let mut idx = 0usize;

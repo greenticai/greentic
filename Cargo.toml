@@ -16,7 +16,7 @@ directories = "6"
 flate2 = "1.1"
 greentic-i18n = "0.4"
 greentic-distributor-client = { version = "0.4", features = ["oci-components", "pack-fetch"] }
-greentic-start = "0.4"
+greentic-start = { version = "0.4", path = "../greentic-start" }
 oci-distribution = { version = "0.11", default-features = false, features = ["rustls-tls"] }
 rpassword = "7.4"
 serde = { version = "1.0", features = ["derive"] }
