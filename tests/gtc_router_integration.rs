@@ -423,7 +423,7 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
     let logged = fs::read_to_string(log_file).expect("read dev log");
     assert!(logged.contains("install tools"));
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
-    assert!(cargo_logged.contains("binstall --version"));
+    assert!(cargo_logged.contains("binstall -V"));
     assert!(cargo_logged.contains("search cargo-binstall --limit 1"));
     assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-dev"));
     assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-operator"));
