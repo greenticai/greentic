@@ -5,6 +5,8 @@ mod provider_packs;
 #[path = "cloud_deploy/single_vm.rs"]
 mod single_vm;
 
+use std::collections::BTreeMap;
+use std::fs;
 use std::path::Path;
 
 use crate::DEPLOYER_BIN;
@@ -92,12 +94,12 @@ pub(crate) fn validate_cloud_deploy_inputs(
         "terraform",
         "install terraform and make sure it is available in PATH",
     )?;
-    let _ = bundle_dir;
     match target {
         StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
             let requirements = describe_cloud_target_requirements(target, locale)?;
+            child_env.extend(load_setup_deploy_inputs(bundle_dir, target)?);
             child_env.extend(ensure_cloud_credentials(target, locale)?);
-            child_env.extend(ensure_target_terraform_inputs(target, locale)?);
+            child_env.extend(ensure_target_terraform_inputs(target, locale, &child_env)?);
             if requirements.remote_bundle_source_required {
                 let remote_bundle_help = requirements
                     .remote_bundle_source_help
@@ -372,12 +374,16 @@ fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> GtcResult<Chil
     }
 }
 
-fn ensure_target_terraform_inputs(target: StartTarget, locale: &str) -> GtcResult<ChildProcessEnv> {
+fn ensure_target_terraform_inputs(
+    target: StartTarget,
+    locale: &str,
+    preset_env: &ChildProcessEnv,
+) -> GtcResult<ChildProcessEnv> {
     let requirements = describe_cloud_target_requirements(target, locale)?;
     if requirements.variable_requirements.is_empty() {
         return Ok(ChildProcessEnv::new());
     }
-    let missing = collect_missing_required_variables(&requirements);
+    let missing = collect_missing_required_variables(&requirements, preset_env);
     if missing.is_empty() {
         return Ok(ChildProcessEnv::new());
     }
@@ -409,13 +415,58 @@ fn ensure_target_terraform_inputs(target: StartTarget, locale: &str) -> GtcResul
 
 fn collect_missing_required_variables(
     requirements: &CloudTargetRequirementsV1,
+    preset_env: &ChildProcessEnv,
 ) -> Vec<VariableRequirementV1> {
     requirements
         .variable_requirements
         .iter()
-        .filter(|requirement| requirement.required && !env_var_present(&requirement.name))
+        .filter(|requirement| {
+            requirement.required
+                && !env_var_present(&requirement.name)
+                && !child_env_var_present(preset_env, &requirement.name)
+        })
         .cloned()
         .collect()
+}
+
+fn child_env_var_present(env: &ChildProcessEnv, name: &str) -> bool {
+    env.vars
+        .iter()
+        .any(|(key, value)| key == name && !value.as_str().trim().is_empty())
+}
+
+#[derive(Debug, Deserialize)]
+struct SetupDeployInputsDocument {
+    #[allow(dead_code)]
+    version: String,
+    #[allow(dead_code)]
+    target: String,
+    #[allow(dead_code)]
+    provider_pack: Option<String>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+}
+
+fn load_setup_deploy_inputs(bundle_dir: &Path, target: StartTarget) -> GtcResult<ChildProcessEnv> {
+    let path = bundle_dir
+        .join(".greentic")
+        .join("deploy")
+        .join(target.as_str())
+        .join("inputs.json");
+    if !path.exists() {
+        return Ok(ChildProcessEnv::new());
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|err| GtcError::io(format!("failed to read {}", path.display()), err))?;
+    let doc: SetupDeployInputsDocument = serde_json::from_str(&raw)
+        .map_err(|err| GtcError::json(format!("failed to parse {}", path.display()), err))?;
+    let mut env = ChildProcessEnv::new();
+    for (key, value) in doc.env {
+        if !value.trim().is_empty() {
+            env.set(key, value);
+        }
+    }
+    Ok(env)
 }
 
 fn cloud_credentials_satisfied(requirements: &CloudTargetRequirementsV1) -> bool {
@@ -517,7 +568,11 @@ fn mirror_aws_region_envs(env: &mut ChildProcessEnv) {
             env.set("AWS_REGION".to_string(), value);
         }
     } else if let Some(value) = region {
-        if !env.vars.iter().any(|(name, _)| name == "AWS_DEFAULT_REGION") {
+        if !env
+            .vars
+            .iter()
+            .any(|(name, _)| name == "AWS_DEFAULT_REGION")
+        {
             env.set("AWS_DEFAULT_REGION".to_string(), value);
         }
     }
@@ -547,7 +602,8 @@ mod tests {
         CloudTargetRequirementsV1, CredentialRequirementV1, VariableRequirementV1,
         append_bundle_registry_args, binary_in_path, cloud_credentials_satisfied,
         collect_missing_required_variables, default_operator_image_for_target, env_var_present,
-        matches_remote_bundle_ref, mirror_aws_region_envs, validate_bundle_registry_mapping_env,
+        load_setup_deploy_inputs, matches_remote_bundle_ref, mirror_aws_region_envs,
+        validate_bundle_registry_mapping_env,
     };
     #[cfg(unix)]
     use super::{require_tool_in_path, validate_cloud_deploy_inputs};
@@ -771,29 +827,32 @@ mod tests {
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID");
             env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION");
         }
-        let missing = collect_missing_required_variables(&CloudTargetRequirementsV1 {
-            target: "gcp".to_string(),
-            target_label: "GCP".to_string(),
-            provider_pack_filename: "terraform.gtpack".to_string(),
-            remote_bundle_source_required: true,
-            remote_bundle_source_help: None,
-            informational_notes: Vec::new(),
-            credential_requirements: Vec::new(),
-            variable_requirements: vec![
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID".to_string(),
-                    required: true,
-                    prompt: None,
-                    default_value: None,
-                },
-                VariableRequirementV1 {
-                    name: "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION".to_string(),
-                    required: true,
-                    prompt: None,
-                    default_value: Some("us-central1".to_string()),
-                },
-            ],
-        });
+        let missing = collect_missing_required_variables(
+            &CloudTargetRequirementsV1 {
+                target: "gcp".to_string(),
+                target_label: "GCP".to_string(),
+                provider_pack_filename: "terraform.gtpack".to_string(),
+                remote_bundle_source_required: true,
+                remote_bundle_source_help: None,
+                informational_notes: Vec::new(),
+                credential_requirements: Vec::new(),
+                variable_requirements: vec![
+                    VariableRequirementV1 {
+                        name: "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID".to_string(),
+                        required: true,
+                        prompt: None,
+                        default_value: None,
+                    },
+                    VariableRequirementV1 {
+                        name: "GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION".to_string(),
+                        required: true,
+                        prompt: None,
+                        default_value: Some("us-central1".to_string()),
+                    },
+                ],
+            },
+            &ChildProcessEnv::new(),
+        );
         assert_eq!(missing.len(), 2);
         assert_eq!(
             missing[0].name,
@@ -938,10 +997,11 @@ mod tests {
 
         mirror_aws_region_envs(&mut env);
 
-        assert!(env
-            .vars
-            .iter()
-            .any(|(name, value)| name == "AWS_REGION" && value.as_str() == "eu-north-1"));
+        assert!(
+            env.vars
+                .iter()
+                .any(|(name, value)| name == "AWS_REGION" && value.as_str() == "eu-north-1")
+        );
     }
 
     #[test]
@@ -955,5 +1015,28 @@ mod tests {
             .vars
             .iter()
             .any(|(name, value)| name == "AWS_DEFAULT_REGION" && value.as_str() == "eu-north-1"));
+    }
+
+    #[test]
+    fn load_setup_deploy_inputs_reads_setup_materialized_defaults() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join(".greentic").join("deploy").join("aws");
+        fs::create_dir_all(&path).expect("mkdir");
+        fs::write(
+            path.join("inputs.json"),
+            r#"{
+  "version": "1",
+  "target": "aws",
+  "env": {
+    "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND": "s3"
+  }
+}"#,
+        )
+        .expect("write inputs");
+
+        let env = load_setup_deploy_inputs(dir.path(), StartTarget::Aws).expect("inputs");
+        assert!(env.vars.iter().any(|(name, value)| {
+            name == "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND" && value.as_str() == "s3"
+        }));
     }
 }
