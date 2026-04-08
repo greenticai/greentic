@@ -495,7 +495,32 @@ fn prompt_cloud_credentials(
         }
     }
 
+    mirror_aws_region_envs(&mut env);
+
     Ok(env)
+}
+
+fn mirror_aws_region_envs(env: &mut ChildProcessEnv) {
+    let default_region = env
+        .vars
+        .iter()
+        .find(|(name, _)| name == "AWS_DEFAULT_REGION")
+        .map(|(_, value)| value.to_string());
+    let region = env
+        .vars
+        .iter()
+        .find(|(name, _)| name == "AWS_REGION")
+        .map(|(_, value)| value.to_string());
+
+    if let Some(value) = default_region {
+        if !env.vars.iter().any(|(name, _)| name == "AWS_REGION") {
+            env.set("AWS_REGION".to_string(), value);
+        }
+    } else if let Some(value) = region {
+        if !env.vars.iter().any(|(name, _)| name == "AWS_DEFAULT_REGION") {
+            env.set("AWS_DEFAULT_REGION".to_string(), value);
+        }
+    }
 }
 
 fn require_tool_in_path(binary: &str, help: &str) -> GtcResult<()> {
@@ -522,11 +547,11 @@ mod tests {
         CloudTargetRequirementsV1, CredentialRequirementV1, VariableRequirementV1,
         append_bundle_registry_args, binary_in_path, cloud_credentials_satisfied,
         collect_missing_required_variables, default_operator_image_for_target, env_var_present,
-        matches_remote_bundle_ref, validate_bundle_registry_mapping_env,
+        matches_remote_bundle_ref, mirror_aws_region_envs, validate_bundle_registry_mapping_env,
     };
     #[cfg(unix)]
     use super::{require_tool_in_path, validate_cloud_deploy_inputs};
-    use crate::deploy::StartTarget;
+    use crate::deploy::{ChildProcessEnv, StartTarget};
     use crate::tests::env_test_lock;
     #[cfg(unix)]
     use crate::tests::fake_deployer_contract;
@@ -904,5 +929,31 @@ mod tests {
                 None => env::remove_var("PATH"),
             }
         }
+    }
+
+    #[test]
+    fn mirror_aws_region_envs_copies_default_region_to_aws_region() {
+        let mut env = ChildProcessEnv::new();
+        env.set("AWS_DEFAULT_REGION".to_string(), "eu-north-1".to_string());
+
+        mirror_aws_region_envs(&mut env);
+
+        assert!(env
+            .vars
+            .iter()
+            .any(|(name, value)| name == "AWS_REGION" && value.as_str() == "eu-north-1"));
+    }
+
+    #[test]
+    fn mirror_aws_region_envs_copies_aws_region_to_default_region() {
+        let mut env = ChildProcessEnv::new();
+        env.set("AWS_REGION".to_string(), "eu-north-1".to_string());
+
+        mirror_aws_region_envs(&mut env);
+
+        assert!(env
+            .vars
+            .iter()
+            .any(|(name, value)| name == "AWS_DEFAULT_REGION" && value.as_str() == "eu-north-1"));
     }
 }
