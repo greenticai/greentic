@@ -1,9 +1,9 @@
 [package]
 name = "gtc"
-version = "0.9.47"
+version = "1.0.0"
 edition = "2024"
 rust-version = "1.91"
-description = "Greentic - The operation system for digital workers"
+description = "Greentic - The digital workers operating system"
 license = "MIT"
 repository = "https://github.com/greenticai/greentic"
 homepage = "https://greentic.ai"

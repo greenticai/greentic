@@ -322,7 +322,7 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
     let needs_binstall_install = match (installed_binstall.as_deref(), latest_binstall.as_deref()) {
         (Some(installed), Some(latest)) => semver_compare(installed, latest).is_lt(),
         (None, _) => true,
-        (Some(_), None) => true,
+        (Some(_), None) => false,
     };
 
     if needs_binstall_install {
@@ -499,7 +499,7 @@ fn is_binstall_available(debug: bool, locale: &str) -> bool {
 }
 
 fn detect_binstall_version(debug: bool, locale: &str) -> Option<String> {
-    let output = run_cargo_capture(&["binstall", "--version"], debug, locale)?;
+    let output = run_cargo_capture(&["binstall", "-V"], debug, locale)?;
     if !output.status.success() {
         return None;
     }
@@ -2113,7 +2113,7 @@ mod tests {
         let cargo = dir.path().join("cargo");
         write_executable(
             &cargo,
-            "#!/bin/sh\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nexit 1\n",
+            "#!/bin/sh\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nexit 1\n",
         );
 
         let original_path = env::var_os("PATH");
@@ -2149,7 +2149,7 @@ mod tests {
         write_executable(
             &cargo,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  exit 1\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nexit 0\n",
                 log.display()
             ),
         );
@@ -2181,6 +2181,47 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn ensure_install_prereqs_skips_binstall_reinstall_when_latest_lookup_fails() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = executable_tempdir();
+        let log = dir.path().join("cargo.log");
+        let cargo = dir.path().join("cargo");
+        write_executable(
+            &cargo,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.8.1'\n  exit 0\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  exit 1\nfi\nexit 0\n",
+                log.display()
+            ),
+        );
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", dir.path());
+        }
+
+        assert_eq!(ensure_install_prereqs(false, "en"), 0);
+
+        let logged = fs::read_to_string(log).expect("read log");
+        assert!(logged.contains("binstall -V"));
+        assert!(logged.contains("search cargo-binstall --limit 1"));
+        assert!(!logged.contains("install cargo-binstall --locked"));
+        assert!(logged.contains("binstall -y --version 0.4 greentic-dev"));
+        assert!(logged.contains("binstall -y --version 0.4 greentic-operator"));
+        assert!(logged.contains("binstall -y --version 0.4 greentic-bundle"));
+        assert!(logged.contains("binstall -y --version 0.4 greentic-setup"));
+        assert!(logged.contains("binstall -y --version 0.4 greentic-start"));
+        assert!(logged.contains("binstall -y --version 0.4 greentic-deployer"));
+
+        unsafe {
+            match original_path {
+                Some(value) => env::set_var("PATH", value),
+                None => env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn run_update_reports_failure_after_attempting_all_packages_and_tools() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = executable_tempdir();
@@ -2192,7 +2233,7 @@ mod tests {
         write_executable(
             &cargo,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"--version\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$6\" = \"greentic-operator\" ]; then\n  exit 9\nfi\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$6\" = \"greentic-operator\" ]; then\n  exit 9\nfi\nexit 0\n",
                 cargo_log.display()
             ),
         );
