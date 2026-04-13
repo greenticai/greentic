@@ -2078,7 +2078,16 @@ mod tests {
             env::set_var("GTC_SKIP_DIST_HYDRATE", "1");
         }
 
+        // Create bin/dist as a *file* so the hydration fallback cannot
+        // mkdir + download the pack from GitHub releases.  This ensures the
+        // "missing pack" path is exercised even when online.
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("mkdir bin");
+        fs::write(bin_dir.join("dist"), b"blocker").expect("write dist blocker");
+
         let err = ensure_deployer_dist_pack(false, "en").expect_err("missing pack should fail");
+        // Remove the blocker so subsequent phases can create the real dir.
+        let _ = fs::remove_file(bin_dir.join("dist"));
         assert!(
             err.to_string()
                 .contains("greentic-deployer dist pack is missing")
@@ -2086,10 +2095,30 @@ mod tests {
 
         let dist_dir = dir.path().join("bin/dist");
         fs::create_dir_all(&dist_dir).expect("mkdirs");
-        for filename in required_deployer_dist_pack_filenames(false, "en").expect("filenames") {
+        let pack_filenames = required_deployer_dist_pack_filenames(false, "en").expect("filenames");
+        for filename in &pack_filenames {
             fs::write(dist_dir.join(filename), b"pack-bytes").expect("write pack");
         }
+        // Make files AND dir read-only so hydration cannot overwrite.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for filename in &pack_filenames {
+                fs::set_permissions(dist_dir.join(filename), fs::Permissions::from_mode(0o444))
+                    .expect("chmod file ro");
+            }
+            fs::set_permissions(&dist_dir, fs::Permissions::from_mode(0o555))
+                .expect("chmod dist ro");
+        }
         let err = ensure_deployer_dist_pack(false, "en").expect_err("invalid pack should fail");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&dist_dir, fs::Permissions::from_mode(0o755))
+                .expect("chmod dist rw");
+            for filename in &pack_filenames {
+                fs::set_permissions(dist_dir.join(filename), fs::Permissions::from_mode(0o644))
+                    .expect("chmod file rw");
+            }
+        }
         assert!(
             err.to_string()
                 .contains("greentic-deployer dist pack is invalid")
