@@ -397,6 +397,14 @@ fn ensure_deployer_dist_pack(debug: bool, locale: &str) -> GtcResult<()> {
 }
 
 fn hydrate_deployer_dist_pack(dist_dir: &Path, filename: &str, locale: &str) -> GtcResult<()> {
+    // Test-only escape hatch: allow hermetic tests to short-circuit the
+    // GitHub Release download path. Used by
+    // `ensure_deployer_dist_pack_requires_installed_dist_pack`.
+    if env::var_os("GTC_SKIP_DIST_HYDRATE").is_some() {
+        return Err(GtcError::message(
+            "dist pack hydrate disabled via GTC_SKIP_DIST_HYDRATE",
+        ));
+    }
     fs::create_dir_all(dist_dir)
         .map_err(|e| GtcError::io(format!("failed to create {}", dist_dir.display()), e))?;
     let target = dist_dir.join(filename);
@@ -2061,8 +2069,13 @@ mod tests {
         let _deployer = fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let original_cargo_home = env::var_os("CARGO_HOME");
+        let original_skip_hydrate = env::var_os("GTC_SKIP_DIST_HYDRATE");
         unsafe {
             env::set_var("CARGO_HOME", dir.path());
+            // Without this, hydrate_deployer_dist_pack downloads from
+            // github.com/greenticai/greentic/releases/download/v{CARGO_PKG_VERSION}/...
+            // and the first `expect_err` below fails on networked CI runners.
+            env::set_var("GTC_SKIP_DIST_HYDRATE", "1");
         }
 
         let err = ensure_deployer_dist_pack(false, "en").expect_err("missing pack should fail");
@@ -2101,6 +2114,10 @@ mod tests {
             match original_cargo_home {
                 Some(value) => env::set_var("CARGO_HOME", value),
                 None => env::remove_var("CARGO_HOME"),
+            }
+            match original_skip_hydrate {
+                Some(value) => env::set_var("GTC_SKIP_DIST_HYDRATE", value),
+                None => env::remove_var("GTC_SKIP_DIST_HYDRATE"),
             }
         }
     }
