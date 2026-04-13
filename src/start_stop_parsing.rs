@@ -98,14 +98,18 @@ impl StartRequest {
             args.push("--config".to_string());
             args.push(config.display().to_string());
         }
-        args.push("--cloudflared".to_string());
-        args.push(self.cloudflared.as_cli_value().to_string());
+        // Only pass tunnel flags when explicitly set, so greentic-start
+        // can apply its own defaults (tunnel.json / deployer auto-detect).
+        if self.tunnel_explicit {
+            args.push("--cloudflared".to_string());
+            args.push(self.cloudflared.as_cli_value().to_string());
+            args.push("--ngrok".to_string());
+            args.push(self.ngrok.as_cli_value().to_string());
+        }
         if let Some(binary) = self.cloudflared_binary.as_deref() {
             args.push("--cloudflared-binary".to_string());
             args.push(binary.display().to_string());
         }
-        args.push("--ngrok".to_string());
-        args.push(self.ngrok.as_cli_value().to_string());
         if let Some(binary) = self.ngrok_binary.as_deref() {
             args.push("--ngrok-binary".to_string());
             args.push(binary.display().to_string());
