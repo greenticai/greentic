@@ -1,9 +1,12 @@
 name: Publish And Release
 
+# Tag-triggered: fires after `tag-on-version-bump.yml` detects a Cargo.toml
+# version change on main and pushes `v{version}`. Crates.io publish is
+# handled by `crates-publish.yml` (shared reusable); this workflow covers
+# binary release assets + embedded deployer gtpack + SBOM + provenance.
 on:
   push:
-    branches:
-      - main
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -40,7 +43,6 @@ jobs:
           echo "tag=v${VERSION}" >> "$GITHUB_OUTPUT"
 
   prepare_deployer_assets:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs:
       - ci
@@ -71,7 +73,6 @@ jobs:
           path: assets/deployer/terraform.gtpack
 
   build_binaries:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ${{ matrix.os }}
     needs:
       - metadata
@@ -156,7 +157,6 @@ jobs:
             gtc-${{ matrix.target }}.zip
 
   github_release:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs:
       - metadata
@@ -187,7 +187,6 @@ jobs:
             dist/**/terraform.gtpack
 
   checksums:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs:
       - metadata
@@ -216,7 +215,6 @@ jobs:
           path: gtc-${{ needs.metadata.outputs.version }}-checksums.txt
 
   sbom:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs:
       - metadata
@@ -252,44 +250,7 @@ jobs:
           name: release-sbom
           path: gtc-${{ needs.metadata.outputs.version }}.spdx.json
 
-  publish_crates:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    needs:
-      - github_release
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.94.0
-      - name: Publish crate to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          set +e
-          OUTPUT=$(cargo publish --token "$CARGO_REGISTRY_TOKEN" 2>&1)
-          STATUS=$?
-          set -e
-          if [ "$STATUS" -eq 0 ]; then
-            exit 0
-          fi
-          if echo "$OUTPUT" | grep -q "already exists"; then
-            echo "::error::Version already published to crates.io — bump Cargo.toml before releasing again"
-            {
-              echo "## crates.io publish blocked"
-              echo
-              echo "The current crate version is already published."
-              echo "Bump \`Cargo.toml\` before running the release workflow again."
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 1
-          else
-            echo "$OUTPUT"
-            exit 1
-          fi
-
   provenance:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     needs:
       - metadata
