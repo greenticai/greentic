@@ -80,7 +80,7 @@ The goal is simple:
 > describe the business outcome you want, and generate the starting digital worker in seconds.
 
 Embedded demo asset included in this package:
-[![Watch on YouTube](greentic_readme_assets/create-a-digital-coo-in-seconds-cover.jpg)](https://youtu.be/js0yon1OlVU)
+[![Watch on YouTube](greentic_readme_assets/creation-a-digital-coo-in-seconds-cover.jpg)](https://youtu.be/js0yon1OlVU)
 
 ---
 
