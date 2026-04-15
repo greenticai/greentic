@@ -5,16 +5,45 @@ use crate::router::passthrough_args;
 
 pub(super) fn build_cli(locale: &str) -> Command {
     let cmd_args = passthrough_args();
+    let options_heading = leak_str(t(locale, "gtc.help.options.heading").into_owned());
+    let arguments_heading = leak_str(t(locale, "gtc.help.arguments.heading").into_owned());
+    let commands_heading = leak_str(t(locale, "gtc.help.commands.heading").into_owned());
+    let help_template = leak_str(build_help_template(locale));
 
     Command::new(leak_str(t(locale, "gtc.app.name").into_owned()))
         .version(env!("CARGO_PKG_VERSION"))
+        .propagate_version(true)
         .about(t(locale, "gtc.app.about").into_owned())
+        .help_template(help_template)
+        .subcommand_help_heading(commands_heading)
+        .disable_help_flag(true)
+        .disable_version_flag(true)
+        .disable_help_subcommand(true)
+        .arg(
+            Arg::new("help")
+                .long("help")
+                .short('h')
+                .action(ArgAction::Help)
+                .global(true)
+                .help_heading(options_heading)
+                .help(t(locale, "gtc.help.flag.help").into_owned()),
+        )
+        .arg(
+            Arg::new("version")
+                .long("version")
+                .short('V')
+                .action(ArgAction::Version)
+                .global(true)
+                .help_heading(options_heading)
+                .help(t(locale, "gtc.help.flag.version").into_owned()),
+        )
         .arg(
             Arg::new("locale")
                 .long("locale")
                 .value_name("BCP47")
                 .num_args(1)
                 .global(true)
+                .help_heading(options_heading)
                 .help(t(locale, "gtc.arg.locale.help").into_owned()),
         )
         .arg(
@@ -22,18 +51,38 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .long("debug-router")
                 .action(ArgAction::SetTrue)
                 .global(true)
+                .help_heading(options_heading)
                 .help(t(locale, "gtc.arg.debug_router.help").into_owned()),
         )
-        .subcommand(Command::new("version").about(t(locale, "gtc.cmd.version.about").into_owned()))
-        .subcommand(Command::new("doctor").about(t(locale, "gtc.cmd.doctor.about").into_owned()))
+        .subcommand(
+            Command::new("version")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.cmd.version.about").into_owned()),
+        )
+        .subcommand(
+            Command::new("doctor")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.cmd.doctor.about").into_owned()),
+        )
         .subcommand(
             Command::new("install")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.install.about").into_owned())
                 .arg(
                     Arg::new("tenant")
                         .long("tenant")
                         .value_name("TENANT")
                         .num_args(1)
+                        .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.tenant.help").into_owned()),
                 )
                 .arg(
@@ -41,18 +90,31 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .long("key")
                         .value_name("KEY")
                         .num_args(1)
+                        .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.key.help").into_owned()),
                 ),
         )
-        .subcommand(Command::new("update").about(t(locale, "gtc.cmd.update.about").into_owned()))
+        .subcommand(
+            Command::new("update")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.cmd.update.about").into_owned()),
+        )
         .subcommand(
             Command::new("add-admin")
-                .about("Register an admin client certificate identity for a local bundle.")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.cmd.add_admin.about").into_owned())
                 .arg(
                     Arg::new("bundle-ref")
                         .value_name("BUNDLE_REF")
                         .required(true)
-                        .help("Local bundle directory to update."),
+                        .help_heading(arguments_heading)
+                        .help(t(locale, "gtc.arg.add_admin.bundle_ref.help").into_owned()),
                 )
                 .arg(
                     Arg::new("cn")
@@ -60,14 +122,16 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .value_name("CLIENT_CN")
                         .required(true)
                         .num_args(1)
-                        .help("Client certificate Common Name allowed to access the admin API."),
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.add_admin.cn.help").into_owned()),
                 )
                 .arg(
                     Arg::new("name")
                         .long("name")
                         .value_name("ADMIN_NAME")
                         .num_args(1)
-                        .help("Optional human-readable admin label."),
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.add_admin.name.help").into_owned()),
                 )
                 .arg(
                     Arg::new("public-key-file")
@@ -75,17 +139,23 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .value_name("PATH")
                         .required(true)
                         .num_args(1)
-                        .help("PEM/OpenSSH public key file for this admin."),
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.add_admin.public_key_file.help").into_owned()),
                 ),
         )
         .subcommand(
             Command::new("remove-admin")
-                .about("Remove an admin client certificate identity from a local bundle.")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.cmd.remove_admin.about").into_owned())
                 .arg(
                     Arg::new("bundle-ref")
                         .value_name("BUNDLE_REF")
                         .required(true)
-                        .help("Local bundle directory to update."),
+                        .help_heading(arguments_heading)
+                        .help(t(locale, "gtc.arg.remove_admin.bundle_ref.help").into_owned()),
                 )
                 .arg(
                     Arg::new("cn")
@@ -93,7 +163,8 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .value_name("CLIENT_CN")
                         .num_args(1)
                         .conflicts_with("name")
-                        .help("Client certificate Common Name to remove."),
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.remove_admin.cn.help").into_owned()),
                 )
                 .arg(
                     Arg::new("name")
@@ -101,22 +172,32 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .value_name("ADMIN_NAME")
                         .num_args(1)
                         .conflicts_with("cn")
-                        .help("Admin label to remove."),
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.remove_admin.name.help").into_owned()),
                 ),
         )
         .subcommand(
             Command::new("admin")
-                .about("Admin plane helpers.")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.cmd.admin.about").into_owned())
                 .subcommand(
                     Command::new("tunnel")
-                        .about(
-                            "Open an AWS Session Manager tunnel to the admin API of a deployed bundle.",
-                        )
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about(t(locale, "gtc.cmd.admin.tunnel.about").into_owned())
                         .arg(
                             Arg::new("bundle-ref")
                                 .value_name("BUNDLE_REF")
                                 .required(true)
-                                .help("Local deployed bundle directory."),
+                                .help_heading(arguments_heading)
+                                .help(
+                                    t(locale, "gtc.arg.admin.tunnel.bundle_ref.help").into_owned(),
+                                ),
                         )
                         .arg(
                             Arg::new("target")
@@ -125,7 +206,8 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .num_args(1)
                                 .default_value("aws")
                                 .value_parser(["aws"])
-                                .help("Cloud provider for the admin tunnel."),
+                                .help_heading(options_heading)
+                                .help(t(locale, "gtc.arg.admin.tunnel.target.help").into_owned()),
                         )
                         .arg(
                             Arg::new("local-port")
@@ -133,7 +215,10 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .value_name("PORT")
                                 .num_args(1)
                                 .default_value("8443")
-                                .help("Local port to bind for the admin tunnel."),
+                                .help_heading(options_heading)
+                                .help(
+                                    t(locale, "gtc.arg.admin.tunnel.local_port.help").into_owned(),
+                                ),
                         )
                         .arg(
                             Arg::new("container")
@@ -141,12 +226,19 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .value_name("NAME")
                                 .num_args(1)
                                 .default_value("app")
-                                .help("Container name inside the ECS task."),
+                                .help_heading(options_heading)
+                                .help(
+                                    t(locale, "gtc.arg.admin.tunnel.container.help").into_owned(),
+                                ),
                         ),
                 ),
         )
         .subcommand(
             Command::new("start")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
                 .about(t_or(
                     locale,
                     "gtc.cmd.start.about",
@@ -156,6 +248,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     Arg::new("bundle-ref")
                         .value_name("BUNDLE_REF")
                         .required(true)
+                        .help_heading(arguments_heading)
                         .help(t_or(
                             locale,
                             "gtc.arg.bundle_ref.help",
@@ -167,12 +260,17 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .long("deploy-bundle-source")
                         .value_name("BUNDLE_SOURCE")
                         .num_args(1)
-                        .help("Override the remote bundle source passed to cloud deployers (for example https://.../bundle.gtbundle)."),
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.deploy_bundle_source.help").into_owned()),
                 )
                 .arg(cmd_args.clone()),
         )
         .subcommand(
             Command::new("stop")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
                 .about(t_or(
                     locale,
                     "gtc.cmd.stop.about",
@@ -182,6 +280,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     Arg::new("bundle-ref")
                         .value_name("BUNDLE_REF")
                         .required(true)
+                        .help_heading(arguments_heading)
                         .help(t_or(
                             locale,
                             "gtc.arg.bundle_ref.help",
@@ -192,22 +291,60 @@ pub(super) fn build_cli(locale: &str) -> Command {
         )
         .subcommand(
             Command::new("dev")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.dev.about").into_owned())
                 .arg(cmd_args.clone()),
         )
         .subcommand(
             Command::new("op")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.op.about").into_owned())
                 .arg(cmd_args.clone()),
         )
         .subcommand(
             Command::new("wizard")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.wizard.about").into_owned())
                 .arg(cmd_args.clone()),
         )
         .subcommand(
             Command::new("setup")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.setup.about").into_owned())
                 .arg(cmd_args),
         )
+        .subcommand(
+            Command::new("help")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.help.subcommand.about").into_owned())
+                .arg(
+                    Arg::new("command")
+                        .value_name("COMMAND")
+                        .num_args(0..)
+                        .help_heading(arguments_heading)
+                        .help(t(locale, "gtc.help.subcommand.arg.command.help").into_owned()),
+                ),
+        )
+}
+
+fn build_help_template(locale: &str) -> String {
+    format!(
+        "{{before-help}}{{about-with-newline}}{} {{usage}}\n\n{{all-args}}{{after-help}}",
+        t(locale, "gtc.help.usage.heading")
+    )
 }

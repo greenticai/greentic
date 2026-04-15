@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 
 use clap::ArgMatches;
 
@@ -49,13 +50,15 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         Some(("doctor", _)) => run_doctor(&locale),
         Some(("install", sub_matches)) => run_install(sub_matches, debug, &locale),
         Some(("update", _)) => run_update(debug, &locale),
+        Some(("help", sub_matches)) => run_help(sub_matches, &locale),
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
         Some(("remove-admin", sub_matches)) => run_remove_admin(sub_matches, &locale),
         Some(("admin", sub_matches)) => match sub_matches.subcommand() {
             Some(("tunnel", tunnel_matches)) => run_admin_tunnel(tunnel_matches, &locale),
             _ => {
                 eprintln!(
-                    "usage: gtc admin tunnel <BUNDLE_REF> [--target aws] [--local-port 8443]"
+                    "{}",
+                    crate::i18n_support::t(&locale, "gtc.admin.usage.tunnel")
                 );
                 2
             }
@@ -69,6 +72,42 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         }
         _ => 2,
     }
+}
+
+fn run_help(sub_matches: &ArgMatches, locale: &str) -> i32 {
+    let path: Vec<String> = sub_matches
+        .get_many::<String>("command")
+        .map(|values| values.cloned().collect())
+        .unwrap_or_default();
+    let mut cmd = build_cli(locale);
+
+    for segment in &path {
+        let Some(next) = cmd.find_subcommand(segment).cloned() else {
+            eprintln!(
+                "{}: {}",
+                crate::i18n_support::t(locale, "gtc.help.err.unknown_command"),
+                segment
+            );
+            return 2;
+        };
+        cmd = next;
+    }
+
+    if let Err(err) = cmd.print_help() {
+        eprintln!(
+            "{}: {err}",
+            crate::i18n_support::t(locale, "gtc.err.exec_failed")
+        );
+        return 1;
+    }
+    if let Err(err) = writeln!(io::stdout()) {
+        eprintln!(
+            "{}: {err}",
+            crate::i18n_support::t(locale, "gtc.err.exec_failed")
+        );
+        return 1;
+    }
+    0
 }
 
 pub(super) fn run_add_admin(sub_matches: &ArgMatches, _locale: &str) -> i32 {
