@@ -1,166 +1,380 @@
-# Greentic - The Digital Workers OS
+# Greentic — The Digital Workers OS
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](#license)
-[![WASM](https://img.shields.io/badge/runtime-WASM%20%7C%20WASIp2-green)]()
-[![Deterministic](https://img.shields.io/badge/model-Deterministic-important)]()
-[![AI](https://img.shields.io/badge/AI-Just--Enough-orange)]()
+[![Runtime](https://img.shields.io/badge/runtime-WASM%20%7C%20WASIp2-green)](#high-level-features)
+[![Execution](https://img.shields.io/badge/model-Deterministic-important)](#why-greentic)
+[![AI](https://img.shields.io/badge/AI-Just--Enough-orange)](#high-level-features)
 
-## Deterministic Digital Workers with 'Just Enough AI' for Enterprise Automation
+## Deterministic digital workers for real enterprise execution
 
-------------------------------------------------------------------------
+Greentic is the operating system for digital workers: deterministic, governed, multi-tenant automation that can safely use AI where it adds value and stay fully controlled where it matters most.
+
+---
+
+# Why care?
+
+## IT Helpdesk Digital Worker
+
+This is the kind of result Greentic is built for: a real digital worker that can receive requests, guide a user, create tickets, check status, escalate urgent issues, and operate consistently across channels.
+
+![IT Helpdesk Digital Worker](greentic_readme_assets/helpdesk-webchat.png)
+
+After installing Greentic, you only need **three steps** to get a working digital worker running.
+
+## 1) Create a bundle
+
+```bash
+gtc wizard --answers https://github.com/greenticai/greentic-demo/releases/latest/download/helpdesk-itsm-create-answers.json
+```
+
+## 2) Setup the bundle
+
+```bash
+gtc setup ./helpdesk-itsm-demo-bundle --answers https://github.com/greenticai/greentic-demo/releases/latest/download/helpdesk-itsm-setup-answers.json
+```
+
+![Greentic Setup Wizard](greentic_readme_assets/setup-wizard.png)
+
+## 3) Start using your digital worker
+
+```bash
+gtc start ./helpdesk-itsm-demo-bundle
+```
+
+Your digital worker can then be used in:
+
+- WebChat
+- Microsoft Teams
+- Slack
+- Webex
+- WhatsApp
+- Telegram
+- and more
+
+![IT Helpdesk on Telegram](greentic_readme_assets/helpdesk-telegram.png)
+
+---
+
+# Deploy to AWS, GCP or Azure
+
+The same pattern extends to cloud deployment.
+
+```bash
+gtc wizard --answers https://github.com/greenticai/greentic-demo/releases/latest/download/cloud-deploy-demo-create-answers.json
+gtc setup --no-ui ./cloud-deploy-demo-bundle --answers https://github.com/greenticai/greentic-demo/releases/latest/download/cloud-deploy-demo-setup-answers.json
+gtc start ./cloud-deploy-demo-bundle
+```
+
+Greentic is designed so the path from local proof-of-value to production deployment is short, explicit, and repeatable.
+
+
+Find more demos at ![greentic-demo](https://github.com/greenticai/greentic-demo)
+---
+
+# Soon: create digital workers in seconds
+
+Greentic is evolving from powerful deterministic tooling into an even faster creation experience.
+
+The goal is simple:
+
+> describe the business outcome you want, and generate the starting digital worker in seconds.
+
+Embedded demo asset included in this package:
+
+- `greentic_readme_assets/creation-a-digital-coo-in-seconds.mov`
+
+---
 
 # Why Greentic?
 
 AI demos are easy.
 
-Production-grade AI infrastructure is not.
+Production-grade AI execution is not.
 
-Most “agentic” platforms allow LLMs to call tools dynamically. This is
-powerful — but unpredictable. Even a 0.1% hallucination or misexecution
-rate becomes unacceptable at enterprise scale.
+Most agentic platforms make it easy to connect an LLM to tools, but much harder to guarantee what happens next. That is acceptable in experiments. It is not acceptable when workflows affect customers, employees, regulated processes, financial operations, or production systems.
 
-Greentic was designed with one core principle:
+A tiny hallucination rate may sound impressive in a lab. At enterprise scale, it becomes operational risk.
 
-> Deterministic by default. **Just enough AI** to add real business value.
+Greentic was built around a different idea:
 
-Greentic gives you:
+> **Deterministic by default. Just enough AI to add real business value.**
 
--   Predictable orchestration
--   Explicit capability control
--   Self-describing components
--   Multi-tenant governance
--   Secure AI integration
+That means:
 
-This is infrastructure for serious production systems.
+- flows are explicit
+- capabilities are declared upfront
+- execution is bounded
+- policy can be enforced
+- audit can be attached
+- AI is used deliberately, not casually
 
-------------------------------------------------------------------------
+Greentic is not trying to create mysterious black-box automation. It is trying to make digital work executable, governable, explainable, and deployable.
 
-Digital Workers need to interact with humans. That is why Greentic speaks over 50 languages: Hi, Hello, Hola, Bonjour, Hallo, Ciao, Olá, Привет, Здравейте, Γειά, Merhaba, مرحبا, שלום, नमस्ते, হ্যালো, ਸਤ ਸ੍ਰੀ ਅਕਾਲ, નમસ્તે, வணக்கம், నమస్తే, ನಮಸ್ಕಾರ, നമസ്കാരം, ආයුබෝවන්, வணக்கம், สวัสดี, Xin chào, Halo, Hai, Kumusta, 你好, 你好嗎, こんにちは, こんにちは, 안녕하세요, Сәлем, Салом, Салом, Сәләм, Сайн байна уу, မင်္ဂလာပါ, ជំរាបសួរ, ສະບາຍດີ, გამარჯობა, Բարև, Salut, Ahoj, Čau, Cześć, Szia, Bună, Zdravo, Bok, Pozdrav, Hej, Hei, Halló, Dia dhuit, Ola, Sawubona, Jambo.
+---
 
-------------------------------------------------------------------------
+# What is a digital worker?
 
-# What Is a Digital Worker?
+A **digital worker** is a deterministic system that completes a meaningful task end to end.
 
-A **digital worker** is a deterministic flow that handles a complete
-task from start to finish.
+It is more than a chatbot and more than a workflow script.
 
-It typically combines:
+A digital worker can:
 
--   Message or event intake
--   Explicit orchestration logic
--   Component/tool execution
--   Optional AI steps where useful
+- receive a message, event, webhook, form, or trigger
+- understand which deterministic flow should run
+- execute approved components and tools
+- ask humans for input when needed
+- apply policies and controls
+- escalate exceptions
+- produce a real business outcome
 
-The goal is controllable automation with predictable behavior.
+In practice, a digital worker often combines:
 
-The more boring and repetitive the task, the better to migrate it to digital workers. If you don't know how to do it, how are you going to ask AI to do it for you? Will it do a brilliant job or an aweful job. You don't know. If you are bored of doing it, do you mind if digital workers do it for you?
+- message or event intake
+- deterministic orchestration logic
+- component or tool execution
+- optional AI steps for routing, interpretation, or transformation
+- human checkpoints where appropriate
 
-------------------------------------------------------------------------
+The more repetitive, structured, and operationally important the task, the stronger the case for a digital worker.
 
-# Core Concepts
+If a process matters, you should be able to describe how it runs, what it is allowed to do, and how it is governed. If you cannot describe that, handing it to an unbounded agent does not remove the risk. It hides it.
 
--   **Components:** Self-describing executable units with explicit capabilities.
--   **Flows:** Deterministic orchestration graphs connecting components.
--   **Packs/Bundles:** Distribution and deployment grouping layers.
--   **Operator:** Runtime boundary that enforces capability, tenancy and other controls.
+Greentic exists to keep the benefits of AI while preserving the discipline of engineering.
 
-------------------------------------------------------------------------
+---
 
-# High-Level Features
+# High-level features
 
-## 🧱 Component-Based Architecture
+## 🧱 Component-based architecture
 
--   WebAssembly (WASM) components (100x smaller than Docker)
--   WASIp2 sandboxing (100x faster and more secure than Docker)
--   Everything is self-describing
--   Explicit lifecycle (setup / update / remove)
--   Capability-based security model - you can only do what you were approved to do
+Greentic is built from self-describing executable units.
 
-## 🔁 Deterministic Orchestration
+- WebAssembly components for lightweight, portable execution
+- WASIp2 sandboxing for isolation and control
+- explicit capabilities per component
+- explicit lifecycle: setup, update, remove
+- self-describing contracts and runtime behavior
 
--   Flow graph execution
--   Explicit transitions
--   Session support
--   Shared state support
--   Canonical CBOR runtime format (faster and smaller)
+This makes systems easier to reason about, validate, reuse, and secure.
 
-## 💬 Messaging & Events
+## 🔁 Deterministic orchestration
 
--   Slack, Teams, Webex, WhatsApp, Telegram, WebChat
--   Webhooks, Email, SMS & Timers
--   Adaptive Card (=mini-apps) with translation/downscaling
--   Session-based workflows
--   Stateless event flows
+Flows define what happens.
 
-## 🤖 AI — Controlled & Explicit
+- graph-based execution
+- explicit transitions
+- session-aware and stateless patterns
+- shared state support
+- canonical runtime formats for speed and consistency
 
--   Chat2Flow (intent → flow routing)
--   Chat2Data (natural language → system dialect like guardrailed SQL and MCP) - commercial
--   Fast2Flow (<100ms natural language routing with LLM fallback) - commercial
--   Explicit LLM components
--   Capability-bound AI
--   No unbounded autonomous agents
+You do not hope the right thing happens. You define it.
 
-## ⚡ MCP Without the Overhead
+## 💬 Messaging and event channels
 
--   WASIX-based MCP (KBs to MB)
--   No JSON-RPC or SSE (no network server in front of an API server)
--   Millisecond local execution
--   Everything remains a component
--   OpenAPI and Swagger to MCP in seconds - commercial
+Digital workers need to interact with people and systems where work already happens.
 
-## 🔌 Extensible by Design
+Greentic supports messaging and event-driven patterns across channels such as:
 
-Extension packs enable:
+- Slack
+- Microsoft Teams
+- Webex
+- WhatsApp
+- Telegram
+- WebChat
+- Webhooks
+- Email
+- SMS
+- Timers
 
--   Secrets backends
--   Redis/shared state
--   OpenTelemetry
--   OAuth providers
--   Access policies (personalise it)
--   Routing engines (personalise it)
--   Audit/Compliance/Analytics (personalise it)
--   Terraform/K8S/other deployers
--   Anything you want [within reason ;-)]
+Greentic also supports adaptive-card style experiences and graceful channel-specific downscaling when one channel supports richer UI than another.
 
-------------------------------------------------------------------------
+## 🌍 Multi-language interaction
+
+Digital workers need to work for humans, not force humans to work around systems.
+
+Greentic is designed for multilingual operation and localized interaction, allowing digital workers to meet users in their own language across channels and UI surfaces.
+
+## 🤖 AI — controlled and explicit
+
+Greentic uses AI where it is useful, but never as an excuse to remove control.
+
+Examples include:
+
+- **Chat2Flow** for routing intent to the right flow
+- **Chat2Data** for turning natural language into system-specific dialects with guardrails
+- **Fast2Flow** for fast routing with deterministic and fallback strategies
+- explicit LLM components with declared permissions
+
+AI is not ambient. It is capability-bound and intentionally placed.
+
+## ⚡ MCP without the usual overhead
+
+Greentic can run MCP-style integrations without forcing everything through heavy remote patterns.
+
+- lightweight local execution
+- component-first design
+- reduced transport overhead
+- faster runtime behavior
+- easier packaging and governance
+
+## 🔌 Extensible by design
+
+Greentic is designed to be extended without turning the core into a mess.
+
+Extension packs can provide:
+
+- secrets backends
+- shared state providers
+- telemetry integrations
+- OAuth providers
+- policy layers
+- routing engines
+- deployers
+- compliance hooks
+- analytics hooks
+- and more
+
+---
+
+# Agentic solutions, industry solutions, and what is coming next
+
+## Greentic-DW
+
+Greentic-DW extends the platform toward higher-level agentic solution design while staying grounded in deterministic execution.
+
+The point is not to make systems more chaotic. The point is to make sophisticated multi-step and multi-agent outcomes easier to design, review, and deploy safely.
+
+## Greentic-X
+
+Greentic-X is the path toward higher-level solution kits and domain packs that sit on top of the Greentic core.
+
+**Industry solutions are coming soon.**
+
+The long-term direction is to make it easier to compose industry-specific digital workers without abandoning the core principles of explicit execution, governance, and reusability.
+
+## Coming soon: System of Record Language
+
+System of Record Language is the direction for describing business structures, systems, and operational semantics at a higher level so they can be connected more naturally to digital workers.
+
+The vision is straightforward:
+
+- describe the business reality once
+- map it to deterministic execution
+- let digital workers operate against that model safely and consistently
+
+---
+
+# Capabilities, control, and observer
+
+These are some of the most important ideas in Greentic.
+
+## Capabilities
+
+Capabilities define what a component or part of the system is allowed to do.
+
+This avoids ambient authority and makes execution explicit. Instead of a component quietly having broad access to everything, capabilities make permissions visible and enforceable.
+
+That matters for security, but also for architecture. Systems become easier to reason about when each unit can only do what it was explicitly granted to do.
+
+## Control
+
+Control layers allow policy and routing logic to shape execution.
+
+They can be used to:
+
+- deny unsafe or non-compliant actions
+- route requests based on policy or context
+- enforce region, tenant, or team-specific behavior
+- inject governance before work proceeds
+- implement decisioning that is explicit and auditable
+
+This is how you move from “the workflow ran” to “the workflow ran under policy.”
+
+## Observer
+
+Observer layers allow you to attach audit, analytics, monitoring, and compliance visibility around execution.
+
+They can be used to:
+
+- produce audit trails
+- monitor execution behavior
+- export telemetry
+- track policy decisions
+- support governance and compliance reviews
+- measure operational effectiveness
+
+This is how digital workers become acceptable in serious enterprise environments. They do not just execute. They execute with oversight.
+
+---
+
+# The gtc wizard model
+
+Greentic favors structured, reproducible creation over hidden configuration.
+
+The `gtc wizard` flow is central to that experience.
+
+## Inspect the schema
+
+```bash
+gtc wizard --schema
+```
+
+This lets you inspect the questions and structure used to create artifacts.
+
+## Create from answers
+
+```bash
+gtc wizard --answers <answers.json>
+```
+
+This lets you generate repeatable outputs from an explicit answer set.
+
+That matters because:
+
+- environments become reproducible
+- setup becomes reviewable
+- automation becomes easier
+- CI/CD becomes cleaner
+- generated bundles can be recreated deterministically
+
+The same philosophy carries into setup:
+
+```bash
+gtc setup ./some-bundle --answers <setup-answers.json>
+```
+
+Greentic is opinionated about making the path from intent to runnable system explicit.
+
+---
 
 # Installation
 
-Install Greentic via cargo-binstall (cargo install cargo-binstall):
+Install Greentic via `cargo-binstall`.
 
-``` bash
+```bash
 cargo binstall gtc
 gtc install
 ```
 
-Windows notes:
+If you prefer installing from source:
 
-- Install Rust first from the official Rust installer page: https://www.rust-lang.org/tools/install
-- On Windows, download and run `rustup-init.exe`, then follow the installer prompts.
-- After Rust is installed, open a new terminal so `cargo` is available on `PATH`.
-- When you run `cargo binstall gtc`, Windows may show a security confirmation popup for the downloaded binary. You must allow/confirm it. If you dismiss or block that prompt, `gtc install` can fail later because the required binary was not allowed to run correctly.
-
-Why the explicit version? Current `gtc` release on crates.io is pre-release, and `cargo-binstall gtc` (without `--version`) may fail with
-`no version matching requirement '*'`.
-
-If you still prefer to install from source:
-
-``` bash
+```bash
 git clone https://github.com/greenticai/greentic.git
 cd greentic/greentic
 cargo install --path . --locked
 gtc install
 ```
+
 Run dependency checks:
 
-``` bash
+```bash
 gtc doctor
 ```
 
-Install modes:
+## Install modes
 
-``` bash
+```bash
 # Public tools only
 gtc install
 
@@ -172,12 +386,12 @@ gtc install --tenant acme
 gtc install --tenant acme --key xxxxxx
 ```
 
-Tenant key env var format:
+## Tenant key env var format
 
 - `GREENTIC_<TENANT>_KEY`
-- Tenant normalization: uppercase, non-alphanumeric as `_`, collapse repeated `_`, trim leading/trailing `_`
+- tenant normalization: uppercase, non-alphanumeric as `_`, collapse repeated `_`, trim leading and trailing `_`
 
-Artifact install locations:
+## Artifact install locations
 
 - Tools: `$CARGO_HOME/bin` (fallback `~/.cargo/bin`)
 - Components: `~/.greentic/artifacts/components/<name>/...`
@@ -185,290 +399,306 @@ Artifact install locations:
 - Bundles: `~/.greentic/artifacts/bundles/<name>/...`
 - Windows root: `%USERPROFILE%\\.greentic\\artifacts\\...`
 
-Exit policy:
+## Exit policy
 
 - If public tools install fails, tenant install is skipped and `gtc` exits with the same non-zero code.
 - Tenant artifacts are installed best-effort per item, but overall exit is non-zero if any tenant artifact fails.
 
-------------------------------------------------------------------------
+---
 
 # Prerequisites
 
-Install Rust 1.91 or better via `rustup` if needed as well as binstall:
+Install Rust 1.91 or newer, add the WASIp2 target, and install `cargo-binstall`.
 
-``` bash
+```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup toolchain install 1.91.0
 rustup target add wasm32-wasip2
 cargo install cargo-binstall
 ```
 
-Windows:
-
-- Go to https://www.rust-lang.org/tools/install
-- Download and run `rustup-init.exe`
-- Install Rust 1.91 or newer
-- Open a fresh PowerShell or Command Prompt
-- Install `cargo-binstall`
-- When Windows shows a security popup during `cargo binstall gtc`, confirm it
-- If that popup is blocked or dismissed, rerun `cargo binstall gtc` and allow it before running `gtc install`
-
 Confirm installation:
 
-``` bash
+```bash
 cargo --version
 ```
 
-------------------------------------------------------------------------
+## Windows notes
 
-# Quickstart (5-Minute Demo)
+- Install Rust first from the official Rust installer page.
+- Run `rustup-init.exe`.
+- Open a fresh terminal afterwards so `cargo` is on `PATH`.
+- When Windows shows a security popup during `cargo binstall gtc`, confirm it.
+- If that popup is dismissed, rerun the command and allow it before running `gtc install`.
 
-``` bash
-# Make your first bundle
-gtc op demo new myfirst.gtbundle
-# Setup demo environment
-gtc op demo setup --bundle ./myfirst.gtbundle --tenant default --team default
-# Start operator
-gtc op demo start --bundle ./myfirst.gtbundle --tenant default --team default --cloudflared off
-```
+---
 
-In your browser go to:
-[Open Greentic Webchat at localhost:8080](http://localhost:8080)
 
-You now have a running deterministic digital worker runtime.
-
-------------------------------------------------------------------------
-
-# CLI Overview
-
-## Development Commands
-
-``` bash
-gtc dev wizard
-gtc dev pack new --help
-gtc dev flow add-step --help
-gtc dev flow update-step --help
-gtc dev flow remove-step --help
-gtc dev cbor <file>.cbor --help
-```
-
-## Operator Commands
-
-``` bash
-gtc wizard
-gtc op demo setup --bundle <something>.gtbundle --tenant default --team default
-gtc op demo start --bundle <something>.gtbundle --tenant default --team default --cloudflared off
-```
-
-Operator supports:
-
--   Local demo CLI
--   Production mTLS REST API
-
-------------------------------------------------------------------------
-
-# Architecture Overview
+# Architecture overview
 
 Greentic builds digital workers in layers:
 
-    Component → Flow → Pack → Bundle → Operator
+```text
+Component → Flow → Pack → Bundle → Operator
+```
 
 ## Component
 
--   WASM module
--   Self-describing contract
--   Explicit capabilities
--   Deterministic lifecycle
+- WASM module
+- self-describing contract
+- explicit capabilities
+- deterministic lifecycle
 
 ## Flow
 
--   Graph of nodes
--   YAML authoring → CBOR production
--   Explicit transitions
+- graph of nodes
+- YAML authoring to production artifact path
+- explicit transitions
 
 ## Pack
 
--   ZIP distribution unit
--   Components + flows
--   Versioned & validated
--   `greentic-pack doctor`
+- distribution unit
+- components plus flows
+- versioned and validated
+- doctor and validation workflows
 
 ## Bundle
 
--   Defines deployed packs
--   Configures tenant/team access
--   Enables extensions and providers (messaging/events)
+- defines deployed packs
+- configures tenant and team access
+- enables extensions and providers
 
 ## Operator
 
--   Setup phase (QA, config, warmup)
--   Start phase (serve traffic)
--   Capability enforcement
--   WASM JIT caching
+- setup phase
+- start phase
+- capability enforcement
+- controlled runtime boundary
+- warmup and execution lifecycle
 
-------------------------------------------------------------------------
+---
 
-# Messaging vs Events
+# Messaging vs events
 
 ## Messaging
 
--   Session-based workflows
--   Adaptive card support
--   Provider-specific translation / downscaling (=WhatsApp does not support cards)
--   Multi-step orchestration
+Best for interactive and session-based workflows.
+
+- multi-step conversations
+- adaptive card support
+- channel translation and downscaling
+- stateful user journeys
 
 ## Events
 
--   Fire-and-forget
--   Timers
--   Webhooks
--   SMS
--   Email
--   Stateless execution
+Best for stateless and trigger-driven workflows.
 
-------------------------------------------------------------------------
+- webhooks
+- timers
+- SMS
+- email
+- fire-and-forget processing
 
-# Deterministic Model
+Greentic supports both because real business work spans both.
 
-Greentic avoids:
+---
 
--   Autonomous tool-calling LLM agents
--   Unbounded execution graphs
--   Ambient authority
+# Deterministic model
 
-Instead:
+Greentic avoids the common failure modes of uncontrolled agent systems.
 
--   Flows define execution paths
--   AI for routing and execution is optional
--   Capabilities are declared upfront
--   Configuration is versioned & validated
+It avoids:
 
-Enterprise-ready by design.
+- unbounded autonomous execution
+- hidden permissions
+- undefined tool-calling behavior
+- ambient authority
+- unclear operational accountability
 
-------------------------------------------------------------------------
+Instead, Greentic favors:
 
-# Multi-Tenancy
+- explicit flows
+- bounded execution
+- declared capabilities
+- versioned configuration
+- reproducible setup and deployment
+
+That is what makes it enterprise-ready by design.
+
+---
+
+# Multi-tenancy
+
+Greentic is designed for real organizational structure.
 
 Hierarchy:
 
--   Global
--   Tenant
--   Team
--   User
+- Global
+- Tenant
+- Team
+- User
 
-Operator denies everything by default. Access must be explicitly
-granted.
+The operator denies by default. Access must be explicitly granted.
 
-------------------------------------------------------------------------
+This matters for isolation, governance, and safe shared infrastructure.
 
-# Performance Model
+---
 
--   WASM JIT warmup
--   Millisecond execution
--   No JSON-RPC latency
--   Local MCP execution
--   Deterministic payload passing
+# Performance model
 
-------------------------------------------------------------------------
+Greentic is engineered for lightweight execution.
 
-# Comparison
+- small runtime artifacts
+- fast startup and warmup characteristics
+- reduced transport overhead
+- local component execution patterns
+- deterministic payload passing
 
-| Feature             | Greentic | LangChain | n8n | Zapier |
-|---------------------|----------|-----------|-----|--------|
-| Deterministic flows | ✅       | ❌        | ⚠️   | ⚠️     |
-| Capability sandbox  | ✅       | ❌        | ❌   | ❌     |
-| Sandboxed runtime   | ✅       | ❌        | ❌   | ❌     |
-| Just-Enough AI      | ✅       | ❌        | ❌   | ❌     |
-| Multi-tenant infra  | ✅       | ⚠️        | ❌   | ❌     |
-| Secure MCP          | ✅       | ❌        | ❌   | ❌     |
+The aim is not to be flashy. It is to be fast enough, small enough, and controlled enough to be practical everywhere.
 
-------------------------------------------------------------------------
+---
 
-# Repository Structure
+# Positioning snapshot
 
--   `greentic-interfaces` - shared wasm interfaces
--   `greentic-types` - shared structures
--   `greentic-component` - everything component related
--   `greentic-flow` - everything flows related
--   `greentic-pack` - everything pack related
--   `greentic-operator` - executing bundles with packs
--   `greentic-dev` - developer tools
--   `greentic-mcp` - everything mcp related
--   `greentic-messaging-providers` - Teams, Slack, Webex, etc.
--   `greentic-events-providers` - Webhook, timer, SMS, email, etc.
--   Extension repos like oAuth, State, Session, Telemetry, etc.
--   `component-*` - open source components
+This comparison is intended as a high-level product positioning view, not a protocol shootout.
 
-------------------------------------------------------------------------
+| Capability | Greentic | Microsoft agent stack | OpenAI agent stack | Google agent stack | Typical workflow / agent tools |
+|---|---|---|---|---|---|
+| Deterministic execution first | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ |
+| Agentic capabilities | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Multi-tenant orientation | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ |
+| Multi-language interaction | ✅ | ✅ | ✅ | ✅ | ⚠️ |
+| Compliance and audit posture | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ |
+| Public and private cloud patterns | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| Lightweight runtime artifacts | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Store | 🚧 | ✅ | ⚠️ | ✅ | ⚠️ |
+| Designer | 🚧 | ✅ | ✅ | ✅ | ⚠️ |
+
+Greentic is not trying to out-demo everyone. It is trying to give enterprises a cleaner foundation for controlled digital work.
+
+---
+
+# Repository structure
+
+- `greentic-interfaces` — shared WASM interfaces
+- `greentic-types` — shared structures and schemas
+- `greentic-component` — component tooling and lifecycle
+- `greentic-flow` — flow tooling and orchestration assets
+- `greentic-pack` — pack creation and validation
+- `greentic-operator` — bundle execution runtime
+- `greentic-dev` — developer-facing tools
+- `greentic-mcp` — MCP-related tooling and runtime patterns
+- `greentic-messaging-providers` — Teams, Slack, Webex, and more
+- `greentic-events-providers` — webhook, timer, SMS, email, and more
+- extension repos for OAuth, state, session, telemetry, and related concerns
+- `component-*` — open source reusable components
+
+---
 
 # Sponsors
 
--   [Greentic AI Ltd](https://greentic.ai) - the company behind Greentic
--   [3Point.ai](https://3point.ai) with 3AIgent powered by Greentic - get AI ROI quickly
--   [DataArt](https://dataart.com) - core contributors and certified technical consultants
--   [Become a sponsor](mailto:sponsor@greentic.ai)
+- [Greentic AI Ltd](https://greentic.ai) — the company behind Greentic
+- [3Point.ai](https://3point.ai) with 3AIgent powered by Greentic — get AI ROI quickly
+- [DataArt](https://dataart.com) — core contributors and certified technical consultants
+- [Become a sponsor](mailto:sponsor@greentic.ai)
 
-------------------------------------------------------------------------
+---
 
 # Contributing
 
-1.  Fork
-2.  Create feature branch
-3.  Add tests
-4.  Run `cargo fmt` & `cargo clippy`
-5.  Open PR
+Greentic is built for people who care about serious production systems, reusable platform design, and controlled AI execution.
 
-Please include:
+## Basic flow
 
--   Design explanation
--   Migration notes (if applicable)
--   Test coverage
+1. Fork the repository
+2. Create a feature branch
+3. Add or update tests
+4. Run formatting and linting
+5. Open a pull request
 
-------------------------------------------------------------------------
+## Please include
 
-# Governance & Versioning
+- design explanation
+- migration notes when applicable
+- test coverage for behavior changes
 
--   Semantic versioning
--   Stable `component@0.6.0` contract
--   Controlled migration paths
--   Explicit deprecations
+Contributions that improve clarity, determinism, security, tooling, and reuse are especially valuable.
 
-------------------------------------------------------------------------
+---
+
+# Governance and versioning
+
+Greentic emphasizes explicit evolution over silent drift.
+
+- semantic versioning
+- stable component contracts
+- controlled migration paths
+- explicit deprecations
+
+The goal is to make upgrades manageable and system behavior understandable over time.
+
+---
 
 # Security
 
+Security is not an afterthought in Greentic. It is a design principle.
+
 Greentic enforces:
 
--   Capability-based execution
--   WASIp2 sandboxing
--   No ambient authority
--   Multi-tenant isolation
+- capability-based execution
+- WASIp2 sandboxing
+- no ambient authority
+- tenant-aware isolation
+- explicit runtime boundaries
 
-Report vulnerabilities responsibly (see SECURITY.md).
+## Why control and observer matter for security
 
-------------------------------------------------------------------------
+Traditional automation often focuses only on whether something can run.
+
+Greentic also focuses on:
+
+- whether it should run
+- under which policy it can run
+- what should be observed when it runs
+- what evidence should exist afterwards
+
+That makes control and observer valuable not only for platform design, but for compliance, governance, and trust.
+
+Control can stop or shape unsafe execution.
+Observer can create the auditability required for regulated or sensitive workflows.
+
+Together, they help move digital workers from experimentation into enterprise-grade operations.
+
+Report vulnerabilities responsibly according to the project security process.
+
+---
 
 # Maintainers
 
 Greentic is maintained by the Greentic core team and contributors.
 
-Community governance roadmap coming soon.
+Community governance will continue to mature as the ecosystem grows.
 
-------------------------------------------------------------------------
+---
 
 # License
 
-See LICENSE for details.
+See `LICENSE` for details.
 
-------------------------------------------------------------------------
+---
 
-# Final Perspective
+# Final perspective
 
-Greentic is not a demo framework.
+Greentic is not a toy workflow builder.
 
-It is deterministic digital worker operating system designed for
-enterprise-scale production systems.
+It is not a prompt wrapper.
 
-If you want AI — without losing control — Greentic is your foundation.
+It is not an uncontrolled agent runtime.
+
+## It is the operating system for digital work.
+
+If you want AI without giving up control, if you want automation without losing auditability, and if you want digital workers that can actually be deployed across serious organizations, Greentic is the foundation.
+
+**Build digital workers. Run them under policy. Scale them with confidence.**
 
 Visit [Greentic.ai](https://greentic.ai)
