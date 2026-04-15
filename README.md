@@ -141,9 +141,11 @@ If a process matters, you should be able to describe how it runs, what it is all
 
 Greentic exists to keep the benefits of AI while preserving the discipline of engineering.
 
----
+------------------------------------------------------------------------
+
 Digital Workers need to interact with humans. That is why Greentic speaks over 50 languages: Hi, Hello, Hola, Bonjour, Hallo, Ciao, Olá, Привет, Здравейте, Γειά, Merhaba, مرحبا, שלום, नमस्ते, হ্যালো, ਸਤ ਸ੍ਰੀ ਅਕਾਲ, નમસ્તે, வணக்கம், నమస్తే, ನಮಸ್ಕಾರ, നമസ്കാരം, ආයුබෝවන්, வணக்கம், สวัสดี, Xin chào, Halo, Hai, Kumusta, 你好, 你好嗎, こんにちは, こんにちは, 안녕하세요, Сәлем, Салом, Салом, Сәләм, Сайн байна уу, မင်္ဂလာပါ, ជំរាបសួរ, ສະບາຍດີ, გამარჯობა, Բարև, Salut, Ahoj, Čau, Cześć, Szia, Bună, Zdravo, Bok, Pozdrav, Hej, Hei, Halló, Dia dhuit, Ola, Sawubona, Jambo.
----
+
+------------------------------------------------------------------------
 
 # High-level features
 
