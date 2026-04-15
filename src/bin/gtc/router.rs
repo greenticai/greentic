@@ -9,8 +9,12 @@ use super::{DEV_BIN, OP_BIN, SETUP_BIN};
 use crate::i18n_support::i18n;
 
 #[cfg(test)]
-const RAW_PASSTHROUGH_GLOBAL_FLAG_SPECS: &[(&str, bool)] =
-    &[("debug-router", false), ("locale", true)];
+const RAW_PASSTHROUGH_GLOBAL_FLAG_SPECS: &[(&str, bool)] = &[
+    ("debug-router", false),
+    ("help", false),
+    ("locale", true),
+    ("version", false),
+];
 
 pub(super) fn passthrough_args() -> Arg {
     Arg::new("args")
