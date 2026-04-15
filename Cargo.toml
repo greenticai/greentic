@@ -8,6 +8,13 @@ license = "MIT"
 repository = "https://github.com/greenticai/greentic"
 homepage = "https://greentic.ai"
 build = "build.rs"
+exclude = [
+  "greentic_readme_assets/**",
+  ".i18n/translator-state.json",
+  ".greentic/**",
+  ".codex/**",
+  "myfirst.gtbundle/**",
+]
 
 [dependencies]
 clap = { version = "4.5", features = ["std"] }
