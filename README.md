@@ -33,7 +33,7 @@ gtc wizard --answers https://github.com/greenticai/greentic-demo/releases/latest
 gtc setup ./helpdesk-itsm-demo-bundle --answers https://github.com/greenticai/greentic-demo/releases/latest/download/helpdesk-itsm-setup-answers.json
 ```
 
-![Greentic Setup Wizard](greentic_readme_assets/setup-wizard.png)
+![Greentic Setup Wizard](greentic_readme_assets/helpdesk-setup.png)
 
 ## 3) Start using your digital worker
 
@@ -68,7 +68,7 @@ gtc start ./cloud-deploy-demo-bundle
 Greentic is designed so the path from local proof-of-value to production deployment is short, explicit, and repeatable.
 
 
-Find more demos at ![greentic-demo](https://github.com/greenticai/greentic-demo)
+Find more demos at [greentic-demo](https://github.com/greenticai/greentic-demo)
 ---
 
 # Soon: create digital workers in seconds
@@ -80,8 +80,7 @@ The goal is simple:
 > describe the business outcome you want, and generate the starting digital worker in seconds.
 
 Embedded demo asset included in this package:
-
-- `greentic_readme_assets/creation-a-digital-coo-in-seconds.mov`
+[![Watch on YouTube](greentic_readme_assets/create-a-digital-coo-in-seconds-cover.jpg)](https://youtu.be/js0yon1OlVU)
 
 ---
 
@@ -366,43 +365,11 @@ cargo install --path . --locked
 gtc install
 ```
 
-Run dependency checks:
-
-```bash
-gtc doctor
-```
-
 ## Install modes
 
 ```bash
 # Public tools only
 gtc install
-
-# Tenant-authorized install (key via env)
-export GREENTIC_ACME_KEY=xxxxxx
-gtc install --tenant acme
-
-# Tenant-authorized install (key via flag)
-gtc install --tenant acme --key xxxxxx
-```
-
-## Tenant key env var format
-
-- `GREENTIC_<TENANT>_KEY`
-- tenant normalization: uppercase, non-alphanumeric as `_`, collapse repeated `_`, trim leading and trailing `_`
-
-## Artifact install locations
-
-- Tools: `$CARGO_HOME/bin` (fallback `~/.cargo/bin`)
-- Components: `~/.greentic/artifacts/components/<name>/...`
-- Packs: `~/.greentic/artifacts/packs/<name>/...`
-- Bundles: `~/.greentic/artifacts/bundles/<name>/...`
-- Windows root: `%USERPROFILE%\\.greentic\\artifacts\\...`
-
-## Exit policy
-
-- If public tools install fails, tenant install is skipped and `gtc` exits with the same non-zero code.
-- Tenant artifacts are installed best-effort per item, but overall exit is non-zero if any tenant artifact fails.
 
 ---
 
@@ -562,17 +529,20 @@ The aim is not to be flashy. It is to be fast enough, small enough, and controll
 
 This comparison is intended as a high-level product positioning view, not a protocol shootout.
 
-| Capability | Greentic | Microsoft agent stack | OpenAI agent stack | Google agent stack | Typical workflow / agent tools |
-|---|---|---|---|---|---|
-| Deterministic execution first | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ |
-| Agentic capabilities | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Multi-tenant orientation | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ |
-| Multi-language interaction | ✅ | ✅ | ✅ | ✅ | ⚠️ |
-| Compliance and audit posture | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ |
-| Public and private cloud patterns | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| Lightweight runtime artifacts | ✅ | ❌ | ❌ | ❌ | ❌ |
-| Store | 🚧 | ✅ | ⚠️ | ✅ | ⚠️ |
-| Designer | 🚧 | ✅ | ✅ | ✅ | ⚠️ |
+Legend: `✅` = strong / first-class, `⚠️` = present but partial or stack-dependent, `❌` = not a core strength, `🚧` = emerging in Greentic.
+
+| Capability | Greentic | Microsoft Foundry agent stack | OpenAI agent stack | Google Vertex AI agent stack | LangGraph / LangChain | CrewAI | AutoGen |
+|---|---|---|---|---|---|---|---|
+| Deterministic execution first | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ⚠️ |
+| Agentic / multi-agent support | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Human-in-the-loop workflow patterns | ✅ | ✅ | ✅ | ⚠️ | ✅ | ✅ | ✅ |
+| Enterprise identity / network controls | ✅ | ✅ | ⚠️ | ✅ | ❌ | ⚠️ | ❌ |
+| Managed runtime / hosted production surface | ✅ | ✅ | ⚠️ | ✅ | ❌ | ⚠️ | ❌ |
+| Built-in tracing / observability | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| Prompt designer | 🚧 | ⚠️ | ✅ | ✅ | ⚠️ | ❌ | ❌ |
+| Store | 🚧 | ✅ | ❌ | ✅ | ❌ | ❌ | ❌ |
+| Multi-tenant orientation | ✅ | ⚠️ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ |
+| Lightweight runtime artifacts | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 Greentic is not trying to out-demo everyone. It is trying to give enterprises a cleaner foundation for controlled digital work.
 
