@@ -17,7 +17,7 @@ Greentic is the operating system for digital workers: deterministic, governed, m
 
 This is the kind of result Greentic is built for: a real digital worker that can receive requests, guide a user, create tickets, check status, escalate urgent issues, and operate consistently across channels.
 
-![IT Helpdesk Digital Worker](greentic_readme_assets/setup-wizard.png)
+![IT Helpdesk Digital Worker](greentic_readme_assets/helpdesk-webchat.png)
 
 After installing Greentic, you only need **three steps** to get a working digital worker running.
 
@@ -33,7 +33,7 @@ gtc wizard --answers https://github.com/greenticai/greentic-demo/releases/latest
 gtc setup ./helpdesk-itsm-demo-bundle --answers https://github.com/greenticai/greentic-demo/releases/latest/download/helpdesk-itsm-setup-answers.json
 ```
 
-![Greentic Setup Wizard](greentic_readme_assets/helpdesk-webchat.png)
+![Greentic Setup Wizard](greentic_readme_assets/helpdesk-setup.png)
 
 ## 3) Start using your digital worker
 
