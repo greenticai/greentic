@@ -1,0 +1,75 @@
+name: Sync README to org profiles
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "README.md"
+      - "greentic_readme_assets/**"
+
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - { org: greenticai, repo: .github }
+          - { org: greentic-biz, repo: .github }
+    steps:
+      - name: Checkout greentic (source)
+        uses: actions/checkout@v4
+
+      - name: Mint GitHub App token (${{ matrix.target.org }})
+        id: app-token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ secrets.GREENTIC_CI_APP_ID }}
+          private-key: ${{ secrets.GREENTIC_CI_APP_PRIVATE_KEY }}
+          owner: ${{ matrix.target.org }}
+          repositories: ${{ matrix.target.repo }}
+
+      - name: Prepare profile README
+        run: |
+          cp README.md profile-readme.md
+
+          # Rewrite relative image/asset paths to absolute raw.githubusercontent URLs
+          sed -i 's|(greentic_readme_assets/|(https://raw.githubusercontent.com/greenticai/greentic/main/greentic_readme_assets/|g' profile-readme.md
+
+          # Prepend auto-generated banner
+          {
+            echo "<!-- AUTO-GENERATED from greenticai/greentic@${GITHUB_SHA::7} — do not edit directly -->"
+            echo ""
+            cat profile-readme.md
+          } > profile-readme-final.md
+
+      - name: Push to ${{ matrix.target.org }}/${{ matrix.target.repo }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          TARGET_URL="https://x-access-token:${GH_TOKEN}@github.com/${{ matrix.target.org }}/${{ matrix.target.repo }}.git"
+
+          git clone --depth 1 "${TARGET_URL}" _target
+          mkdir -p _target/profile
+
+          cp profile-readme-final.md _target/profile/README.md
+
+          cd _target
+
+          # Check for actual diff before committing
+          if git diff --quiet -- profile/README.md; then
+            echo "No changes to profile/README.md — skipping."
+            exit 0
+          fi
+
+          git config user.name  "greentic-ci[bot]"
+          git config user.email "greentic-ci[bot]@users.noreply.github.com"
+
+          git add profile/README.md
+          git commit -m "chore: sync profile README from greentic@${GITHUB_SHA::7}"
+          git push
