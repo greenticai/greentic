@@ -184,6 +184,148 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.admin.about").into_owned())
                 .subcommand(
+                    Command::new("access")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("Show the current admin access plan for a deployed bundle.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("certs")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about(
+                            "Materialize admin client certificates locally for a deployed bundle.",
+                        )
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("token")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("Materialize the public admin relay token for a deployed bundle.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("health")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("Probe the deployed public admin relay health endpoint.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        ),
+                )
+                .subcommand(
                     Command::new("tunnel")
                         .help_template(help_template)
                         .subcommand_help_heading(commands_heading)

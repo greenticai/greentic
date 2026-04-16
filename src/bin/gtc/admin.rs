@@ -349,3 +349,68 @@ pub(super) fn run_admin_tunnel(sub_matches: &ArgMatches, _locale: &str) -> i32 {
         }
     }
 }
+
+pub(super) fn run_admin_access(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_admin_deployer_command(sub_matches, "admin-access")
+}
+
+pub(super) fn run_admin_certs(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_admin_deployer_command(sub_matches, "admin-certs")
+}
+
+pub(super) fn run_admin_token(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_admin_deployer_command(sub_matches, "admin-token")
+}
+
+pub(super) fn run_admin_health(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_admin_deployer_command(sub_matches, "admin-health")
+}
+
+fn run_admin_deployer_command(sub_matches: &ArgMatches, deployer_subcommand: &str) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!("missing bundle ref");
+        return 2;
+    };
+    let target = sub_matches
+        .get_one::<String>("target")
+        .map(String::as_str)
+        .unwrap_or("aws");
+    let output = sub_matches
+        .get_one::<String>("output")
+        .map(String::as_str)
+        .unwrap_or("text");
+
+    let bundle_dir = match resolve_local_mutable_bundle_dir(bundle_ref) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+
+    let status = ProcessCommand::new(DEPLOYER_BIN)
+        .args([
+            target,
+            deployer_subcommand,
+            "--bundle-dir",
+            &bundle_dir.display().to_string(),
+            "--output",
+            output,
+        ])
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
+
+    match status {
+        Ok(status) if status.success() => 0,
+        Ok(status) => {
+            eprintln!("{deployer_subcommand} exited with status {status}");
+            1
+        }
+        Err(err) => {
+            eprintln!("failed to start greentic-deployer {target} {deployer_subcommand}: {err}");
+            1
+        }
+    }
+}

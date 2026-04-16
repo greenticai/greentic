@@ -5,7 +5,8 @@ use std::io::{self, Write};
 use clap::ArgMatches;
 
 use crate::admin::{
-    load_admin_registry, remove_admin_registry_entry, run_admin_tunnel, save_admin_registry,
+    load_admin_registry, remove_admin_registry_entry, run_admin_access, run_admin_certs,
+    run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry,
     upsert_admin_registry_entry,
 };
 use crate::cli::build_cli;
@@ -54,12 +55,13 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
         Some(("remove-admin", sub_matches)) => run_remove_admin(sub_matches, &locale),
         Some(("admin", sub_matches)) => match sub_matches.subcommand() {
+            Some(("access", access_matches)) => run_admin_access(access_matches, &locale),
+            Some(("certs", cert_matches)) => run_admin_certs(cert_matches, &locale),
+            Some(("token", token_matches)) => run_admin_token(token_matches, &locale),
+            Some(("health", health_matches)) => run_admin_health(health_matches, &locale),
             Some(("tunnel", tunnel_matches)) => run_admin_tunnel(tunnel_matches, &locale),
             _ => {
-                eprintln!(
-                    "{}",
-                    crate::i18n_support::t(&locale, "gtc.admin.usage.tunnel")
-                );
+                eprintln!("usage: gtc admin <access|certs|token|health|tunnel> ...");
                 2
             }
         },

@@ -25,7 +25,8 @@ use std::path::Path;
 #[allow(unused_imports)]
 use admin::{
     AdminRegistryDocument, admin_registry_path, ensure_admin_certs_ready,
-    remove_admin_registry_entry, resolve_admin_cert_dir, run_admin_tunnel, save_admin_registry,
+    remove_admin_registry_entry, resolve_admin_cert_dir, run_admin_access, run_admin_certs,
+    run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry,
     upsert_admin_registry_entry,
 };
 #[cfg(test)]
@@ -40,7 +41,7 @@ use commands::run;
 use deploy::resolve_local_mutable_bundle_dir;
 #[cfg(test)]
 #[allow(unused_imports)]
-use deploy::{ChildProcessEnv, StartTarget, default_operator_image_for_target};
+use deploy::{ChildProcessEnv, StartTarget};
 #[cfg(test)]
 #[allow(unused_imports)]
 use deploy::{
