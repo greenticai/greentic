@@ -396,6 +396,13 @@ pub(super) fn run_admin_token(sub_matches: &ArgMatches, _locale: &str) -> i32 {
 }
 
 pub(super) fn run_admin_health(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    let target = sub_matches
+        .get_one::<String>("target")
+        .map(String::as_str)
+        .unwrap_or("aws");
+    if target == "aws" {
+        return run_remote_admin_request(sub_matches, reqwest::Method::GET, "/health", None);
+    }
     run_admin_deployer_command(sub_matches, "admin-health")
 }
 
