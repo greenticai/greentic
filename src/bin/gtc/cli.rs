@@ -323,6 +323,297 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .value_parser(["text", "json", "yaml"])
                                 .help_heading(options_heading)
                                 .help("Render format."),
+                        )
+                        .arg(
+                            Arg::new("local-port")
+                                .long("local-port")
+                                .value_name("PORT")
+                                .num_args(1)
+                                .default_value("8443")
+                                .help_heading(options_heading)
+                                .help("Local admin tunnel port for AWS."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("status")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("Fetch the remote admin runtime status for a deployed bundle.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        )
+                        .arg(
+                            Arg::new("local-port")
+                                .long("local-port")
+                                .value_name("PORT")
+                                .num_args(1)
+                                .default_value("8443")
+                                .help_heading(options_heading)
+                                .help("Local admin tunnel port for AWS."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("list")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("List bundles visible through the remote admin API.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        )
+                        .arg(
+                            Arg::new("local-port")
+                                .long("local-port")
+                                .value_name("PORT")
+                                .num_args(1)
+                                .default_value("8443")
+                                .help_heading(options_heading)
+                                .help("Local admin tunnel port for AWS."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("admins")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("List admin client CNs from the remote admin API.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        )
+                        .arg(
+                            Arg::new("local-port")
+                                .long("local-port")
+                                .value_name("PORT")
+                                .num_args(1)
+                                .default_value("8443")
+                                .help_heading(options_heading)
+                                .help("Local admin tunnel port for AWS."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("stop")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("Request a remote runtime stop through the admin API.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        )
+                        .arg(
+                            Arg::new("local-port")
+                                .long("local-port")
+                                .value_name("PORT")
+                                .num_args(1)
+                                .default_value("8443")
+                                .help_heading(options_heading)
+                                .help("Local admin tunnel port for AWS."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("add-client")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("Add an allowed admin client CN through the remote admin API.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("cn")
+                                .long("cn")
+                                .value_name("CLIENT_CN")
+                                .required(true)
+                                .num_args(1)
+                                .help_heading(options_heading)
+                                .help("Client common name to allow."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        )
+                        .arg(
+                            Arg::new("local-port")
+                                .long("local-port")
+                                .value_name("PORT")
+                                .num_args(1)
+                                .default_value("8443")
+                                .help_heading(options_heading)
+                                .help("Local admin tunnel port for AWS."),
+                        ),
+                )
+                .subcommand(
+                    Command::new("remove-client")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("Remove an allowed admin client CN through the remote admin API.")
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path or reference."),
+                        )
+                        .arg(
+                            Arg::new("cn")
+                                .long("cn")
+                                .value_name("CLIENT_CN")
+                                .required(true)
+                                .num_args(1)
+                                .help_heading(options_heading)
+                                .help("Client common name to remove."),
+                        )
+                        .arg(
+                            Arg::new("target")
+                                .long("target")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .default_value("aws")
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Deployment target provider."),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("FORMAT")
+                                .num_args(1)
+                                .default_value("text")
+                                .value_parser(["text", "json", "yaml"])
+                                .help_heading(options_heading)
+                                .help("Render format."),
+                        )
+                        .arg(
+                            Arg::new("local-port")
+                                .long("local-port")
+                                .value_name("PORT")
+                                .num_args(1)
+                                .default_value("8443")
+                                .help_heading(options_heading)
+                                .help("Local admin tunnel port for AWS."),
                         ),
                 )
                 .subcommand(

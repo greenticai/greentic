@@ -1228,7 +1228,7 @@ fn admin_tunnel_rejects_non_aws_target() {
 #[test]
 fn admin_access_runs_deployer_for_gcp_bundle() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _path_guard = temp_path_with_binary("greentic-deployer");
+    let _deployer_guard = fake_deployer_contract(None);
     let bundle = tempdir().expect("tempdir");
 
     let cli = build_cli("en");
@@ -1256,7 +1256,7 @@ fn admin_access_runs_deployer_for_gcp_bundle() {
 #[test]
 fn admin_token_runs_deployer_for_azure_bundle() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _path_guard = temp_path_with_binary("greentic-deployer");
+    let _deployer_guard = fake_deployer_contract(None);
     let bundle = tempdir().expect("tempdir");
 
     let cli = build_cli("en");
@@ -1282,7 +1282,7 @@ fn admin_token_runs_deployer_for_azure_bundle() {
 #[test]
 fn admin_health_runs_deployer_for_gcp_bundle() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _path_guard = temp_path_with_binary("greentic-deployer");
+    let _deployer_guard = fake_deployer_contract(None);
     let bundle = tempdir().expect("tempdir");
 
     let cli = build_cli("en");
@@ -1322,7 +1322,7 @@ fn admin_tunnel_errors_when_bundle_dir_is_missing() {
 #[test]
 fn admin_tunnel_runs_deployer_for_local_bundle() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _path_guard = temp_path_with_binary("greentic-deployer");
+    let _deployer_guard = fake_deployer_contract(None);
     let bundle = tempdir().expect("tempdir");
 
     let cli = build_cli("en");
