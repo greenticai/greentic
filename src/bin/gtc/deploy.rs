@@ -22,9 +22,6 @@ pub(super) use cloud_deploy::{
     resolve_deploy_app_pack_path, resolve_target_provider_pack, validate_cloud_deploy_inputs,
     write_single_vm_spec,
 };
-#[cfg(test)]
-#[allow(unused_imports)]
-pub(super) use cloud_deploy::{default_operator_image_for_target, default_target_variable_for_gtc};
 #[allow(unused_imports)]
 pub(super) use gtc::start_stop_parsing::{parse_start_request, parse_stop_request};
 #[allow(unused_imports)]

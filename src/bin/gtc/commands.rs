@@ -5,7 +5,9 @@ use std::io::{self, Write};
 use clap::ArgMatches;
 
 use crate::admin::{
-    load_admin_registry, remove_admin_registry_entry, run_admin_tunnel, save_admin_registry,
+    load_admin_registry, remove_admin_registry_entry, run_admin_access, run_admin_add_client,
+    run_admin_certs, run_admin_clients, run_admin_health, run_admin_list, run_admin_remove_client,
+    run_admin_status, run_admin_stop, run_admin_token, run_admin_tunnel, save_admin_registry,
     upsert_admin_registry_entry,
 };
 use crate::cli::build_cli;
@@ -54,11 +56,22 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
         Some(("remove-admin", sub_matches)) => run_remove_admin(sub_matches, &locale),
         Some(("admin", sub_matches)) => match sub_matches.subcommand() {
+            Some(("access", access_matches)) => run_admin_access(access_matches, &locale),
+            Some(("certs", cert_matches)) => run_admin_certs(cert_matches, &locale),
+            Some(("token", token_matches)) => run_admin_token(token_matches, &locale),
+            Some(("health", health_matches)) => run_admin_health(health_matches, &locale),
+            Some(("status", status_matches)) => run_admin_status(status_matches, &locale),
+            Some(("list", list_matches)) => run_admin_list(list_matches, &locale),
+            Some(("admins", admins_matches)) => run_admin_clients(admins_matches, &locale),
+            Some(("stop", stop_matches)) => run_admin_stop(stop_matches, &locale),
+            Some(("add-client", add_matches)) => run_admin_add_client(add_matches, &locale),
+            Some(("remove-client", remove_matches)) => {
+                run_admin_remove_client(remove_matches, &locale)
+            }
             Some(("tunnel", tunnel_matches)) => run_admin_tunnel(tunnel_matches, &locale),
             _ => {
                 eprintln!(
-                    "{}",
-                    crate::i18n_support::t(&locale, "gtc.admin.usage.tunnel")
+                    "usage: gtc admin <access|certs|token|health|status|list|admins|stop|add-client|remove-client|tunnel> ..."
                 );
                 2
             }
