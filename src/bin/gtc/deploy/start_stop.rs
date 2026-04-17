@@ -38,7 +38,7 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     debug: bool,
     locale: &str,
 ) -> i32 {
-    let cli_options = match parse_start_cli_options(&tail) {
+    let cli_options = match parse_start_cli_options(tail) {
         Ok(value) => value,
         Err(err) => {
             eprintln!(

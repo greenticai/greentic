@@ -543,7 +543,7 @@ mod tests {
         load_extension_setup_handoff, load_extension_start_handoff, load_registry,
         resolve_descriptor_path, resolve_descriptor_working_directory, write_launcher_handoff,
     };
-    use clap::{Arg, Command};
+    use clap::{Arg, ArgAction, Command};
     use std::fs;
 
     #[test]
@@ -564,7 +564,12 @@ mod tests {
     #[test]
     fn collect_extension_ids_splits_commas_and_deduplicates() {
         let matches = Command::new("wizard")
-            .arg(Arg::new("extensions").long("extensions").num_args(1..))
+            .arg(
+                Arg::new("extensions")
+                    .long("extensions")
+                    .action(ArgAction::Append)
+                    .num_args(1..),
+            )
             .try_get_matches_from([
                 "wizard",
                 "--extensions",

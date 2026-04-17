@@ -761,6 +761,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     Arg::new("extensions")
                         .long("extensions")
                         .value_name("ID[,ID...]")
+                        .action(ArgAction::Append)
                         .num_args(1..)
                         .help_heading(options_heading)
                         .help(
