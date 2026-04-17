@@ -12,6 +12,7 @@ use crate::admin::{
 };
 use crate::cli::build_cli;
 use crate::deploy::{resolve_local_mutable_bundle_dir, run_start, run_stop};
+use crate::extensions::{run_extension_setup, run_extension_start, run_extension_wizard};
 use crate::i18n_support::i18n;
 use crate::install::{run_install, run_update};
 use crate::process::{passthrough, run_doctor};
@@ -76,10 +77,30 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 2
             }
         },
-        Some(("start", sub_matches)) => run_start(sub_matches, debug, &locale),
+        Some(("start", sub_matches)) => {
+            if sub_matches
+                .get_one::<String>("extension-start-handoff")
+                .is_some()
+            {
+                let tail = collect_tail(sub_matches);
+                run_extension_start(sub_matches, &tail, debug, &locale)
+            } else {
+                run_start(sub_matches, debug, &locale)
+            }
+        }
         Some(("stop", sub_matches)) => run_stop(sub_matches, debug, &locale),
         Some((name @ ("dev" | "op" | "wizard" | "setup"), sub_matches)) => {
             let tail = collect_tail(sub_matches);
+            if name == "wizard" && sub_matches.get_many::<String>("extensions").is_some() {
+                return run_extension_wizard(sub_matches, &tail, debug, &locale);
+            }
+            if name == "setup"
+                && sub_matches
+                    .get_one::<String>("extension-setup-handoff")
+                    .is_some()
+            {
+                return run_extension_setup(sub_matches, &tail, debug, &locale);
+            }
             let (binary, args) = route_passthrough_subcommand(name, &tail, &locale).expect("route");
             passthrough(binary, &args, debug, &locale)
         }

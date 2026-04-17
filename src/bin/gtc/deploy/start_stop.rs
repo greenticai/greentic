@@ -29,6 +29,15 @@ pub(crate) fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> 
         return 2;
     };
     let tail = collect_tail(sub_matches);
+    run_start_with_bundle_ref_and_tail(bundle_ref, &tail, debug, locale)
+}
+
+pub(crate) fn run_start_with_bundle_ref_and_tail(
+    bundle_ref: &str,
+    tail: &[String],
+    debug: bool,
+    locale: &str,
+) -> i32 {
     let cli_options = match parse_start_cli_options(&tail) {
         Ok(value) => value,
         Err(err) => {

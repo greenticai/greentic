@@ -680,13 +680,23 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .arg(
                     Arg::new("bundle-ref")
                         .value_name("BUNDLE_REF")
-                        .required(true)
+                        .required_unless_present("extension-start-handoff")
                         .help_heading(arguments_heading)
                         .help(t_or(
                             locale,
                             "gtc.arg.bundle_ref.help",
                             "Bundle path/ref: local path, file://, oci://, repo://, store://",
                         )),
+                )
+                .arg(
+                    Arg::new("extension-start-handoff")
+                        .long("extension-start-handoff")
+                        .value_name("PATH")
+                        .num_args(1)
+                        .help_heading(options_heading)
+                        .help(
+                            "Path to a normalized extension start handoff JSON document.",
+                        ),
                 )
                 .arg(
                     Arg::new("deploy-bundle-source")
@@ -747,6 +757,36 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_help_flag(true)
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.wizard.about").into_owned())
+                .arg(
+                    Arg::new("extensions")
+                        .long("extensions")
+                        .value_name("ID[,ID...]")
+                        .num_args(1..)
+                        .help_heading(options_heading)
+                        .help(
+                            "Extension ids to launch through the shared extension wizard mechanism.",
+                        ),
+                )
+                .arg(
+                    Arg::new("extension-registry")
+                        .long("extension-registry")
+                        .value_name("PATH")
+                        .num_args(1)
+                        .help_heading(options_heading)
+                        .help(
+                            "Path to an extension registry JSON file used to resolve --extensions.",
+                        ),
+                )
+                .arg(
+                    Arg::new("emit-extension-handoff")
+                        .long("emit-extension-handoff")
+                        .value_name("PATH")
+                        .num_args(1)
+                        .help_heading(options_heading)
+                        .help(
+                            "Write a normalized multi-extension launcher handoff JSON document.",
+                        ),
+                )
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -756,6 +796,16 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_help_flag(true)
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.setup.about").into_owned())
+                .arg(
+                    Arg::new("extension-setup-handoff")
+                        .long("extension-setup-handoff")
+                        .value_name("PATH")
+                        .num_args(1)
+                        .help_heading(options_heading)
+                        .help(
+                            "Path to a normalized extension setup handoff JSON document.",
+                        ),
+                )
                 .arg(cmd_args),
         )
         .subcommand(

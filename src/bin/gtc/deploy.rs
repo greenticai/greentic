@@ -26,7 +26,8 @@ pub(super) use cloud_deploy::{
 pub(super) use gtc::start_stop_parsing::{parse_start_request, parse_stop_request};
 #[allow(unused_imports)]
 pub(super) use start_stop::{
-    parse_start_cli_options, parse_stop_cli_options, run_start, run_stop, select_start_target,
+    parse_start_cli_options, parse_stop_cli_options, run_start, run_start_with_bundle_ref_and_tail,
+    run_stop, select_start_target,
 };
 
 #[derive(Debug)]
