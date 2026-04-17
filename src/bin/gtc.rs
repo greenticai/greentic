@@ -8,6 +8,8 @@ mod cli;
 mod commands;
 #[path = "gtc/deploy.rs"]
 mod deploy;
+#[path = "gtc/extensions.rs"]
+mod extensions;
 #[path = "gtc/i18n.rs"]
 mod i18n_support;
 #[path = "gtc/install.rs"]
