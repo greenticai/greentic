@@ -1,7 +1,11 @@
 name: Perf (lightweight)
+# Moved off pull_request onto a nightly schedule. See plans/binary-bifurcation.md
+# Phase A (heavy-job sweep). Manual runs remain via workflow_dispatch.
 
 on:
-  pull_request:
+  schedule:
+    - cron: "34 4 * * *"
+  workflow_dispatch:
   push:
     branches: [main]
 
