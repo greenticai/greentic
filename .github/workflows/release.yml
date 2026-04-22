@@ -269,3 +269,13 @@ jobs:
             dist/**/gtc-*.tgz
             dist/**/gtc-*.zip
             dist/release-checksums/gtc-${{ needs.metadata.outputs.version }}-checksums.txt
+
+  publish_crates:
+    name: Publish to crates.io
+    needs: [github_release, provenance]
+    permissions:
+      contents: read
+    uses: greenticai/.github/.github/workflows/crates-publish.yml@main
+    with:
+      crates: "gtc"
+    secrets: inherit
