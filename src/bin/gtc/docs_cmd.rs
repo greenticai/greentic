@@ -107,6 +107,11 @@ mod tests {
         let resolved = resolve_sync_script_path().expect("script path");
         env::set_current_dir(old).expect("restore cwd");
 
-        assert_eq!(resolved, script);
+        // macOS tempdirs live under /var which is a symlink to /private/var;
+        // `current_dir()` returns the canonical form, so compare canonicalized paths.
+        assert_eq!(
+            resolved.canonicalize().expect("canonicalize resolved"),
+            script.canonicalize().expect("canonicalize script"),
+        );
     }
 }
