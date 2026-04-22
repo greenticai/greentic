@@ -21,7 +21,7 @@ clap = { version = "4.5", features = ["std"] }
 directories = "6"
 flate2 = "1.1"
 greentic-distributor-client = { version = "0.5", features = ["dist-client", "oci-components"] }
-greentic-i18n = "0.5"
+greentic-i18n = "0.4"
 greentic-types = "0.5"
 # `oci-distribution` 0.11.0 is still the newest crates.io release available as
 # of 2026-03-30, so ARCH-017 is tracked as resolved-by-verification rather than
