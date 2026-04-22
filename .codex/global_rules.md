@@ -7,6 +7,8 @@ For THIS REPOSITORY, you must ALWAYS:
 1. Maintain `.codex/repo_overview.md` using the “Repo Overview Maintenance” routine BEFORE starting any new PR and AFTER finishing it.
 2. Run `ci/local_check.sh` at the end of your work and ensure it passes, or explain precisely why it cannot be made to pass as part of this PR.
 3. Prefer using existing Greentic repos/crates (interfaces, types, secrets, oauth, messaging, events, etc.) instead of reinventing types, interfaces, or behaviour locally.
+4. If CLI behavior, schema behavior, common component behavior, or canonical docs change, update the relevant canonical docs in the same PR.
+5. If generated docs drift, re-run the repo-approved sync path when it exists and update any affected prose docs as needed.
 
 Treat these as built-in prerequisites and finalisation steps for ALL work in this repo.
 
@@ -67,8 +69,21 @@ Whenever I ask you to implement a change, feature, refactor, or bugfix (i.e. PR-
   - Or reuse existing Greentic crates. These are always required unless I explicitly say otherwise for a specific task.
 - Never leave `.codex/repo_overview.md` in a partially updated or obviously inconsistent state.
 - Never introduce new core types or interfaces that duplicate what exists in shared Greentic crates without a strong, documented justification.
+- Never treat demo repos, screenshots, or adjacent Greentic repos as canonical without re-checking this repo’s current docs, schemas, and code.
+- When schema and prose disagree, trust schema first and update the prose.
 - If the build/test/CI commands are unclear and you cannot infer them from the repo (README, CI config, `ci/` scripts, etc.), ask a concise question; otherwise, proceed autonomously.
 
 ---
+### Repo Overview Maintenance
 
-The “Repo Overview Maintenance” routine is defined in `.codex/repo_overview_task.md`. Follow it exactly whenever instructed above.
+The `.codex/repo_overview_task.md` file is not currently present in this repo,
+so use this inline routine whenever `.codex/repo_overview.md` must be refreshed:
+
+1. Re-read the current `README.md`, key docs, and the command/code paths most relevant to the work.
+2. Update `.codex/repo_overview.md` so it accurately reflects:
+   - the repo’s actual current purpose
+   - the main components and responsibilities
+   - active TODOs/stubs
+   - known failing or conflicting areas
+   - notes for future work
+3. Call out any currently missing support files or maintenance-process gaps that affect repo hygiene.

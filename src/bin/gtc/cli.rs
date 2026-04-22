@@ -71,6 +71,42 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .about(t(locale, "gtc.cmd.doctor.about").into_owned()),
         )
         .subcommand(
+            Command::new("docs")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about("Documentation and generated-schema maintenance helpers.")
+                .subcommand(
+                    Command::new("sync-schemas")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about("Refresh generated schema docs under docs/04-schemas/.")
+                        .arg(
+                            Arg::new("best-effort")
+                                .long("best-effort")
+                                .action(ArgAction::SetTrue)
+                                .conflicts_with("strict")
+                                .help_heading(options_heading)
+                                .help(
+                                    "Refresh repo-owned outputs and warn when optional companion coverage is unavailable.",
+                                ),
+                        )
+                        .arg(
+                            Arg::new("strict")
+                                .long("strict")
+                                .action(ArgAction::SetTrue)
+                                .conflicts_with("best-effort")
+                                .help_heading(options_heading)
+                                .help(
+                                    "Fail when optional companion coverage cannot be refreshed.",
+                                ),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("install")
                 .help_template(help_template)
                 .subcommand_help_heading(commands_heading)

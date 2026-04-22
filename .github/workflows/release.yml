@@ -56,9 +56,9 @@ jobs:
           path: greentic-deployer
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.94.0
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
-          toolchain: 1.94.0
+          toolchain: 1.95.0
 
       - name: Build and sync deployer pack
         shell: bash
@@ -117,9 +117,9 @@ jobs:
           path: assets/deployer
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.94.0
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
-          toolchain: 1.94.0
+          toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
       - name: Build
@@ -230,9 +230,9 @@ jobs:
           path: assets/deployer
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@1.94.0
+        uses: dtolnay/rust-toolchain@1.95.0
         with:
-          toolchain: 1.94.0
+          toolchain: 1.95.0
 
       - name: Install cargo-sbom
         run: cargo install --locked cargo-sbom

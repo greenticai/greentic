@@ -12,6 +12,7 @@ use crate::admin::{
 };
 use crate::cli::build_cli;
 use crate::deploy::{resolve_local_mutable_bundle_dir, run_start, run_stop};
+use crate::docs_cmd::run_docs;
 use crate::extensions::{run_extension_setup, run_extension_start, run_extension_wizard};
 use crate::i18n_support::i18n;
 use crate::install::{run_install, run_update};
@@ -51,6 +52,7 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
             0
         }
         Some(("doctor", _)) => run_doctor(&locale),
+        Some(("docs", sub_matches)) => run_docs(sub_matches, debug, &locale),
         Some(("install", sub_matches)) => run_install(sub_matches, debug, &locale),
         Some(("update", _)) => run_update(debug, &locale),
         Some(("help", sub_matches)) => run_help(sub_matches, &locale),
