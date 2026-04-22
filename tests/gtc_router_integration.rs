@@ -425,8 +425,8 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
     assert!(cargo_logged.contains("binstall -V"));
     assert!(cargo_logged.contains("search cargo-binstall --limit 1"));
-    assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-dev"));
-    assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-operator"));
+    assert!(cargo_logged.contains("binstall -y greentic-dev"));
+    assert!(cargo_logged.contains("binstall -y greentic-operator"));
 }
 
 #[test]
@@ -587,8 +587,8 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
     let logged = fs::read_to_string(log_file).expect("read dev log");
     assert!(logged.contains("install tools"));
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
-    assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-dev"));
-    assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-operator"));
+    assert!(cargo_logged.contains("binstall -y greentic-dev"));
+    assert!(cargo_logged.contains("binstall -y greentic-operator"));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("secret-token"));
@@ -617,8 +617,8 @@ fn install_skips_tenant_when_public_install_fails() {
     let output = sandbox.run_gtc_capture(["install", "--tenant", "acme"], extra);
     assert_eq!(output.status.code(), Some(23));
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
-    assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-dev"));
-    assert!(cargo_logged.contains("binstall -y --version 0.4 greentic-operator"));
+    assert!(cargo_logged.contains("binstall -y greentic-dev"));
+    assert!(cargo_logged.contains("binstall -y greentic-operator"));
 }
 
 #[test]
@@ -640,12 +640,12 @@ fn update_calls_binstall_force_for_all_companions() {
     );
 
     let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
-    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-dev"));
-    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-operator"));
-    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-bundle"));
-    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-setup"));
-    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-start"));
-    assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-deployer"));
+    assert!(cargo_logged.contains("binstall -y --force greentic-dev"));
+    assert!(cargo_logged.contains("binstall -y --force greentic-operator"));
+    assert!(cargo_logged.contains("binstall -y --force greentic-bundle"));
+    assert!(cargo_logged.contains("binstall -y --force greentic-setup"));
+    assert!(cargo_logged.contains("binstall -y --force greentic-start"));
+    assert!(cargo_logged.contains("binstall -y --force greentic-deployer"));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Updating greentic-dev"));
