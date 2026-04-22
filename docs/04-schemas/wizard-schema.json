@@ -1,0 +1,1626 @@
+{
+  "$comment": "This launcher delegates to greentic-pack or greentic-bundle. The embedded greentic-pack schema already composes greentic-flow and greentic-component so callers can fetch one top-level contract from greentic-dev.",
+  "$defs": {
+    "greentic_bundle_wizard_answers": {
+      "$id": "https://greenticai.github.io/greentic-bundle/schemas/wizard.answers.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "additionalProperties": false,
+          "properties": {
+            "access_rules": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "policy": {
+                    "enum": [
+                      "allow",
+                      "forbid"
+                    ],
+                    "type": "string"
+                  },
+                  "rule_path": {
+                    "description": "Resolved GMAP rule path.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "team": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "tenant": {
+                    "description": "Tenant id.",
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "rule_path",
+                  "policy",
+                  "tenant"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "advanced_setup": {
+              "type": "boolean"
+            },
+            "app_pack_entries": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "detected_kind": {
+                    "description": "Detected source kind.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "description": "Pack display name.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "mapping": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "scope": {
+                        "enum": [
+                          "global",
+                          "tenant",
+                          "tenant_team"
+                        ],
+                        "type": "string"
+                      },
+                      "team": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "tenant": {
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "scope"
+                    ],
+                    "type": "object"
+                  },
+                  "pack_id": {
+                    "description": "Pack id.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "reference": {
+                    "description": "Resolved reference or source path.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "version": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "reference",
+                  "detected_kind",
+                  "pack_id",
+                  "display_name",
+                  "mapping"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "app_packs": {
+              "description": "App-pack references or local paths.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "bundle_id": {
+              "description": "Stable bundle id.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "bundle_name": {
+              "description": "Human-friendly bundle name.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "capabilities": {
+              "description": "Requested bundle capabilities.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "export_intent": {
+              "type": "boolean"
+            },
+            "extension_provider_entries": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "detected_kind": {
+                    "description": "Detected source kind.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "description": "Provider display name.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "group": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "provider_id": {
+                    "description": "Provider id.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "reference": {
+                    "description": "Resolved reference or source path.",
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "source_catalog": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "version": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "reference",
+                  "detected_kind",
+                  "provider_id",
+                  "display_name"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "extension_providers": {
+              "description": "Extension provider references or local paths.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "mode": {
+              "description": "Wizard mode. Defaults to create when omitted unless the CLI supplies --mode.",
+              "enum": [
+                "create",
+                "update",
+                "doctor"
+              ],
+              "type": "string"
+            },
+            "output_dir": {
+              "description": "Workspace output directory.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "remote_catalogs": {
+              "description": "Additional remote catalog references.",
+              "items": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "setup_answers": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "setup_execution_intent": {
+              "type": "boolean"
+            },
+            "setup_specs": {
+              "additionalProperties": true,
+              "type": "object"
+            }
+          },
+          "required": [
+            "bundle_name",
+            "bundle_id"
+          ],
+          "type": "object"
+        },
+        "locale": {
+          "minLength": 1,
+          "type": "string"
+        },
+        "locks": {
+          "additionalProperties": true,
+          "properties": {
+            "execution": {
+              "enum": [
+                "dry_run",
+                "execute"
+              ],
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
+        "schema_id": {
+          "const": "greentic-bundle.wizard.answers",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "type": "string"
+        },
+        "wizard_id": {
+          "const": "greentic-bundle.wizard.run",
+          "type": "string"
+        }
+      },
+      "required": [
+        "wizard_id",
+        "schema_id",
+        "schema_version",
+        "locale",
+        "answers"
+      ],
+      "title": "greentic-bundle wizard answers",
+      "type": "object"
+    },
+    "greentic_pack_wizard_answers": {
+      "$comment": "Nested flow step answers are component-specific. Resolve those contracts by calling `greentic-flow component-schema <file/oci/repo/store>.wasm [--mode default|setup|update|remove]` and pass the resulting schema through to greentic-flow when composing flow wizard answers.",
+      "$defs": {
+        "greentic_component_wizard_add_operation": {
+          "$id": "https://greenticai.github.io/greentic-component/schemas/wizard/add-operation.answers.schema.json",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "answers": {
+              "additionalProperties": false,
+              "properties": {
+                "fields": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "operation_name": {
+                      "type": "string"
+                    },
+                    "project_root": {
+                      "default": ".",
+                      "type": "string"
+                    },
+                    "set_default_operation": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "project_root",
+                    "operation_name"
+                  ],
+                  "type": "object"
+                },
+                "mode": {
+                  "const": "add-operation",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "fields"
+              ],
+              "type": "object"
+            },
+            "locale": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "locks": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "schema_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "1.0.0",
+              "type": "string"
+            },
+            "wizard_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "wizard_id",
+            "schema_id",
+            "schema_version",
+            "answers"
+          ],
+          "title": "greentic-component wizard add-operation answers",
+          "type": "object"
+        },
+        "greentic_component_wizard_any_mode": {
+          "description": "Any greentic-component wizard answer document supported by greentic-pack replay.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/greentic_component_wizard_create"
+            },
+            {
+              "$ref": "#/$defs/greentic_component_wizard_add_operation"
+            },
+            {
+              "$ref": "#/$defs/greentic_component_wizard_update_operation"
+            },
+            {
+              "$ref": "#/$defs/greentic_component_wizard_build_test"
+            },
+            {
+              "$ref": "#/$defs/greentic_component_wizard_doctor"
+            }
+          ]
+        },
+        "greentic_component_wizard_build_test": {
+          "$id": "https://greenticai.github.io/greentic-component/schemas/wizard/build-test.answers.schema.json",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "answers": {
+              "additionalProperties": false,
+              "properties": {
+                "fields": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "full_tests": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "project_root": {
+                      "default": ".",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "project_root"
+                  ],
+                  "type": "object"
+                },
+                "mode": {
+                  "const": "build-test",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "fields"
+              ],
+              "type": "object"
+            },
+            "locale": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "locks": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "schema_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "1.0.0",
+              "type": "string"
+            },
+            "wizard_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "wizard_id",
+            "schema_id",
+            "schema_version",
+            "answers"
+          ],
+          "title": "greentic-component wizard build-test answers",
+          "type": "object"
+        },
+        "greentic_component_wizard_create": {
+          "$id": "https://greenticai.github.io/greentic-component/schemas/wizard/create.answers.schema.json",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "answers": {
+              "additionalProperties": false,
+              "properties": {
+                "fields": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "abi_version": {
+                      "default": "0.6.0",
+                      "type": "string"
+                    },
+                    "advanced_setup": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "component_name": {
+                      "default": "component",
+                      "type": "string"
+                    },
+                    "config_fields": {
+                      "default": "",
+                      "type": "string"
+                    },
+                    "events_inbound": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "events_outbound": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "filesystem_mode": {
+                      "default": "none",
+                      "enum": [
+                        "none",
+                        "read_only",
+                        "sandbox"
+                      ],
+                      "type": "string"
+                    },
+                    "filesystem_mounts": {
+                      "default": "",
+                      "type": "string"
+                    },
+                    "http_client": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "http_server": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "messaging_inbound": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "messaging_outbound": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "operation_names": {
+                      "default": "handle_message",
+                      "type": "string"
+                    },
+                    "output_dir": {
+                      "default": "./component",
+                      "type": "string"
+                    },
+                    "secret_env": {
+                      "default": "dev",
+                      "type": "string"
+                    },
+                    "secret_format": {
+                      "default": "text",
+                      "enum": [
+                        "bytes",
+                        "text",
+                        "json"
+                      ],
+                      "type": "string"
+                    },
+                    "secret_keys": {
+                      "default": "",
+                      "type": "string"
+                    },
+                    "secret_tenant": {
+                      "default": "default",
+                      "type": "string"
+                    },
+                    "secrets_enabled": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "state_delete": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "state_read": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "state_write": {
+                      "default": false,
+                      "type": "boolean"
+                    },
+                    "telemetry_attributes": {
+                      "default": "",
+                      "type": "string"
+                    },
+                    "telemetry_scope": {
+                      "default": "node",
+                      "enum": [
+                        "tenant",
+                        "pack",
+                        "node"
+                      ],
+                      "type": "string"
+                    },
+                    "telemetry_span_prefix": {
+                      "default": "",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "component_name",
+                    "output_dir",
+                    "advanced_setup",
+                    "abi_version",
+                    "operation_names",
+                    "filesystem_mode",
+                    "telemetry_scope"
+                  ],
+                  "type": "object"
+                },
+                "mode": {
+                  "const": "create",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "fields"
+              ],
+              "type": "object"
+            },
+            "locale": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "locks": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "schema_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "1.0.0",
+              "type": "string"
+            },
+            "wizard_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "wizard_id",
+            "schema_id",
+            "schema_version",
+            "answers"
+          ],
+          "title": "greentic-component wizard create answers",
+          "type": "object"
+        },
+        "greentic_component_wizard_doctor": {
+          "$id": "https://greenticai.github.io/greentic-component/schemas/wizard/doctor.answers.schema.json",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "answers": {
+              "additionalProperties": false,
+              "properties": {
+                "fields": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "project_root": {
+                      "default": ".",
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "project_root"
+                  ],
+                  "type": "object"
+                },
+                "mode": {
+                  "const": "doctor",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "fields"
+              ],
+              "type": "object"
+            },
+            "locale": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "locks": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "schema_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "1.0.0",
+              "type": "string"
+            },
+            "wizard_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "wizard_id",
+            "schema_id",
+            "schema_version",
+            "answers"
+          ],
+          "title": "greentic-component wizard doctor answers",
+          "type": "object"
+        },
+        "greentic_component_wizard_update_operation": {
+          "$id": "https://greenticai.github.io/greentic-component/schemas/wizard/update-operation.answers.schema.json",
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "answers": {
+              "additionalProperties": false,
+              "properties": {
+                "fields": {
+                  "additionalProperties": false,
+                  "properties": {
+                    "new_operation_name": {
+                      "type": "string"
+                    },
+                    "operation_name": {
+                      "type": "string"
+                    },
+                    "project_root": {
+                      "default": ".",
+                      "type": "string"
+                    },
+                    "set_default_operation": {
+                      "default": false,
+                      "type": "boolean"
+                    }
+                  },
+                  "required": [
+                    "project_root",
+                    "operation_name"
+                  ],
+                  "type": "object"
+                },
+                "mode": {
+                  "const": "update-operation",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mode",
+                "fields"
+              ],
+              "type": "object"
+            },
+            "locale": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "locks": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "schema_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            },
+            "schema_version": {
+              "const": "1.0.0",
+              "type": "string"
+            },
+            "wizard_id": {
+              "const": "greentic-component.wizard.run",
+              "type": "string"
+            }
+          },
+          "required": [
+            "wizard_id",
+            "schema_id",
+            "schema_version",
+            "answers"
+          ],
+          "title": "greentic-component wizard update-operation answers",
+          "type": "object"
+        },
+        "greentic_flow_step_answers": {
+          "$comment": "Resolve per-component step answer schemas via `greentic-flow component-schema <file/oci/repo/store>.wasm [--mode default|setup|update|remove]`.",
+          "additionalProperties": true,
+          "description": "Exact step-answer contract resolution is component-specific. Call `greentic-flow component-schema <file/oci/repo/store>.wasm [--mode default|setup|update|remove]` and pass that schema on to greentic-flow when composing nested add-step/update-step/delete-step answers.",
+          "type": "object"
+        },
+        "greentic_flow_wizard_action": {
+          "oneOf": [
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "add-flow",
+                  "type": "string"
+                },
+                "flow": {
+                  "type": "string"
+                },
+                "flow_id": {
+                  "type": "string"
+                },
+                "flow_type": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "flow",
+                "flow_id",
+                "flow_type"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "edit-flow-summary",
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "flow": {
+                  "type": "string"
+                },
+                "name": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "flow"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "generate-translations",
+                  "type": "string"
+                },
+                "locales": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "action",
+                "locales"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "delete-flow",
+                  "type": "string"
+                },
+                "flow": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "flow"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "add-step",
+                  "type": "string"
+                },
+                "after": {
+                  "type": "string"
+                },
+                "answers": {
+                  "$ref": "#/$defs/greentic_flow_step_answers"
+                },
+                "component": {
+                  "type": "string"
+                },
+                "err_map": {
+                  "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
+                },
+                "flow": {
+                  "type": "string"
+                },
+                "in_map": {
+                  "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
+                },
+                "mode": {
+                  "enum": [
+                    "default",
+                    "setup",
+                    "update",
+                    "remove"
+                  ],
+                  "type": "string"
+                },
+                "operation": {
+                  "type": "string"
+                },
+                "out_map": {
+                  "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
+                },
+                "routing": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "out",
+                        "reply"
+                      ]
+                    },
+                    {
+                      "type": "array"
+                    }
+                  ],
+                  "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
+                },
+                "step_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "flow",
+                "component",
+                "mode"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "update-step",
+                  "type": "string"
+                },
+                "after": {
+                  "type": "string"
+                },
+                "answers": {
+                  "$ref": "#/$defs/greentic_flow_step_answers"
+                },
+                "component": {
+                  "type": "string"
+                },
+                "err_map": {
+                  "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
+                },
+                "flow": {
+                  "type": "string"
+                },
+                "in_map": {
+                  "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
+                },
+                "mode": {
+                  "enum": [
+                    "default",
+                    "setup",
+                    "update",
+                    "remove"
+                  ],
+                  "type": "string"
+                },
+                "operation": {
+                  "type": "string"
+                },
+                "out_map": {
+                  "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
+                },
+                "routing": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "out",
+                        "reply"
+                      ]
+                    },
+                    {
+                      "type": "array"
+                    }
+                  ],
+                  "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
+                },
+                "step_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "flow",
+                "component",
+                "mode",
+                "step_id"
+              ],
+              "type": "object"
+            },
+            {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "const": "delete-step",
+                  "type": "string"
+                },
+                "after": {
+                  "type": "string"
+                },
+                "answers": {
+                  "$ref": "#/$defs/greentic_flow_step_answers"
+                },
+                "component": {
+                  "type": "string"
+                },
+                "err_map": {
+                  "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
+                },
+                "flow": {
+                  "type": "string"
+                },
+                "in_map": {
+                  "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
+                },
+                "mode": {
+                  "enum": [
+                    "default",
+                    "setup",
+                    "update",
+                    "remove"
+                  ],
+                  "type": "string"
+                },
+                "operation": {
+                  "type": "string"
+                },
+                "out_map": {
+                  "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
+                },
+                "routing": {
+                  "anyOf": [
+                    {
+                      "enum": [
+                        "out",
+                        "reply"
+                      ]
+                    },
+                    {
+                      "type": "array"
+                    }
+                  ],
+                  "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
+                },
+                "step_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "action",
+                "flow"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "greentic_flow_wizard_generic_schema": {
+          "additionalProperties": false,
+          "description": "Generic greentic-flow wizard plan schema embedded by greentic-pack. For a concrete flow plan, also fetch greentic-flow's current runtime schema directly with `greentic-flow wizard <pack> --answers <plan.json> --schema <schema.json>`.",
+          "properties": {
+            "actions": {
+              "items": {
+                "$ref": "#/$defs/greentic_flow_wizard_action"
+              },
+              "type": "array"
+            },
+            "schema_id": {
+              "const": "greentic-flow.wizard.plan",
+              "type": "string"
+            },
+            "schema_version": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema_id",
+            "schema_version",
+            "actions"
+          ],
+          "type": "object"
+        },
+        "greentic_flow_wizard_runtime_schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "actions": {
+              "items": {
+                "oneOf": [
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "add-flow"
+                      },
+                      "flow": {
+                        "type": "string"
+                      },
+                      "flow_id": {
+                        "type": "string"
+                      },
+                      "flow_type": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "flow",
+                      "flow_id",
+                      "flow_type"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "edit-flow-summary"
+                      },
+                      "description": {
+                        "type": "string"
+                      },
+                      "flow": {
+                        "type": "string"
+                      },
+                      "name": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "flow"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "generate-translations"
+                      },
+                      "locales": {
+                        "items": {
+                          "type": "string"
+                        },
+                        "type": "array"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "locales"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "delete-flow"
+                      },
+                      "flow": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "flow"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "add-step"
+                      },
+                      "after": {
+                        "type": "string"
+                      },
+                      "answers": {
+                        "description": "Use `greentic-flow component-schema <component> --mode <mode>` to fetch the exact schema for this object.",
+                        "type": "object"
+                      },
+                      "component": {
+                        "type": "string"
+                      },
+                      "err_map": {
+                        "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
+                      },
+                      "flow": {
+                        "type": "string"
+                      },
+                      "in_map": {
+                        "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
+                      },
+                      "mode": {
+                        "enum": [
+                          "default",
+                          "setup",
+                          "update",
+                          "remove"
+                        ]
+                      },
+                      "operation": {
+                        "type": "string"
+                      },
+                      "out_map": {
+                        "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
+                      },
+                      "routing": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "out",
+                              "reply"
+                            ]
+                          },
+                          {
+                            "type": "array"
+                          }
+                        ],
+                        "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
+                      },
+                      "step_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "flow",
+                      "component",
+                      "mode",
+                      "answers"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "update-step"
+                      },
+                      "answers": {
+                        "description": "Use `greentic-flow component-schema <component> --mode <mode>` to fetch the exact schema for this object.",
+                        "type": "object"
+                      },
+                      "component": {
+                        "type": "string"
+                      },
+                      "err_map": {
+                        "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
+                      },
+                      "flow": {
+                        "type": "string"
+                      },
+                      "in_map": {
+                        "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
+                      },
+                      "mode": {
+                        "enum": [
+                          "default",
+                          "setup",
+                          "update",
+                          "remove"
+                        ]
+                      },
+                      "operation": {
+                        "type": "string"
+                      },
+                      "out_map": {
+                        "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
+                      },
+                      "routing": {
+                        "anyOf": [
+                          {
+                            "enum": [
+                              "out",
+                              "reply"
+                            ]
+                          },
+                          {
+                            "type": "array"
+                          }
+                        ],
+                        "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
+                      },
+                      "step_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "flow",
+                      "step_id",
+                      "component",
+                      "mode",
+                      "answers"
+                    ],
+                    "type": "object"
+                  },
+                  {
+                    "additionalProperties": false,
+                    "properties": {
+                      "action": {
+                        "const": "delete-step"
+                      },
+                      "answers": {
+                        "description": "When present, use `greentic-flow component-schema <component> --mode <mode>` to fetch the exact schema for this object.",
+                        "type": "object"
+                      },
+                      "component": {
+                        "type": "string"
+                      },
+                      "flow": {
+                        "type": "string"
+                      },
+                      "mode": {
+                        "enum": [
+                          "default",
+                          "setup",
+                          "update",
+                          "remove"
+                        ]
+                      },
+                      "step_id": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "action",
+                      "flow"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "schema_id": {
+              "const": "greentic-flow.wizard.plan"
+            },
+            "schema_version": {
+              "const": "2.0.0"
+            }
+          },
+          "required": [
+            "schema_id",
+            "schema_version",
+            "actions"
+          ],
+          "schema_id": "greentic-flow.wizard.plan",
+          "schema_version": "2.0.0",
+          "type": "object"
+        }
+      },
+      "$id": "https://greenticai.github.io/greentic-pack/schemas/wizard.answers.schema.json",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "additionalProperties": false,
+      "properties": {
+        "answers": {
+          "additionalProperties": false,
+          "properties": {
+            "asset_staging": {
+              "description": "External files or directories to copy into the generated pack root before delegate/build steps run. Relative sources resolve from the AnswerDocument location; destinations must stay inside pack_dir.",
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "destination": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "file",
+                      "directory"
+                    ],
+                    "type": "string"
+                  },
+                  "overwrite": {
+                    "default": true,
+                    "type": "boolean"
+                  },
+                  "recursive": {
+                    "type": "boolean"
+                  },
+                  "source": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "source",
+                  "destination",
+                  "kind"
+                ],
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "component_wizard_answers": {
+              "$ref": "#/$defs/greentic_component_wizard_any_mode",
+              "description": "Nested greentic-component wizard answers for component-level replay inside greentic-pack."
+            },
+            "create_pack_id": {
+              "type": "string"
+            },
+            "create_pack_scaffold": {
+              "type": "boolean"
+            },
+            "dry_run": {
+              "type": "boolean"
+            },
+            "extension_catalog_ref": {
+              "type": "string"
+            },
+            "extension_edit_answers": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "extension_operation": {
+              "type": "string"
+            },
+            "extension_template_id": {
+              "type": "string"
+            },
+            "extension_template_qa_answers": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "type": "object"
+            },
+            "extension_type_id": {
+              "type": "string"
+            },
+            "flow_wizard_answers": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/greentic_flow_wizard_generic_schema"
+                },
+                {
+                  "$ref": "#/$defs/greentic_flow_wizard_runtime_schema"
+                }
+              ],
+              "description": "Nested greentic-flow wizard answers. The generic plan contract is provided here, and the current greentic-flow runtime schema is embedded under #/$defs/greentic_flow_wizard_runtime_schema."
+            },
+            "mode": {
+              "type": "string"
+            },
+            "pack_dir": {
+              "type": "string"
+            },
+            "run_build": {
+              "type": "boolean"
+            },
+            "run_delegate_component": {
+              "type": "boolean"
+            },
+            "run_delegate_flow": {
+              "type": "boolean"
+            },
+            "run_doctor": {
+              "type": "boolean"
+            },
+            "selected_actions": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "sign": {
+              "type": "boolean"
+            },
+            "sign_key_path": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "pack_dir"
+          ],
+          "type": "object"
+        },
+        "locale": {
+          "type": "string"
+        },
+        "locks": {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        "schema_id": {
+          "const": "greentic-pack.wizard.answers",
+          "type": "string"
+        },
+        "schema_version": {
+          "const": "1.0.0",
+          "type": "string"
+        },
+        "wizard_id": {
+          "const": "greentic-pack.wizard.run",
+          "type": "string"
+        }
+      },
+      "required": [
+        "wizard_id",
+        "schema_id",
+        "schema_version",
+        "answers"
+      ],
+      "title": "greentic-pack wizard answers",
+      "type": "object"
+    }
+  },
+  "$id": "https://greenticai.github.io/greentic-dev/schemas/wizard.answers.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "answers": {
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "selected_action": {
+                "const": "pack"
+              }
+            },
+            "required": [
+              "selected_action",
+              "delegate_answer_document"
+            ]
+          },
+          "then": {
+            "properties": {
+              "delegate_answer_document": {
+                "$ref": "#/$defs/greentic_pack_wizard_answers"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "selected_action": {
+                "const": "bundle"
+              }
+            },
+            "required": [
+              "selected_action",
+              "delegate_answer_document"
+            ]
+          },
+          "then": {
+            "properties": {
+              "delegate_answer_document": {
+                "$ref": "#/$defs/greentic_bundle_wizard_answers"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "delegate_answer_document": {
+          "description": "Optional nested AnswerDocument for non-interactive replay. When present, it must match the selected_action schema embedded under $defs.",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/greentic_pack_wizard_answers"
+            },
+            {
+              "$ref": "#/$defs/greentic_bundle_wizard_answers"
+            }
+          ]
+        },
+        "selected_action": {
+          "description": "Which underlying wizard greentic-dev should delegate to.",
+          "enum": [
+            "pack",
+            "bundle"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "selected_action"
+      ],
+      "type": "object"
+    },
+    "locale": {
+      "minLength": 1,
+      "type": "string"
+    },
+    "locks": {
+      "additionalProperties": true,
+      "type": "object"
+    },
+    "schema_id": {
+      "const": "greentic-dev.launcher.main",
+      "type": "string"
+    },
+    "schema_version": {
+      "const": "1.0.0",
+      "type": "string"
+    },
+    "wizard_id": {
+      "const": "greentic-dev.wizard.launcher.main",
+      "type": "string"
+    }
+  },
+  "required": [
+    "wizard_id",
+    "schema_id",
+    "schema_version",
+    "locale",
+    "answers"
+  ],
+  "title": "greentic-dev launcher wizard answers",
+  "type": "object"
+}
