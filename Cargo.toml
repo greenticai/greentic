@@ -1,8 +1,8 @@
 [package]
 name = "gtc"
-version = "1.0.5"
+version = "1.0.6"
 edition = "2024"
-rust-version = "1.91"
+rust-version = "1.95"
 description = "Greentic - The digital workers operating system"
 license = "MIT"
 repository = "https://github.com/greenticai/greentic"
