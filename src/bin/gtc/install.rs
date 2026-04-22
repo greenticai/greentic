@@ -281,8 +281,6 @@ pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
             "binstall".to_string(),
             "-y".to_string(),
             "--force".to_string(),
-            "--version".to_string(),
-            "0.4".to_string(),
             package.to_string(),
         ];
         let status = run_cargo(&binstall_args, debug, locale);
@@ -348,8 +346,6 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         let binstall_args = vec![
             "binstall".to_string(),
             "-y".to_string(),
-            "--version".to_string(),
-            "0.4".to_string(),
             package.to_string(),
         ];
         let status = run_cargo(&binstall_args, debug, locale);
@@ -2210,12 +2206,12 @@ mod tests {
         let logged = fs::read_to_string(log).expect("read log");
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(logged.contains("install cargo-binstall --locked"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-dev"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-operator"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-bundle"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-setup"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-start"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-deployer"));
+        assert!(logged.contains("binstall -y greentic-dev"));
+        assert!(logged.contains("binstall -y greentic-operator"));
+        assert!(logged.contains("binstall -y greentic-bundle"));
+        assert!(logged.contains("binstall -y greentic-setup"));
+        assert!(logged.contains("binstall -y greentic-start"));
+        assert!(logged.contains("binstall -y greentic-deployer"));
 
         unsafe {
             match original_path {
@@ -2251,12 +2247,12 @@ mod tests {
         assert!(logged.contains("binstall -V"));
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(!logged.contains("install cargo-binstall --locked"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-dev"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-operator"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-bundle"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-setup"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-start"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-deployer"));
+        assert!(logged.contains("binstall -y greentic-dev"));
+        assert!(logged.contains("binstall -y greentic-operator"));
+        assert!(logged.contains("binstall -y greentic-bundle"));
+        assert!(logged.contains("binstall -y greentic-setup"));
+        assert!(logged.contains("binstall -y greentic-start"));
+        assert!(logged.contains("binstall -y greentic-deployer"));
 
         unsafe {
             match original_path {
@@ -2279,7 +2275,7 @@ mod tests {
         write_executable(
             &cargo,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$6\" = \"greentic-operator\" ]; then\n  exit 9\nfi\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$4\" = \"greentic-operator\" ]; then\n  exit 9\nfi\nexit 0\n",
                 cargo_log.display()
             ),
         );
@@ -2301,12 +2297,12 @@ mod tests {
         assert_eq!(run_update(false, "en"), 1);
 
         let cargo_logged = fs::read_to_string(cargo_log).expect("read cargo log");
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-dev"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-operator"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-bundle"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-setup"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-start"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-deployer"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-dev"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-operator"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-bundle"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-setup"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-start"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-deployer"));
 
         let dev_logged = fs::read_to_string(dev_log).expect("read dev log");
         assert!(dev_logged.contains("install tools"));
