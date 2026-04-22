@@ -138,20 +138,34 @@ pub(super) fn resolve_cargo_bin_dir() -> GtcResult<PathBuf> {
 }
 
 pub(super) fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
+    passthrough_in_dir(binary, args, debug, locale, None)
+}
+
+pub(super) fn passthrough_in_dir(
+    binary: &str,
+    args: &[String],
+    debug: bool,
+    locale: &str,
+    cwd: Option<&Path>,
+) -> i32 {
     if debug {
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
     }
 
     let command = resolve_binary_command(binary);
 
-    match ProcessCommand::new(&command)
+    let mut process = ProcessCommand::new(&command);
+    process
         .args(args)
         .env("GREENTIC_LOCALE", locale)
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-    {
+        .stderr(Stdio::inherit());
+    if let Some(cwd) = cwd {
+        process.current_dir(cwd);
+    }
+
+    match process.status() {
         Ok(status) => status.code().unwrap_or(1),
         Err(err) => {
             if err.kind() == std::io::ErrorKind::NotFound {

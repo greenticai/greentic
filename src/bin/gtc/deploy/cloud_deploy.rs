@@ -26,41 +26,11 @@ pub(crate) use provider_packs::{
 };
 pub(crate) use single_vm::write_single_vm_spec;
 
-#[cfg(test)]
-pub(crate) fn default_operator_image_for_target(target: StartTarget) -> Option<String> {
-    match target {
-        StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
-            default_target_variable_for_gtc(
-                target,
-                "en",
-                "GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE",
-            )
-            .ok()
-            .flatten()
-        }
-        StartTarget::SingleVm | StartTarget::Runtime => None,
-    }
-}
-
 pub(crate) fn describe_cloud_target_requirements_for_gtc(
     target: StartTarget,
     locale: &str,
 ) -> GtcResult<CloudTargetRequirementsV1> {
     describe_cloud_target_requirements(target, locale)
-}
-
-#[cfg(test)]
-pub(crate) fn default_target_variable_for_gtc(
-    target: StartTarget,
-    locale: &str,
-    name: &str,
-) -> GtcResult<Option<String>> {
-    let requirements = describe_cloud_target_requirements(target, locale)?;
-    Ok(requirements
-        .variable_requirements
-        .into_iter()
-        .find(|requirement| requirement.name == name)
-        .and_then(|requirement| requirement.default_value))
 }
 
 pub(crate) fn canonical_provider_pack_filename_for_gtc(
@@ -521,15 +491,13 @@ mod tests {
     use super::{
         CloudTargetRequirementsV1, CredentialRequirementV1, VariableRequirementV1,
         append_bundle_registry_args, binary_in_path, cloud_credentials_satisfied,
-        collect_missing_required_variables, default_operator_image_for_target, env_var_present,
-        matches_remote_bundle_ref, validate_bundle_registry_mapping_env,
+        collect_missing_required_variables, env_var_present, matches_remote_bundle_ref,
+        validate_bundle_registry_mapping_env,
     };
     #[cfg(unix)]
     use super::{require_tool_in_path, validate_cloud_deploy_inputs};
     use crate::deploy::StartTarget;
     use crate::tests::env_test_lock;
-    #[cfg(unix)]
-    use crate::tests::fake_deployer_contract;
     use gtc::config::GtcConfig;
     use std::env;
     #[cfg(unix)]
@@ -723,20 +691,6 @@ mod tests {
             env::remove_var("AWS_ACCESS_KEY_ID");
             env::remove_var("AWS_SECRET_ACCESS_KEY");
         }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn default_operator_image_for_target_returns_cloud_defaults_only() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let _deployer = fake_deployer_contract(None);
-        assert!(default_operator_image_for_target(StartTarget::Aws).is_some());
-        assert!(default_operator_image_for_target(StartTarget::Gcp).is_some());
-        assert!(default_operator_image_for_target(StartTarget::Azure).is_some());
-        assert_eq!(
-            default_operator_image_for_target(StartTarget::Runtime),
-            None
-        );
     }
 
     #[test]

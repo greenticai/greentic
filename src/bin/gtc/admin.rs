@@ -9,10 +9,15 @@ use rcgen::{
     BasicConstraints, CertificateParams, CertifiedIssuer, DnType, ExtendedKeyUsagePurpose, IsCa,
     KeyPair, KeyUsagePurpose, SanType,
 };
+use reqwest::blocking::{Client, ClientBuilder};
+use reqwest::{Certificate, Identity};
 use serde::{Deserialize, Serialize};
+use serde_json::{Value as JsonValue, json};
+use serde_yaml_bw as serde_yaml;
 
 use crate::DEPLOYER_BIN;
 use crate::deploy::resolve_local_mutable_bundle_dir;
+use crate::process::resolve_companion_binary;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub(super) struct AdminRegistryDocument {
@@ -25,6 +30,32 @@ pub(super) struct AdminRegistryEntry {
     pub(super) client_cn: String,
     pub(super) public_key: String,
     pub(super) added_at_epoch_s: u64,
+}
+
+#[derive(Debug, Deserialize)]
+struct AdminAccessSummary {
+    admin_public_endpoint: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct MaterializedAdminCertsSummary {
+    ca_cert_path: PathBuf,
+    client_cert_path: PathBuf,
+    client_key_path: PathBuf,
+}
+
+enum AdminAuth {
+    Bearer(String),
+    Mtls {
+        ca_cert_path: PathBuf,
+        client_cert_path: PathBuf,
+        client_key_path: PathBuf,
+    },
+}
+
+struct RemoteAdminContext {
+    base_url: String,
+    auth: AdminAuth,
 }
 
 pub(super) fn admin_registry_path(bundle_dir: &Path) -> PathBuf {
@@ -321,7 +352,9 @@ pub(super) fn run_admin_tunnel(sub_matches: &ArgMatches, _locale: &str) -> i32 {
         }
     };
 
-    let status = ProcessCommand::new(DEPLOYER_BIN)
+    let deployer_bin =
+        resolve_companion_binary(DEPLOYER_BIN).unwrap_or_else(|| PathBuf::from(DEPLOYER_BIN));
+    let status = ProcessCommand::new(&deployer_bin)
         .args([
             "aws",
             "admin-tunnel",
@@ -347,5 +380,385 @@ pub(super) fn run_admin_tunnel(sub_matches: &ArgMatches, _locale: &str) -> i32 {
             eprintln!("failed to start greentic-deployer aws admin tunnel: {err}");
             1
         }
+    }
+}
+
+pub(super) fn run_admin_access(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_admin_deployer_command(sub_matches, "admin-access")
+}
+
+pub(super) fn run_admin_certs(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_admin_deployer_command(sub_matches, "admin-certs")
+}
+
+pub(super) fn run_admin_token(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_admin_deployer_command(sub_matches, "admin-token")
+}
+
+pub(super) fn run_admin_health(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    let target = sub_matches
+        .get_one::<String>("target")
+        .map(String::as_str)
+        .unwrap_or("aws");
+    if target == "aws" {
+        return run_remote_admin_request(sub_matches, reqwest::Method::GET, "/health", None);
+    }
+    run_admin_deployer_command(sub_matches, "admin-health")
+}
+
+pub(super) fn run_admin_status(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_remote_admin_request(sub_matches, reqwest::Method::GET, "/status", None)
+}
+
+pub(super) fn run_admin_list(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_remote_admin_request(sub_matches, reqwest::Method::GET, "/list", None)
+}
+
+pub(super) fn run_admin_clients(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    run_remote_admin_request(sub_matches, reqwest::Method::GET, "/admins", None)
+}
+
+pub(super) fn run_admin_stop(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!("missing bundle ref");
+        return 2;
+    };
+    let bundle_dir = match resolve_local_mutable_bundle_dir(bundle_ref) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let body = json!({ "bundle_path": bundle_dir });
+    run_remote_admin_request(sub_matches, reqwest::Method::POST, "/stop", Some(body))
+}
+
+pub(super) fn run_admin_add_client(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!("missing bundle ref");
+        return 2;
+    };
+    let Some(client_cn) = sub_matches.get_one::<String>("cn") else {
+        eprintln!("missing --cn");
+        return 2;
+    };
+    let bundle_dir = match resolve_local_mutable_bundle_dir(bundle_ref) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let body = json!({
+        "bundle_path": bundle_dir,
+        "client_cn": client_cn,
+    });
+    run_remote_admin_request(
+        sub_matches,
+        reqwest::Method::POST,
+        "/admins/add",
+        Some(body),
+    )
+}
+
+pub(super) fn run_admin_remove_client(sub_matches: &ArgMatches, _locale: &str) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!("missing bundle ref");
+        return 2;
+    };
+    let Some(client_cn) = sub_matches.get_one::<String>("cn") else {
+        eprintln!("missing --cn");
+        return 2;
+    };
+    let bundle_dir = match resolve_local_mutable_bundle_dir(bundle_ref) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let body = json!({
+        "bundle_path": bundle_dir,
+        "client_cn": client_cn,
+    });
+    run_remote_admin_request(
+        sub_matches,
+        reqwest::Method::POST,
+        "/admins/remove",
+        Some(body),
+    )
+}
+
+fn run_admin_deployer_command(sub_matches: &ArgMatches, admin_subcommand: &str) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!("missing bundle ref");
+        return 2;
+    };
+    let target = sub_matches
+        .get_one::<String>("target")
+        .map(String::as_str)
+        .unwrap_or("aws");
+    let output = sub_matches
+        .get_one::<String>("output")
+        .map(String::as_str)
+        .unwrap_or("text");
+
+    let bundle_dir = match resolve_local_mutable_bundle_dir(bundle_ref) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+
+    let deployer_bin =
+        resolve_companion_binary(DEPLOYER_BIN).unwrap_or_else(|| PathBuf::from(DEPLOYER_BIN));
+    let status = ProcessCommand::new(&deployer_bin)
+        .args([
+            target,
+            admin_subcommand,
+            "--bundle-dir",
+            &bundle_dir.display().to_string(),
+            "--output",
+            output,
+        ])
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status();
+
+    match status {
+        Ok(status) if status.success() => 0,
+        Ok(status) => {
+            eprintln!("{admin_subcommand} exited with status {status}");
+            1
+        }
+        Err(err) => {
+            eprintln!("failed to start greentic-deployer {target} {admin_subcommand}: {err}");
+            1
+        }
+    }
+}
+
+fn capture_admin_deployer_command(
+    bundle_dir: &Path,
+    target: &str,
+    admin_subcommand: &str,
+    output: &str,
+) -> GtcResult<String> {
+    let deployer_bin =
+        resolve_companion_binary(DEPLOYER_BIN).unwrap_or_else(|| PathBuf::from(DEPLOYER_BIN));
+    let output = ProcessCommand::new(&deployer_bin)
+        .args([
+            target,
+            admin_subcommand,
+            "--bundle-dir",
+            &bundle_dir.display().to_string(),
+            "--output",
+            output,
+        ])
+        .output()
+        .map_err(|err| {
+            GtcError::io(format!("failed to execute {}", deployer_bin.display()), err)
+        })?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if stderr.is_empty() {
+            return Err(GtcError::message(format!(
+                "{admin_subcommand} exited with status {}",
+                output.status.code().unwrap_or(1)
+            )));
+        }
+        return Err(GtcError::message(stderr));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|err| GtcError::message(format!("invalid UTF-8 from greentic-deployer: {err}")))
+}
+
+fn resolve_remote_admin_context(
+    bundle_dir: &Path,
+    target: &str,
+    local_port: u16,
+) -> GtcResult<RemoteAdminContext> {
+    if target == "aws" {
+        let certs_raw = capture_admin_deployer_command(bundle_dir, target, "admin-certs", "json")?;
+        let certs: MaterializedAdminCertsSummary = serde_json::from_str(&certs_raw)
+            .map_err(|err| GtcError::message(format!("failed to parse admin certs JSON: {err}")))?;
+        return Ok(RemoteAdminContext {
+            base_url: format!("https://127.0.0.1:{local_port}/admin/v1"),
+            auth: AdminAuth::Mtls {
+                ca_cert_path: certs.ca_cert_path,
+                client_cert_path: certs.client_cert_path,
+                client_key_path: certs.client_key_path,
+            },
+        });
+    }
+
+    let access_raw = capture_admin_deployer_command(bundle_dir, target, "admin-access", "json")?;
+    let access: AdminAccessSummary = serde_json::from_str(&access_raw)
+        .map_err(|err| GtcError::message(format!("failed to parse admin access JSON: {err}")))?;
+    let token = capture_admin_deployer_command(bundle_dir, target, "admin-token", "text")?;
+    let base_url = access
+        .admin_public_endpoint
+        .ok_or_else(|| GtcError::message("missing admin_public_endpoint".to_string()))?;
+    Ok(RemoteAdminContext {
+        base_url,
+        auth: AdminAuth::Bearer(token.trim().to_string()),
+    })
+}
+
+fn build_remote_admin_client(context: &RemoteAdminContext) -> GtcResult<Client> {
+    match &context.auth {
+        AdminAuth::Bearer(_) => ClientBuilder::new()
+            .build()
+            .map_err(|err| GtcError::message(format!("failed to build admin client: {err}"))),
+        AdminAuth::Mtls {
+            ca_cert_path,
+            client_cert_path,
+            client_key_path,
+        } => {
+            let ca_pem = fs::read(ca_cert_path).map_err(|err| {
+                GtcError::io(format!("failed to read {}", ca_cert_path.display()), err)
+            })?;
+            let client_cert_pem = fs::read(client_cert_path).map_err(|err| {
+                GtcError::io(
+                    format!("failed to read {}", client_cert_path.display()),
+                    err,
+                )
+            })?;
+            let client_key_pem = fs::read(client_key_path).map_err(|err| {
+                GtcError::io(format!("failed to read {}", client_key_path.display()), err)
+            })?;
+            let mut identity_pem = client_cert_pem;
+            identity_pem.extend_from_slice(&client_key_pem);
+            let ca = Certificate::from_pem(&ca_pem)
+                .map_err(|err| GtcError::message(format!("failed to parse CA cert PEM: {err}")))?;
+            let identity = Identity::from_pem(&identity_pem).map_err(|err| {
+                GtcError::message(format!("failed to parse client identity PEM: {err}"))
+            })?;
+            ClientBuilder::new()
+                .use_rustls_tls()
+                .add_root_certificate(ca)
+                .identity(identity)
+                .build()
+                .map_err(|err| {
+                    GtcError::message(format!("failed to build mTLS admin client: {err}"))
+                })
+        }
+    }
+}
+
+fn run_remote_admin_request(
+    sub_matches: &ArgMatches,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<JsonValue>,
+) -> i32 {
+    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
+        eprintln!("missing bundle ref");
+        return 2;
+    };
+    let target = sub_matches
+        .get_one::<String>("target")
+        .map(String::as_str)
+        .unwrap_or("aws");
+    let output = sub_matches
+        .get_one::<String>("output")
+        .map(String::as_str)
+        .unwrap_or("text");
+    let local_port = sub_matches
+        .get_one::<String>("local-port")
+        .and_then(|value| value.parse::<u16>().ok())
+        .unwrap_or(8443);
+
+    let bundle_dir = match resolve_local_mutable_bundle_dir(bundle_ref) {
+        Ok(path) => path,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+
+    let context = match resolve_remote_admin_context(&bundle_dir, target, local_port) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let client = match build_remote_admin_client(&context) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+
+    let url = format!("{}{}", context.base_url.trim_end_matches('/'), path);
+    let mut request = client.request(method, &url);
+    match &context.auth {
+        AdminAuth::Bearer(token) => {
+            request = request.bearer_auth(token);
+        }
+        AdminAuth::Mtls { .. } => {}
+    }
+    if let Some(body) = body {
+        request = request.json(&body);
+    }
+
+    let response = match request.send() {
+        Ok(value) => value,
+        Err(err) => {
+            if target == "aws" {
+                eprintln!(
+                    "admin request failed: {err}. Ensure `gtc admin tunnel ... --target aws` is running on local port {local_port}."
+                );
+            } else {
+                eprintln!("admin request failed: {err}");
+            }
+            return 1;
+        }
+    };
+    let status = response.status();
+    let body = match response.text() {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("failed to read admin response body: {err}");
+            return 1;
+        }
+    };
+
+    let rendered = render_admin_http_body(&body, output);
+    match rendered {
+        Ok(text) => println!("{text}"),
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    }
+
+    if status.is_success() { 0 } else { 1 }
+}
+
+fn render_admin_http_body(body: &str, output: &str) -> GtcResult<String> {
+    match output {
+        "json" => {
+            let value: JsonValue = serde_json::from_str(body).map_err(|err| {
+                GtcError::message(format!("failed to parse admin JSON response: {err}"))
+            })?;
+            serde_json::to_string_pretty(&value).map_err(|err| {
+                GtcError::message(format!("failed to render admin JSON response: {err}"))
+            })
+        }
+        "yaml" => {
+            let value: JsonValue = serde_json::from_str(body).map_err(|err| {
+                GtcError::message(format!("failed to parse admin JSON response: {err}"))
+            })?;
+            serde_yaml::to_string(&value).map_err(|err| {
+                GtcError::message(format!("failed to render admin YAML response: {err}"))
+            })
+        }
+        _ => Ok(body.to_string()),
     }
 }

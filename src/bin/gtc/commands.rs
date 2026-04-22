@@ -1,14 +1,18 @@
 use std::env;
 use std::fs;
+use std::io::{self, Write};
 
 use clap::ArgMatches;
 
 use crate::admin::{
-    load_admin_registry, remove_admin_registry_entry, run_admin_tunnel, save_admin_registry,
+    load_admin_registry, remove_admin_registry_entry, run_admin_access, run_admin_add_client,
+    run_admin_certs, run_admin_clients, run_admin_health, run_admin_list, run_admin_remove_client,
+    run_admin_status, run_admin_stop, run_admin_token, run_admin_tunnel, save_admin_registry,
     upsert_admin_registry_entry,
 };
 use crate::cli::build_cli;
 use crate::deploy::{resolve_local_mutable_bundle_dir, run_start, run_stop};
+use crate::extensions::{run_extension_setup, run_extension_start, run_extension_wizard};
 use crate::i18n_support::i18n;
 use crate::install::{run_install, run_update};
 use crate::process::{passthrough, run_doctor};
@@ -49,26 +53,95 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         Some(("doctor", _)) => run_doctor(&locale),
         Some(("install", sub_matches)) => run_install(sub_matches, debug, &locale),
         Some(("update", _)) => run_update(debug, &locale),
+        Some(("help", sub_matches)) => run_help(sub_matches, &locale),
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
         Some(("remove-admin", sub_matches)) => run_remove_admin(sub_matches, &locale),
         Some(("admin", sub_matches)) => match sub_matches.subcommand() {
+            Some(("access", access_matches)) => run_admin_access(access_matches, &locale),
+            Some(("certs", cert_matches)) => run_admin_certs(cert_matches, &locale),
+            Some(("token", token_matches)) => run_admin_token(token_matches, &locale),
+            Some(("health", health_matches)) => run_admin_health(health_matches, &locale),
+            Some(("status", status_matches)) => run_admin_status(status_matches, &locale),
+            Some(("list", list_matches)) => run_admin_list(list_matches, &locale),
+            Some(("admins", admins_matches)) => run_admin_clients(admins_matches, &locale),
+            Some(("stop", stop_matches)) => run_admin_stop(stop_matches, &locale),
+            Some(("add-client", add_matches)) => run_admin_add_client(add_matches, &locale),
+            Some(("remove-client", remove_matches)) => {
+                run_admin_remove_client(remove_matches, &locale)
+            }
             Some(("tunnel", tunnel_matches)) => run_admin_tunnel(tunnel_matches, &locale),
             _ => {
                 eprintln!(
-                    "usage: gtc admin tunnel <BUNDLE_REF> [--target aws] [--local-port 8443]"
+                    "usage: gtc admin <access|certs|token|health|status|list|admins|stop|add-client|remove-client|tunnel> ..."
                 );
                 2
             }
         },
-        Some(("start", sub_matches)) => run_start(sub_matches, debug, &locale),
+        Some(("start", sub_matches)) => {
+            if sub_matches
+                .get_one::<String>("extension-start-handoff")
+                .is_some()
+            {
+                let tail = collect_tail(sub_matches);
+                run_extension_start(sub_matches, &tail, debug, &locale)
+            } else {
+                run_start(sub_matches, debug, &locale)
+            }
+        }
         Some(("stop", sub_matches)) => run_stop(sub_matches, debug, &locale),
         Some((name @ ("dev" | "op" | "wizard" | "setup"), sub_matches)) => {
             let tail = collect_tail(sub_matches);
+            if name == "wizard" && sub_matches.get_many::<String>("extensions").is_some() {
+                return run_extension_wizard(sub_matches, &tail, debug, &locale);
+            }
+            if name == "setup"
+                && sub_matches
+                    .get_one::<String>("extension-setup-handoff")
+                    .is_some()
+            {
+                return run_extension_setup(sub_matches, &tail, debug, &locale);
+            }
             let (binary, args) = route_passthrough_subcommand(name, &tail, &locale).expect("route");
             passthrough(binary, &args, debug, &locale)
         }
         _ => 2,
     }
+}
+
+fn run_help(sub_matches: &ArgMatches, locale: &str) -> i32 {
+    let path: Vec<String> = sub_matches
+        .get_many::<String>("command")
+        .map(|values| values.cloned().collect())
+        .unwrap_or_default();
+    let mut cmd = build_cli(locale);
+
+    for segment in &path {
+        let Some(next) = cmd.find_subcommand(segment).cloned() else {
+            eprintln!(
+                "{}: {}",
+                crate::i18n_support::t(locale, "gtc.help.err.unknown_command"),
+                segment
+            );
+            return 2;
+        };
+        cmd = next;
+    }
+
+    if let Err(err) = cmd.print_help() {
+        eprintln!(
+            "{}: {err}",
+            crate::i18n_support::t(locale, "gtc.err.exec_failed")
+        );
+        return 1;
+    }
+    if let Err(err) = writeln!(io::stdout()) {
+        eprintln!(
+            "{}: {err}",
+            crate::i18n_support::t(locale, "gtc.err.exec_failed")
+        );
+        return 1;
+    }
+    0
 }
 
 pub(super) fn run_add_admin(sub_matches: &ArgMatches, _locale: &str) -> i32 {

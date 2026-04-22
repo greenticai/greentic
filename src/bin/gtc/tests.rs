@@ -8,13 +8,14 @@ use super::{
     resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
     resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
     resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
-    run_admin_tunnel, save_admin_registry, select_start_target, should_send_auth_header,
-    tenant_env_var_name, upsert_admin_registry_entry, verify_sha256_digest,
+    run_admin_access, run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry,
+    select_start_target, should_send_auth_header, tenant_env_var_name, upsert_admin_registry_entry,
+    verify_sha256_digest,
 };
 #[cfg(unix)]
 use super::{
-    StartBundleResolution, apply_default_deploy_env_for_target, default_operator_image_for_target,
-    extract_zip_bytes, validate_cloud_deploy_inputs, write_single_vm_spec,
+    StartBundleResolution, apply_default_deploy_env_for_target, extract_zip_bytes,
+    validate_cloud_deploy_inputs, write_single_vm_spec,
 };
 use clap::{Arg, ArgMatches, Command};
 use std::collections::BTreeMap;
@@ -587,7 +588,6 @@ pub(crate) fn write_fake_deployer_contract_script(script: &Path, log_path: Optio
     let body_template = r#"#!/bin/sh
 __LOG_SNIPPET__if [ "$1" = "target-requirements" ] && [ "$2" = "--provider" ]; then
   provider="$3"
-  source="ghcr"
   case "$provider" in
     aws)
       label="AWS"
@@ -596,13 +596,11 @@ __LOG_SNIPPET__if [ "$1" = "target-requirements" ] && [ "$2" = "--provider" ]; t
       ;;
     gcp)
       label="GCP"
-      source="${GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP:-gcp-artifact-registry}"
       help="Pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE"
       creds='[{"label":"GCP credentials","env_vars":["GOOGLE_APPLICATION_CREDENTIALS","GOOGLE_OAUTH_ACCESS_TOKEN","CLOUDSDK_AUTH_ACCESS_TOKEN"],"satisfaction_env_groups":[["GOOGLE_APPLICATION_CREDENTIALS"],["GOOGLE_OAUTH_ACCESS_TOKEN"],["CLOUDSDK_AUTH_ACCESS_TOKEN"]],"prompt_fields":[],"help":"GCP credentials"}]'
       ;;
     azure)
       label="Azure"
-      source="${GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AZURE:-ghcr}"
       help="Pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE"
       creds='[{"label":"Azure credentials","env_vars":["ARM_CLIENT_ID","ARM_TENANT_ID","ARM_SUBSCRIPTION_ID","ARM_USE_OIDC","AZURE_CLIENT_ID","AZURE_TENANT_ID","AZURE_SUBSCRIPTION_ID"],"satisfaction_env_groups":[["ARM_CLIENT_ID","ARM_TENANT_ID","ARM_SUBSCRIPTION_ID","ARM_USE_OIDC"],["AZURE_CLIENT_ID","AZURE_TENANT_ID","AZURE_SUBSCRIPTION_ID"]],"prompt_fields":[],"help":"Azure credentials"}]'
       ;;
@@ -612,21 +610,15 @@ __LOG_SNIPPET__if [ "$1" = "target-requirements" ] && [ "$2" = "--provider" ]; t
       ;;
   esac
 
-  if [ "$source" = "gcp-artifact-registry" ]; then
-    image="europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db"
-  else
-    image="ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-  fi
-
   case "$provider" in
     aws)
-      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE\",\"required\":false,\"prompt\":null,\"default_value\":\"$image\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST\",\"required\":false,\"prompt\":null,\"default_value\":\"sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null}]"
+      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null}]"
       ;;
     gcp)
-      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE\",\"required\":false,\"prompt\":null,\"default_value\":\"$image\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST\",\"required\":false,\"prompt\":null,\"default_value\":\"sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID\",\"required\":true,\"prompt\":null,\"default_value\":null},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION\",\"required\":true,\"prompt\":null,\"default_value\":\"us-central1\"}]"
+      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID\",\"required\":true,\"prompt\":null,\"default_value\":null},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION\",\"required\":true,\"prompt\":null,\"default_value\":\"us-central1\"}]"
       ;;
     azure)
-      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE\",\"required\":false,\"prompt\":null,\"default_value\":\"$image\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_OPERATOR_IMAGE_DIGEST\",\"required\":false,\"prompt\":null,\"default_value\":\"sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b\"},{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null}]"
+      vars="[{\"name\":\"GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND\",\"required\":true,\"prompt\":null,\"default_value\":null}]"
       ;;
   esac
   printf '%s\n' "{\"target\":\"$provider\",\"target_label\":\"$label\",\"provider_pack_filename\":\"terraform.gtpack\",\"remote_bundle_source_required\":true,\"remote_bundle_source_help\":\"$help\",\"informational_notes\":[],\"credential_requirements\":$creds,\"variable_requirements\":$vars}"
@@ -1160,77 +1152,6 @@ fn rewrite_store_tenant_placeholder_substitutes_template_segment() {
     );
 }
 
-#[cfg(unix)]
-#[test]
-fn default_operator_image_for_target_uses_cloud_specific_refs() {
-    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _deployer = fake_deployer_contract(None);
-    unsafe {
-        env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AWS");
-        env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP");
-        env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AZURE");
-    }
-    assert_eq!(
-        default_operator_image_for_target(StartTarget::Aws),
-        Some(
-            "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-                .to_string(),
-        )
-    );
-    assert_eq!(
-        default_operator_image_for_target(StartTarget::Gcp),
-        Some(
-            "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db"
-                .to_string(),
-        )
-    );
-    assert_eq!(
-        default_operator_image_for_target(StartTarget::Azure),
-        Some(
-            "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-                .to_string(),
-        )
-    );
-    assert_eq!(
-        default_operator_image_for_target(StartTarget::Runtime),
-        None
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn default_operator_image_for_target_allows_source_override() {
-    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _deployer = fake_deployer_contract(None);
-    unsafe {
-        env::set_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP", "ghcr");
-        env::set_var(
-            "GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AZURE",
-            "gcp-artifact-registry",
-        );
-    }
-
-    assert_eq!(
-        default_operator_image_for_target(StartTarget::Gcp),
-        Some(
-            "ghcr.io/greenticai/greentic-start-distroless@sha256:a7f4741a1206900b73a77c5e40860c2695206274374546dd3bb9cab8e752f79b"
-                .to_string(),
-        )
-    );
-    assert_eq!(
-        default_operator_image_for_target(StartTarget::Azure),
-        Some(
-            "europe-west1-docker.pkg.dev/x-plateau-483512-p6/greentic-images/greentic-start-distroless@sha256:555fb6ebdac836c16c5c11fce0f4080a0d7ccda03abd9e89bb9d561280ca67db"
-                .to_string(),
-        )
-    );
-
-    unsafe {
-        env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_GCP");
-        env::remove_var("GREENTIC_DEPLOY_DEFAULT_OPERATOR_IMAGE_SOURCE_AZURE");
-    }
-}
-
 #[test]
 #[cfg(unix)]
 fn apply_default_deploy_env_for_target_does_not_inject_deployer_defaults() {
@@ -1303,6 +1224,86 @@ fn admin_tunnel_rejects_non_aws_target() {
     assert_eq!(run_admin_tunnel(&matches, "en"), 2);
 }
 
+#[cfg(unix)]
+#[test]
+fn admin_access_runs_deployer_for_gcp_bundle() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _deployer_guard = fake_deployer_contract(None);
+    let bundle = tempdir().expect("tempdir");
+
+    let cli = build_cli("en");
+    let matches = cli
+        .try_get_matches_from([
+            "gtc",
+            "admin",
+            "access",
+            bundle.path().to_str().expect("bundle path"),
+            "--target",
+            "gcp",
+            "--output",
+            "json",
+        ])
+        .expect("matches");
+    let (_, admin_matches) = matches.subcommand().expect("admin");
+    let ("access", access_matches) = admin_matches.subcommand().expect("access") else {
+        panic!("expected access subcommand");
+    };
+
+    assert_eq!(run_admin_access(access_matches, "en"), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn admin_token_runs_deployer_for_azure_bundle() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _deployer_guard = fake_deployer_contract(None);
+    let bundle = tempdir().expect("tempdir");
+
+    let cli = build_cli("en");
+    let matches = cli
+        .try_get_matches_from([
+            "gtc",
+            "admin",
+            "token",
+            bundle.path().to_str().expect("bundle path"),
+            "--target",
+            "azure",
+        ])
+        .expect("matches");
+    let (_, admin_matches) = matches.subcommand().expect("admin");
+    let ("token", token_matches) = admin_matches.subcommand().expect("token") else {
+        panic!("expected token subcommand");
+    };
+
+    assert_eq!(run_admin_token(token_matches, "en"), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn admin_health_runs_deployer_for_gcp_bundle() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _deployer_guard = fake_deployer_contract(None);
+    let bundle = tempdir().expect("tempdir");
+
+    let cli = build_cli("en");
+    let matches = cli
+        .try_get_matches_from([
+            "gtc",
+            "admin",
+            "health",
+            bundle.path().to_str().expect("bundle path"),
+            "--target",
+            "gcp",
+        ])
+        .expect("matches");
+    let (_, admin_matches) = matches.subcommand().expect("admin");
+    let ("health", health_matches) = admin_matches.subcommand().expect("health") else {
+        panic!("expected health subcommand");
+    };
+
+    assert_eq!(run_admin_health(health_matches, "en"), 0);
+}
+
 #[test]
 fn admin_tunnel_errors_when_bundle_dir_is_missing() {
     let cli = build_cli("en");
@@ -1321,7 +1322,7 @@ fn admin_tunnel_errors_when_bundle_dir_is_missing() {
 #[test]
 fn admin_tunnel_runs_deployer_for_local_bundle() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _path_guard = temp_path_with_binary("greentic-deployer");
+    let _deployer_guard = fake_deployer_contract(None);
     let bundle = tempdir().expect("tempdir");
 
     let cli = build_cli("en");

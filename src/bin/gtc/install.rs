@@ -281,8 +281,6 @@ pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
             "binstall".to_string(),
             "-y".to_string(),
             "--force".to_string(),
-            "--version".to_string(),
-            "0.4".to_string(),
             package.to_string(),
         ];
         let status = run_cargo(&binstall_args, debug, locale);
@@ -348,8 +346,6 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         let binstall_args = vec![
             "binstall".to_string(),
             "-y".to_string(),
-            "--version".to_string(),
-            "0.4".to_string(),
             package.to_string(),
         ];
         let status = run_cargo(&binstall_args, debug, locale);
@@ -2078,7 +2074,16 @@ mod tests {
             env::set_var("GTC_SKIP_DIST_HYDRATE", "1");
         }
 
+        // Create bin/dist as a *file* so the hydration fallback cannot
+        // mkdir + download the pack from GitHub releases.  This ensures the
+        // "missing pack" path is exercised even when online.
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("mkdir bin");
+        fs::write(bin_dir.join("dist"), b"blocker").expect("write dist blocker");
+
         let err = ensure_deployer_dist_pack(false, "en").expect_err("missing pack should fail");
+        // Remove the blocker so subsequent phases can create the real dir.
+        let _ = fs::remove_file(bin_dir.join("dist"));
         assert!(
             err.to_string()
                 .contains("greentic-deployer dist pack is missing")
@@ -2086,10 +2091,30 @@ mod tests {
 
         let dist_dir = dir.path().join("bin/dist");
         fs::create_dir_all(&dist_dir).expect("mkdirs");
-        for filename in required_deployer_dist_pack_filenames(false, "en").expect("filenames") {
+        let pack_filenames = required_deployer_dist_pack_filenames(false, "en").expect("filenames");
+        for filename in &pack_filenames {
             fs::write(dist_dir.join(filename), b"pack-bytes").expect("write pack");
         }
+        // Make files AND dir read-only so hydration cannot overwrite.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for filename in &pack_filenames {
+                fs::set_permissions(dist_dir.join(filename), fs::Permissions::from_mode(0o444))
+                    .expect("chmod file ro");
+            }
+            fs::set_permissions(&dist_dir, fs::Permissions::from_mode(0o555))
+                .expect("chmod dist ro");
+        }
         let err = ensure_deployer_dist_pack(false, "en").expect_err("invalid pack should fail");
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&dist_dir, fs::Permissions::from_mode(0o755))
+                .expect("chmod dist rw");
+            for filename in &pack_filenames {
+                fs::set_permissions(dist_dir.join(filename), fs::Permissions::from_mode(0o644))
+                    .expect("chmod file rw");
+            }
+        }
         assert!(
             err.to_string()
                 .contains("greentic-deployer dist pack is invalid")
@@ -2181,12 +2206,12 @@ mod tests {
         let logged = fs::read_to_string(log).expect("read log");
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(logged.contains("install cargo-binstall --locked"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-dev"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-operator"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-bundle"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-setup"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-start"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-deployer"));
+        assert!(logged.contains("binstall -y greentic-dev"));
+        assert!(logged.contains("binstall -y greentic-operator"));
+        assert!(logged.contains("binstall -y greentic-bundle"));
+        assert!(logged.contains("binstall -y greentic-setup"));
+        assert!(logged.contains("binstall -y greentic-start"));
+        assert!(logged.contains("binstall -y greentic-deployer"));
 
         unsafe {
             match original_path {
@@ -2222,12 +2247,12 @@ mod tests {
         assert!(logged.contains("binstall -V"));
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(!logged.contains("install cargo-binstall --locked"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-dev"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-operator"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-bundle"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-setup"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-start"));
-        assert!(logged.contains("binstall -y --version 0.4 greentic-deployer"));
+        assert!(logged.contains("binstall -y greentic-dev"));
+        assert!(logged.contains("binstall -y greentic-operator"));
+        assert!(logged.contains("binstall -y greentic-bundle"));
+        assert!(logged.contains("binstall -y greentic-setup"));
+        assert!(logged.contains("binstall -y greentic-start"));
+        assert!(logged.contains("binstall -y greentic-deployer"));
 
         unsafe {
             match original_path {
@@ -2250,7 +2275,7 @@ mod tests {
         write_executable(
             &cargo,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$6\" = \"greentic-operator\" ]; then\n  exit 9\nfi\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$4\" = \"greentic-operator\" ]; then\n  exit 9\nfi\nexit 0\n",
                 cargo_log.display()
             ),
         );
@@ -2272,12 +2297,12 @@ mod tests {
         assert_eq!(run_update(false, "en"), 1);
 
         let cargo_logged = fs::read_to_string(cargo_log).expect("read cargo log");
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-dev"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-operator"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-bundle"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-setup"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-start"));
-        assert!(cargo_logged.contains("binstall -y --force --version 0.4 greentic-deployer"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-dev"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-operator"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-bundle"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-setup"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-start"));
+        assert!(cargo_logged.contains("binstall -y --force greentic-deployer"));
 
         let dev_logged = fs::read_to_string(dev_log).expect("read dev log");
         assert!(dev_logged.contains("install tools"));
