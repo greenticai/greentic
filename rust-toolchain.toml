@@ -4,5 +4,5 @@
 # Do not edit per-repo.
 
 [toolchain]
-channel = "1.94.0"
+channel = "1.95.0"
 components = ["clippy", "rustfmt"]

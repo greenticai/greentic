@@ -277,13 +277,7 @@ pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
             tf(locale, "gtc.update.updating", &[("package", package)])
         );
 
-        let binstall_args = vec![
-            "binstall".to_string(),
-            "-y".to_string(),
-            "--force".to_string(),
-            package.to_string(),
-        ];
-        let status = run_cargo(&binstall_args, debug, locale);
+        let status = install_companion_package(package, true, debug, locale);
         if status != 0 {
             any_failed = true;
             eprintln!(
@@ -343,12 +337,7 @@ fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         START_BIN,
         DEPLOYER_BIN,
     ] {
-        let binstall_args = vec![
-            "binstall".to_string(),
-            "-y".to_string(),
-            package.to_string(),
-        ];
-        let status = run_cargo(&binstall_args, debug, locale);
+        let status = install_companion_package(package, false, debug, locale);
         if status != 0 {
             return status;
         }
@@ -470,6 +459,17 @@ struct InstallCloudTargetRequirements {
     provider_pack_filename: String,
 }
 
+#[derive(Deserialize)]
+struct CratesIoCrateResponse {
+    versions: Vec<CratesIoVersion>,
+}
+
+#[derive(Deserialize)]
+struct CratesIoVersion {
+    num: String,
+    yanked: bool,
+}
+
 fn required_deployer_dist_pack_filenames(debug: bool, locale: &str) -> GtcResult<Vec<String>> {
     let mut filenames = Vec::new();
     for provider in ["aws", "azure", "gcp"] {
@@ -502,6 +502,128 @@ fn is_binstall_available(debug: bool, locale: &str) -> bool {
     detect_binstall_version(debug, locale).is_some()
 }
 
+fn install_companion_package(package: &str, force: bool, debug: bool, locale: &str) -> i32 {
+    let latest_published = latest_crate_version(package, debug, locale);
+    let latest_args = companion_binstall_args(package, None, force);
+    let latest_status = run_cargo(&latest_args, debug, locale);
+    if latest_status == 0 {
+        return 0;
+    }
+
+    let Some(fallback_versions) = published_crate_versions(package, debug, locale) else {
+        eprintln!(
+            "\x1b[31mgtc install:\x1b[0m latest binary release for {package} failed, and published version lookup was unavailable"
+        );
+        return latest_status;
+    };
+
+    let mut attempted_fallback = false;
+    for version in fallback_versions.into_iter() {
+        if latest_published.as_deref() == Some(version.as_str()) {
+            continue;
+        }
+        attempted_fallback = true;
+        eprintln!(
+            "\x1b[31mgtc install:\x1b[0m latest binary release for {package} is unavailable or broken"
+        );
+        eprintln!("\x1b[31mgtc install:\x1b[0m installing fallback version {package}@{version}");
+        let args = companion_binstall_args(package, Some(version.as_str()), force);
+        let status = run_cargo(&args, debug, locale);
+        if status == 0 {
+            return 0;
+        }
+    }
+
+    if attempted_fallback {
+        eprintln!(
+            "\x1b[31mgtc install:\x1b[0m no working prebuilt binary release found for {package}"
+        );
+    }
+
+    latest_status
+}
+
+fn companion_binstall_args(package: &str, version: Option<&str>, force: bool) -> Vec<String> {
+    let mut args = vec!["binstall".to_string(), "-y".to_string()];
+    if force {
+        args.push("--force".to_string());
+    }
+    args.push("--disable-strategies".to_string());
+    args.push("compile".to_string());
+    if let Some(version) = version {
+        args.push("--version".to_string());
+        args.push(version.to_string());
+    }
+    args.push(package.to_string());
+    args
+}
+
+fn published_crate_versions(package: &str, debug: bool, locale: &str) -> Option<Vec<String>> {
+    if let Some(value) = fake_crate_versions_from_env(package) {
+        return Some(value);
+    }
+
+    let client = Client::builder()
+        .user_agent(format!("gtc/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+        .ok()?;
+    let url = format!("https://crates.io/api/v1/crates/{package}");
+    if debug {
+        eprintln!("{} GET {}", t(locale, "gtc.debug.exec"), url);
+    }
+    let response = client.get(url).send().ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let payload: CratesIoCrateResponse = response.json().ok()?;
+    let mut versions: Vec<String> = payload
+        .versions
+        .into_iter()
+        .filter(|entry| !entry.yanked)
+        .map(|entry| entry.num)
+        .filter(|value| is_stable_numeric_semver(value))
+        .collect();
+    versions.sort_by(|a, b| semver_compare(b, a));
+    versions.dedup();
+    if versions.is_empty() {
+        None
+    } else {
+        Some(versions)
+    }
+}
+
+fn latest_crate_version(package: &str, debug: bool, locale: &str) -> Option<String> {
+    published_crate_versions(package, debug, locale)?
+        .into_iter()
+        .next()
+}
+
+fn fake_crate_versions_from_env(package: &str) -> Option<Vec<String>> {
+    let env_key = format!(
+        "GTC_FAKE_CRATE_VERSIONS_{}",
+        package
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_uppercase()
+            } else {
+                '_'
+            })
+            .collect::<String>()
+    );
+    let raw = env::var(env_key).ok()?;
+    let versions: Vec<String> = raw
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect();
+    if versions.is_empty() {
+        None
+    } else {
+        Some(versions)
+    }
+}
+
 fn detect_binstall_version(debug: bool, locale: &str) -> Option<String> {
     let output = run_cargo_capture(&["binstall", "-V"], debug, locale)?;
     if !output.status.success() {
@@ -531,6 +653,14 @@ fn parse_first_semver(text: &str) -> Option<String> {
         }
     }
     None
+}
+
+fn is_stable_numeric_semver(raw: &str) -> bool {
+    raw.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+        && raw.split('.').count() >= 3
+        && raw
+            .split('.')
+            .all(|part| !part.is_empty() && part.chars().all(|ch| ch.is_ascii_digit()))
 }
 
 fn semver_compare(a: &str, b: &str) -> std::cmp::Ordering {
@@ -1452,8 +1582,8 @@ mod tests {
     use super::{
         TenantManifestReference, detect_binstall_version, ensure_deployer_dist_pack,
         ensure_install_prereqs, fetch_download_bytes_with_auth, fetch_json_bytes_with_auth,
-        install_tenant_doc_reference, install_tenant_tool_reference, is_binstall_available,
-        latest_binstall_version, query_command_trimmed, recurse_files,
+        install_companion_package, install_tenant_doc_reference, install_tenant_tool_reference,
+        is_binstall_available, latest_binstall_version, query_command_trimmed, recurse_files,
         required_deployer_dist_pack_filenames, run_update,
     };
     #[cfg(unix)]
@@ -2206,17 +2336,67 @@ mod tests {
         let logged = fs::read_to_string(log).expect("read log");
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(logged.contains("install cargo-binstall --locked"));
-        assert!(logged.contains("binstall -y greentic-dev"));
-        assert!(logged.contains("binstall -y greentic-operator"));
-        assert!(logged.contains("binstall -y greentic-bundle"));
-        assert!(logged.contains("binstall -y greentic-setup"));
-        assert!(logged.contains("binstall -y greentic-start"));
-        assert!(logged.contains("binstall -y greentic-deployer"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-dev"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-operator"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-bundle"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-setup"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-start"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-deployer"));
 
         unsafe {
             match original_path {
                 Some(value) => env::set_var("PATH", value),
                 None => env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn install_companion_package_falls_back_to_previous_version_without_compile() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = executable_tempdir();
+        let log = dir.path().join("cargo.log");
+        let cargo = dir.path().join("cargo");
+        write_executable(
+            &cargo,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.8.1'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$#\" -eq 5 ]; then\n  exit 9\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$5\" = \"--version\" ] && [ \"$6\" = \"0.4.72\" ] && [ \"$7\" = \"greentic-dev\" ]; then\n  exit 0\nfi\nexit 9\n",
+                log.display()
+            ),
+        );
+
+        let original_path = env::var_os("PATH");
+        let original_versions = env::var_os("GTC_FAKE_CRATE_VERSIONS_GREENTIC_DEV");
+        unsafe {
+            env::set_var("PATH", dir.path());
+            env::set_var(
+                "GTC_FAKE_CRATE_VERSIONS_GREENTIC_DEV",
+                "0.4.73,0.4.72,0.4.71",
+            );
+        }
+
+        assert_eq!(
+            install_companion_package("greentic-dev", false, false, "en"),
+            0
+        );
+
+        let logged = fs::read_to_string(log).expect("read log");
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-dev"));
+        assert!(
+            logged
+                .contains("binstall -y --disable-strategies compile --version 0.4.72 greentic-dev")
+        );
+        assert!(!logged.contains("--version 0.4.73 greentic-dev"));
+
+        unsafe {
+            match original_path {
+                Some(value) => env::set_var("PATH", value),
+                None => env::remove_var("PATH"),
+            }
+            match original_versions {
+                Some(value) => env::set_var("GTC_FAKE_CRATE_VERSIONS_GREENTIC_DEV", value),
+                None => env::remove_var("GTC_FAKE_CRATE_VERSIONS_GREENTIC_DEV"),
             }
         }
     }
@@ -2247,12 +2427,12 @@ mod tests {
         assert!(logged.contains("binstall -V"));
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(!logged.contains("install cargo-binstall --locked"));
-        assert!(logged.contains("binstall -y greentic-dev"));
-        assert!(logged.contains("binstall -y greentic-operator"));
-        assert!(logged.contains("binstall -y greentic-bundle"));
-        assert!(logged.contains("binstall -y greentic-setup"));
-        assert!(logged.contains("binstall -y greentic-start"));
-        assert!(logged.contains("binstall -y greentic-deployer"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-dev"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-operator"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-bundle"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-setup"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-start"));
+        assert!(logged.contains("binstall -y --disable-strategies compile greentic-deployer"));
 
         unsafe {
             match original_path {
@@ -2275,7 +2455,7 @@ mod tests {
         write_executable(
             &cargo,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$4\" = \"greentic-operator\" ]; then\n  exit 9\nfi\nexit 0\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$6\" = \"greentic-operator\" ]; then\n  exit 9\nfi\nexit 0\n",
                 cargo_log.display()
             ),
         );
@@ -2297,12 +2477,29 @@ mod tests {
         assert_eq!(run_update(false, "en"), 1);
 
         let cargo_logged = fs::read_to_string(cargo_log).expect("read cargo log");
-        assert!(cargo_logged.contains("binstall -y --force greentic-dev"));
-        assert!(cargo_logged.contains("binstall -y --force greentic-operator"));
-        assert!(cargo_logged.contains("binstall -y --force greentic-bundle"));
-        assert!(cargo_logged.contains("binstall -y --force greentic-setup"));
-        assert!(cargo_logged.contains("binstall -y --force greentic-start"));
-        assert!(cargo_logged.contains("binstall -y --force greentic-deployer"));
+        assert!(
+            cargo_logged.contains("binstall -y --force --disable-strategies compile greentic-dev")
+        );
+        assert!(
+            cargo_logged
+                .contains("binstall -y --force --disable-strategies compile greentic-operator")
+        );
+        assert!(
+            cargo_logged
+                .contains("binstall -y --force --disable-strategies compile greentic-bundle")
+        );
+        assert!(
+            cargo_logged
+                .contains("binstall -y --force --disable-strategies compile greentic-setup")
+        );
+        assert!(
+            cargo_logged
+                .contains("binstall -y --force --disable-strategies compile greentic-start")
+        );
+        assert!(
+            cargo_logged
+                .contains("binstall -y --force --disable-strategies compile greentic-deployer")
+        );
 
         let dev_logged = fs::read_to_string(dev_log).expect("read dev log");
         assert!(dev_logged.contains("install tools"));
