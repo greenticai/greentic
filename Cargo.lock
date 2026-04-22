@@ -1232,23 +1232,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-i18n"
-version = "0.5.1"
+version = "0.4.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb91ab8082b35cad324daac10ffe7a8072aeaef308066b8569f750c4e3599da6"
-dependencies = [
- "greentic-i18n-lib",
- "serde_json",
-]
-
-[[package]]
-name = "greentic-i18n-lib"
-version = "0.5.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1c181b9a5fb0beccd9959fb11296572a7802ee1e237d90ca37ff46e8a1fbef3"
-dependencies = [
- "blake3",
- "data-encoding",
-]
+checksum = "44951881c763069e14624cf8cf1dddff706ad4d8132570dc299af0b855cf4458"
 
 [[package]]
 name = "greentic-interfaces"
