@@ -1,0 +1,37 @@
+name: Notify scheduled failures
+
+# Catch-all Slack notifier for scheduled workflow failures. Fires via
+# workflow_run on any workflow completion in this repo; the job-level
+# if: filters to event==schedule and conclusion==failure. This closes
+# the gap where failed nightlies (local reusables, inline sibling jobs,
+# legacy per-repo workflows) used to stay silent because they didn't
+# call notify-failure.yml directly. One file per repo covers every
+# current and future scheduled workflow without per-workflow wiring.
+#
+# Manual (workflow_dispatch) failures stay quiet by design — the
+# operator is already watching when they hit dispatch.
+
+on:
+  workflow_run:
+    # "*" matches every workflow in the repo — that's the point of the
+    # catch-all. GitHub supports glob patterns in `workflows:` and
+    # without this field actionlint emits a schema warning.
+    workflows: ["*"]
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  notify:
+    if: >-
+      github.event.workflow_run.event == 'schedule' &&
+      github.event.workflow_run.conclusion == 'failure'
+    uses: greenticai/.github/.github/workflows/notify-failure.yml@main
+    with:
+      workflow-name: ${{ github.event.workflow_run.name }}
+      repo: ${{ github.repository }}
+      run-url: ${{ github.event.workflow_run.html_url }}
+    secrets: inherit
