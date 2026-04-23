@@ -80,7 +80,21 @@ The goal is simple:
 > describe the business outcome you want, and generate the starting digital worker in seconds.
 
 Embedded demo asset included in this package:
-[![Watch on YouTube](greentic_readme_assets/creation-a-digital-coo-in-seconds-cover.jpg)](https://youtu.be/js0yon1OlVU)
+[![Watch on YouTube](https://raw.githubusercontent.com/greenticai/greentic/refs/heads/main/greentic_readme_assets/Greentic-Designer.png)](https://www.youtube.com/watch?v=L4Rx7g3TvjY)
+
+---
+
+## For Coding Agents And Contributors
+
+Before changing CLI behavior, docs, components, flows, packs, bundles, or
+examples, read:
+
+- [`docs/00-start-here.md`](docs/00-start-here.md)
+- [`.codex/global_rules.md`](.codex/global_rules.md)
+- [`docs/04-schemas/README.md`](docs/04-schemas/README.md)
+
+Do not rely on demos, older examples, or other repos until you have checked the
+canonical docs and schema references in this repo.
 
 ---
 
@@ -379,11 +393,11 @@ gtc install
 
 # Prerequisites
 
-Install Rust 1.91 or newer, add the WASIp2 target, and install `cargo-binstall`.
+Rust 1.95 is required. Install it, add the WASIp2 target, and install `cargo-binstall`.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-rustup toolchain install 1.91.0
+rustup toolchain install 1.95.0
 rustup target add wasm32-wasip2
 cargo install cargo-binstall
 ```
