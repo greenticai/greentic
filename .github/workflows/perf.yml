@@ -1,13 +1,11 @@
 name: Perf (lightweight)
-# Moved off pull_request onto a nightly schedule. See plans/binary-bifurcation.md
-# Phase A (heavy-job sweep). Manual runs remain via workflow_dispatch.
+# Nightly-only. See plans/binary-bifurcation.md Phase A.8: push-trigger removed
+# because post-merge perf runs were burning 15+ min without actionable signal.
 
 on:
   schedule:
     - cron: "39 3 * * *"
   workflow_dispatch:
-  push:
-    branches: [main]
 
 permissions:
   contents: read
