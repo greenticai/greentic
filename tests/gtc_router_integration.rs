@@ -77,6 +77,113 @@ fn passthrough_dev_uses_greentic_dev_bin_override() {
     assert!(logged.contains("flow list"));
 }
 
+// ---------------------------------------------------------------------------
+// Task F3: cross-CLI smoke tests for `gtc dev <name> info` passthrough.
+//
+// `gtc dev <name> ...` forwards every token after `dev` to `greentic-dev`
+// verbatim (see `router::route_passthrough_subcommand`). The second hop
+// (`greentic-dev <name> info ...` -> `greentic-<name> info ...`) is covered by
+// greentic-dev's own integration tests. Here we only need to confirm that the
+// router hands the right args to `greentic-dev` for each of the 5 downstream
+// CLI names (pack, bundle, flow, component, runner).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn gtc_dev_pack_info_forwards_args() {
+    let sandbox = TestSandbox::new("gtc_dev_pack_info_forwards_args");
+    let log_file = sandbox.path().join("dev.log");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(
+        ["dev", "pack", "info", "/tmp/fixture.gtpack"],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(
+        logged.contains("pack info /tmp/fixture.gtpack"),
+        "expected forwarded args, got: {logged}"
+    );
+}
+
+#[test]
+fn gtc_dev_bundle_info_forwards_args_with_json() {
+    let sandbox = TestSandbox::new("gtc_dev_bundle_info_forwards_args_with_json");
+    let log_file = sandbox.path().join("dev.log");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(
+        ["dev", "bundle", "info", "/tmp/fixture.gtbundle", "--json"],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(
+        logged.contains("bundle info /tmp/fixture.gtbundle --json"),
+        "expected forwarded args, got: {logged}"
+    );
+}
+
+#[test]
+fn gtc_dev_flow_info_forwards_args() {
+    let sandbox = TestSandbox::new("gtc_dev_flow_info_forwards_args");
+    let log_file = sandbox.path().join("dev.log");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(["dev", "flow", "info", "/tmp/fixture.ygtc"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(
+        logged.contains("flow info /tmp/fixture.ygtc"),
+        "expected forwarded args, got: {logged}"
+    );
+}
+
+#[test]
+fn gtc_dev_component_info_forwards_args() {
+    let sandbox = TestSandbox::new("gtc_dev_component_info_forwards_args");
+    let log_file = sandbox.path().join("dev.log");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(
+        ["dev", "component", "info", "/tmp/fixture.wasm", "--json"],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(
+        logged.contains("component info /tmp/fixture.wasm --json"),
+        "expected forwarded args, got: {logged}"
+    );
+}
+
+#[test]
+fn gtc_dev_runner_info_forwards_args() {
+    let sandbox = TestSandbox::new("gtc_dev_runner_info_forwards_args");
+    let log_file = sandbox.path().join("dev.log");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    // `runner info` takes no positional path — it reports on the running
+    // runtime. `--json` is the usual companion flag.
+    let status = sandbox.run_gtc(["dev", "runner", "info", "--json"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(
+        logged.contains("runner info --json"),
+        "expected forwarded args, got: {logged}"
+    );
+}
+
 #[test]
 fn wizard_passthrough_routes_to_greentic_dev_with_all_args() {
     let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_dev_with_all_args");
