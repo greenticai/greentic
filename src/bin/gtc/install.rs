@@ -309,10 +309,16 @@ pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
 
 pub(crate) fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
     if which::which("mksquashfs").is_err() {
-        eprintln!(
-            "Missing required tool: mksquashfs (install via `brew install squashfs` or `apt install squashfs-tools`)"
-        );
-        return 1;
+        let status = install_mksquashfs(debug, locale);
+        if status != 0 {
+            return status;
+        }
+        if which::which("mksquashfs").is_err() {
+            eprintln!(
+                "Installed mksquashfs, but it is not available on PATH yet. Restart your shell and rerun `gtc install`."
+            );
+            return 1;
+        }
     }
 
     if !rust_version_satisfies("1.95", debug, locale) {
@@ -714,6 +720,121 @@ fn parse_numeric_version(raw: &str) -> Vec<u64> {
     raw.split('.')
         .map(|part| part.parse::<u64>().unwrap_or(0))
         .collect()
+}
+
+fn install_mksquashfs(debug: bool, locale: &str) -> i32 {
+    let os = match current_install_os() {
+        Ok(os) => os,
+        Err(status) => return status,
+    };
+    for candidate in mksquashfs_install_candidates(&os) {
+        if which::which(candidate.command).is_err() {
+            continue;
+        }
+        println!("Installing mksquashfs via {}...", candidate.command);
+        return run_package_manager(candidate.command, &candidate.args, debug, locale);
+    }
+
+    eprintln!("{}", missing_mksquashfs_message(&os));
+    1
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct MksquashfsInstallCandidate {
+    command: &'static str,
+    args: Vec<&'static str>,
+}
+
+fn mksquashfs_install_candidates(os: &str) -> Vec<MksquashfsInstallCandidate> {
+    match os {
+        "macos" => vec![
+            MksquashfsInstallCandidate {
+                command: "brew",
+                args: vec!["install", "squashfs"],
+            },
+            MksquashfsInstallCandidate {
+                command: "conda",
+                args: vec!["install", "-y", "-c", "conda-forge", "squashfs-tools"],
+            },
+        ],
+        "linux" => vec![
+            MksquashfsInstallCandidate {
+                command: "apt-get",
+                args: vec!["install", "-y", "squashfs-tools"],
+            },
+            MksquashfsInstallCandidate {
+                command: "dnf",
+                args: vec!["install", "-y", "squashfs-tools"],
+            },
+            MksquashfsInstallCandidate {
+                command: "yum",
+                args: vec!["install", "-y", "squashfs-tools"],
+            },
+            MksquashfsInstallCandidate {
+                command: "pacman",
+                args: vec!["-Sy", "--noconfirm", "squashfs-tools"],
+            },
+            MksquashfsInstallCandidate {
+                command: "zypper",
+                args: vec!["--non-interactive", "install", "squashfs"],
+            },
+            MksquashfsInstallCandidate {
+                command: "apk",
+                args: vec!["add", "squashfs-tools"],
+            },
+            MksquashfsInstallCandidate {
+                command: "conda",
+                args: vec!["install", "-y", "-c", "conda-forge", "squashfs-tools"],
+            },
+        ],
+        "windows" => vec![MksquashfsInstallCandidate {
+            command: "choco",
+            args: vec!["install", "squashfs", "-y"],
+        }],
+        _ => Vec::new(),
+    }
+}
+
+fn missing_mksquashfs_message(os: &str) -> String {
+    match os {
+        "macos" => {
+            "Missing required tool: mksquashfs. Install Homebrew and run `brew install squashfs`, or install conda and run `conda install -c conda-forge squashfs-tools`.".to_string()
+        }
+        "linux" => {
+            "Missing required tool: mksquashfs. Install a supported package manager and install `squashfs-tools`.".to_string()
+        }
+        "windows" => {
+            "Missing required tool: mksquashfs. Install Chocolatey and run `choco install squashfs -y`.".to_string()
+        }
+        _ => "Missing required tool: mksquashfs.".to_string(),
+    }
+}
+
+fn run_package_manager(command: &str, args: &[&str], debug: bool, locale: &str) -> i32 {
+    if should_run_with_sudo(command, debug, locale) {
+        let mut sudo_args = Vec::with_capacity(args.len() + 1);
+        sudo_args.push(command);
+        sudo_args.extend_from_slice(args);
+        return run_command("sudo", &sudo_args, debug, locale);
+    }
+    run_command(command, args, debug, locale)
+}
+
+fn should_run_with_sudo(command: &str, debug: bool, locale: &str) -> bool {
+    if !cfg!(unix) || !requires_root_package_manager(command) || which::which("sudo").is_err() {
+        return false;
+    }
+    let Some(output) = run_command_capture("id", &["-u"], debug, locale) else {
+        return true;
+    };
+    String::from_utf8_lossy(&output.stdout).trim() != "0"
+}
+
+fn requires_root_package_manager(command: &str) -> bool {
+    matches!(
+        command,
+        "apt-get" | "dnf" | "yum" | "pacman" | "zypper" | "apk"
+    )
 }
 
 fn rust_version_satisfies(required: &str, debug: bool, locale: &str) -> bool {
@@ -1642,9 +1763,9 @@ mod tests {
         fetch_download_bytes_with_auth as fetch_download_bytes,
         fetch_json_bytes_with_auth as fetch_json_bytes, fetch_json_with_auth, file_url_path,
         gather_tool_candidates, install_tool_artifact, list_files_recursive,
-        normalize_expected_sha256, parse_first_semver, parse_numeric_version,
-        resolve_github_release_asset_api_url, semver_compare, store_asset_file_name,
-        store_asset_target_path, url_file_name,
+        mksquashfs_install_candidates, normalize_expected_sha256, parse_first_semver,
+        parse_numeric_version, resolve_github_release_asset_api_url, semver_compare,
+        store_asset_file_name, store_asset_target_path, url_file_name,
     };
     #[cfg(unix)]
     use super::{
@@ -2420,6 +2541,88 @@ mod tests {
         assert!(logged.contains("binstall -y --disable-strategies compile greentic-setup"));
         assert!(logged.contains("binstall -y --disable-strategies compile greentic-start"));
         assert!(logged.contains("binstall -y --disable-strategies compile greentic-deployer"));
+
+        unsafe {
+            match original_path {
+                Some(value) => env::set_var("PATH", value),
+                None => env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[test]
+    fn mksquashfs_install_candidates_cover_supported_platforms() {
+        let macos = mksquashfs_install_candidates("macos");
+        assert!(macos.iter().any(|candidate| {
+            candidate.command == "brew" && candidate.args == vec!["install", "squashfs"]
+        }));
+
+        let linux = mksquashfs_install_candidates("linux");
+        assert!(linux.iter().any(|candidate| {
+            candidate.command == "apt-get"
+                && candidate.args == vec!["install", "-y", "squashfs-tools"]
+        }));
+
+        let windows = mksquashfs_install_candidates("windows");
+        assert!(windows.iter().any(|candidate| {
+            candidate.command == "choco" && candidate.args == vec!["install", "squashfs", "-y"]
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_install_prereqs_installs_missing_mksquashfs_with_package_manager() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = executable_tempdir();
+        let package_log = dir.path().join("package.log");
+        let cargo_log = dir.path().join("cargo.log");
+        let mksquashfs = dir.path().join("mksquashfs");
+        let os = current_install_os().expect("current install os");
+        let package_manager = match os.as_str() {
+            "macos" => "brew",
+            "linux" => "apt-get",
+            _ => return,
+        };
+
+        write_executable(
+            &dir.path().join(package_manager),
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nprintf '#!/bin/sh\\nexit 0\\n' > '{}'\n/bin/chmod +x '{}'\nexit 0\n",
+                package_log.display(),
+                mksquashfs.display(),
+                mksquashfs.display()
+            ),
+        );
+        write_executable(
+            &dir.path().join("cargo"),
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.8.1'\n  exit 0\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nexit 0\n",
+                cargo_log.display()
+            ),
+        );
+        write_executable(
+            &dir.path().join("rustc"),
+            "#!/bin/sh\necho 'rustc 1.95.0'\n",
+        );
+        write_executable(
+            &dir.path().join("rustup"),
+            "#!/bin/sh\nif [ \"$1\" = \"target\" ] && [ \"$2\" = \"list\" ]; then\n  echo 'wasm32-wasip2 (installed)'\n  exit 0\nfi\nexit 0\n",
+        );
+        write_executable(&dir.path().join("cargo-component"), "#!/bin/sh\nexit 0\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", dir.path());
+        }
+
+        assert_eq!(ensure_install_prereqs(false, "en"), 0);
+
+        let package_logged = fs::read_to_string(package_log).expect("read package log");
+        if package_manager == "brew" {
+            assert!(package_logged.contains("install squashfs"));
+        } else {
+            assert!(package_logged.contains("install -y squashfs-tools"));
+        }
 
         unsafe {
             match original_path {
