@@ -3,8 +3,6 @@ use std::env;
 use std::fs;
 #[cfg(unix)]
 use std::io::Write;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -589,7 +587,6 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
     sandbox.write_exit_tool("greentic-operator", 0);
     sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
-    #[cfg(unix)]
     sandbox.write_install_prereq_tools();
     fs::create_dir_all(&cargo_home).expect("cargo_home");
 
@@ -788,7 +785,6 @@ fn install_skips_tenant_when_public_install_fails() {
     sandbox.write_exit_tool("greentic-dev", 23);
     sandbox.write_exit_tool("greentic-operator", 0);
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
-    #[cfg(unix)]
     sandbox.write_install_prereq_tools();
 
     let mock_root = sandbox.path().join("mock-dist");
@@ -1272,22 +1268,14 @@ impl TestSandbox {
         );
     }
 
-    #[cfg(unix)]
-    fn write_shell_tool(&self, name: &str, body: &str) {
-        let path = self.binary_path(name);
-        fs::write(&path, body).expect("write shell tool");
-        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).expect("chmod shell tool");
-    }
-
-    #[cfg(unix)]
     fn write_install_prereq_tools(&self) {
-        self.write_shell_tool("mksquashfs", "#!/bin/sh\nexit 0\n");
-        self.write_shell_tool("rustc", "#!/bin/sh\necho 'rustc 1.95.0'\n");
-        self.write_shell_tool(
-            "rustup",
-            "#!/bin/sh\nif [ \"$1\" = \"target\" ] && [ \"$2\" = \"list\" ]; then\n  echo 'wasm32-wasip2 (installed)'\n  exit 0\nfi\nexit 0\n",
+        self.write_exit_tool("mksquashfs", 0);
+        self.write_stdout_tool("rustc", "rustc 1.95.0\n", 0);
+        self.compile_rust_tool_at(
+            &self.binary_path("rustup"),
+            &rust_rustup_target_tool_program(),
         );
-        self.write_shell_tool("cargo-component", "#!/bin/sh\nexit 0\n");
+        self.write_exit_tool("cargo-component", 0);
     }
 
     #[cfg(unix)]
@@ -1435,6 +1423,20 @@ fn main() {{
 }}
 "#
     )
+}
+
+fn rust_rustup_target_tool_program() -> String {
+    r#"
+fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().map(String::as_str) == Some("target")
+        && args.get(1).map(String::as_str) == Some("list")
+    {
+        println!("wasm32-wasip2 (installed)");
+    }
+}
+"#
+    .to_string()
 }
 
 fn rust_cargo_binstall_tool_program(log_file: &Path, fail_on_contains: Option<&str>) -> String {
