@@ -46,7 +46,7 @@ fn write_test_executable(path: &Path, body: &str) {
 }
 
 #[test]
-fn install_fails_fast_if_mksquashfs_missing() {
+fn install_fails_if_mksquashfs_missing_and_no_installer_available() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
 
     let original = std::env::var("PATH").unwrap_or_default();
@@ -60,7 +60,10 @@ fn install_fails_fast_if_mksquashfs_missing() {
         std::env::set_var("PATH", original);
     }
 
-    assert_ne!(status, 0, "install should fail if mksquashfs is missing");
+    assert_ne!(
+        status, 0,
+        "install should fail if mksquashfs is missing and no installer is available"
+    );
 }
 
 #[cfg(unix)]

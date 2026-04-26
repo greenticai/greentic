@@ -393,12 +393,26 @@ gtc install
 
 # Prerequisites
 
-Rust 1.95 is required. Install it, add the WASIp2 target, and install `cargo-binstall`.
+Rust 1.95 is required. `gtc install` checks the install toolchain before it
+installs companion Greentic tools.
+
+Required local tools and targets:
+
+- `mksquashfs`
+- `cargo-component`
+- `wasm32-wasip2`
+- `cargo-binstall`
+
+If `mksquashfs`, `cargo-component`, or `wasm32-wasip2` are missing, `gtc install`
+tries to install them for the current platform before continuing. If automatic
+installation is not available in your environment, install them manually and run
+`gtc install` again.
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup toolchain install 1.95.0
 rustup target add wasm32-wasip2
+cargo install cargo-component
 cargo install cargo-binstall
 ```
 
