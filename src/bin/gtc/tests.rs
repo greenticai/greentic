@@ -37,6 +37,70 @@ use std::thread;
 use tempfile::TempDir;
 use tempfile::tempdir;
 
+#[cfg(unix)]
+fn write_test_executable(path: &Path, body: &str) {
+    fs::write(path, body).expect("write executable");
+    let mut perms = fs::metadata(path).expect("metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(path, perms).expect("chmod");
+}
+
+#[test]
+fn install_fails_fast_if_mksquashfs_missing() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+
+    let original = std::env::var("PATH").unwrap_or_default();
+    unsafe {
+        std::env::set_var("PATH", "/tmp");
+    }
+
+    let status = super::install::ensure_install_prereqs(false, "en");
+
+    unsafe {
+        std::env::set_var("PATH", original);
+    }
+
+    assert_ne!(status, 0, "install should fail if mksquashfs is missing");
+}
+
+#[cfg(unix)]
+#[test]
+fn install_checks_rust_and_targets() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempdir().expect("tempdir");
+
+    write_test_executable(&dir.path().join("mksquashfs"), "#!/bin/sh\nexit 0\n");
+    write_test_executable(
+        &dir.path().join("rustc"),
+        "#!/bin/sh\necho 'rustc 1.95.0'\n",
+    );
+    write_test_executable(
+        &dir.path().join("rustup"),
+        "#!/bin/sh\nif [ \"$1\" = \"target\" ] && [ \"$2\" = \"list\" ]; then\n  echo 'wasm32-wasip2 (installed)'\n  exit 0\nfi\nexit 0\n",
+    );
+    write_test_executable(&dir.path().join("cargo-component"), "#!/bin/sh\nexit 0\n");
+    write_test_executable(
+        &dir.path().join("cargo"),
+        "#!/bin/sh\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.8.1'\n  exit 0\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nexit 0\n",
+    );
+
+    let original = env::var_os("PATH");
+    unsafe {
+        env::set_var("PATH", dir.path());
+    }
+
+    let status = super::install::ensure_install_prereqs(false, "en");
+
+    unsafe {
+        match original {
+            Some(value) => env::set_var("PATH", value),
+            None => env::remove_var("PATH"),
+        }
+    }
+
+    assert_eq!(status, 0);
+}
+
 #[test]
 fn locale_arg_is_detected_from_equals_flag() {
     let args = vec!["gtc".to_string(), "--locale=nl-NL".to_string()];

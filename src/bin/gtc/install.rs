@@ -307,7 +307,39 @@ pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
     }
 }
 
-fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
+pub(crate) fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
+    if which::which("mksquashfs").is_err() {
+        eprintln!(
+            "Missing required tool: mksquashfs (install via `brew install squashfs` or `apt install squashfs-tools`)"
+        );
+        return 1;
+    }
+
+    if !rust_version_satisfies("1.95", debug, locale) {
+        eprintln!("Rust 1.95+ required");
+        return 1;
+    }
+
+    if !wasm32_wasip2_target_installed(debug, locale) {
+        println!("Installing wasm32-wasip2...");
+        let status = run_command("rustup", &["target", "add", "wasm32-wasip2"], debug, locale);
+        if status != 0 {
+            return status;
+        }
+    }
+
+    if which::which("cargo-component").is_err() {
+        println!("Installing cargo-component...");
+        let status = run_cargo(
+            &["install".to_string(), "cargo-component".to_string()],
+            debug,
+            locale,
+        );
+        if status != 0 {
+            return status;
+        }
+    }
+
     let installed_binstall = detect_binstall_version(debug, locale);
     let latest_binstall = latest_binstall_version(debug, locale);
 
@@ -684,23 +716,54 @@ fn parse_numeric_version(raw: &str) -> Vec<u64> {
         .collect()
 }
 
-fn run_cargo_capture(args: &[&str], debug: bool, locale: &str) -> Option<std::process::Output> {
-    if debug {
-        eprintln!("{} cargo {:?}", t(locale, "gtc.debug.exec"), args);
+fn rust_version_satisfies(required: &str, debug: bool, locale: &str) -> bool {
+    let Some(output) = run_command_capture("rustc", &["--version"], debug, locale) else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
     }
-    ProcessCommand::new("cargo")
+    parse_first_semver(&String::from_utf8_lossy(&output.stdout))
+        .map(|installed| semver_compare(&installed, required).is_ge())
+        .unwrap_or(false)
+}
+
+fn wasm32_wasip2_target_installed(debug: bool, locale: &str) -> bool {
+    let Some(output) = run_command_capture("rustup", &["target", "list"], debug, locale) else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+    String::from_utf8_lossy(&output.stdout).contains("wasm32-wasip2 (installed)")
+}
+
+fn run_command_capture(
+    command: &str,
+    args: &[&str],
+    debug: bool,
+    locale: &str,
+) -> Option<std::process::Output> {
+    if debug {
+        eprintln!("{} {command} {:?}", t(locale, "gtc.debug.exec"), args);
+    }
+    ProcessCommand::new(command)
         .args(args)
         .env("GREENTIC_LOCALE", locale)
         .output()
         .ok()
 }
 
-fn run_cargo(args: &[String], debug: bool, locale: &str) -> i32 {
+fn run_cargo_capture(args: &[&str], debug: bool, locale: &str) -> Option<std::process::Output> {
+    run_command_capture("cargo", args, debug, locale)
+}
+
+fn run_command(command: &str, args: &[&str], debug: bool, locale: &str) -> i32 {
     if debug {
-        eprintln!("{} cargo {:?}", t(locale, "gtc.debug.exec"), args);
+        eprintln!("{} {command} {:?}", t(locale, "gtc.debug.exec"), args);
     }
 
-    match ProcessCommand::new("cargo")
+    match ProcessCommand::new(command)
         .args(args)
         .env("GREENTIC_LOCALE", locale)
         .stdin(Stdio::inherit())
@@ -714,6 +777,11 @@ fn run_cargo(args: &[String], debug: bool, locale: &str) -> i32 {
             1
         }
     }
+}
+
+fn run_cargo(args: &[String], debug: bool, locale: &str) -> i32 {
+    let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
+    run_command("cargo", &borrowed, debug, locale)
 }
 
 fn install_tenant_tool_reference(
@@ -2325,6 +2393,16 @@ mod tests {
                 log.display()
             ),
         );
+        write_executable(&dir.path().join("mksquashfs"), "#!/bin/sh\nexit 0\n");
+        write_executable(
+            &dir.path().join("rustc"),
+            "#!/bin/sh\necho 'rustc 1.95.0'\n",
+        );
+        write_executable(
+            &dir.path().join("rustup"),
+            "#!/bin/sh\nif [ \"$1\" = \"target\" ] && [ \"$2\" = \"list\" ]; then\n  echo 'wasm32-wasip2 (installed)'\n  exit 0\nfi\nexit 0\n",
+        );
+        write_executable(&dir.path().join("cargo-component"), "#!/bin/sh\nexit 0\n");
 
         let original_path = env::var_os("PATH");
         unsafe {
@@ -2342,6 +2420,56 @@ mod tests {
         assert!(logged.contains("binstall -y --disable-strategies compile greentic-setup"));
         assert!(logged.contains("binstall -y --disable-strategies compile greentic-start"));
         assert!(logged.contains("binstall -y --disable-strategies compile greentic-deployer"));
+
+        unsafe {
+            match original_path {
+                Some(value) => env::set_var("PATH", value),
+                None => env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_install_prereqs_installs_missing_wasm_target_and_cargo_component() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = executable_tempdir();
+        let cargo_log = dir.path().join("cargo.log");
+        let rustup_log = dir.path().join("rustup.log");
+        let cargo = dir.path().join("cargo");
+        let rustup = dir.path().join("rustup");
+        write_executable(
+            &cargo,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.8.1'\n  exit 0\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nexit 0\n",
+                cargo_log.display()
+            ),
+        );
+        write_executable(
+            &rustup,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"target\" ] && [ \"$2\" = \"list\" ]; then\n  echo 'wasm32-wasip1 (installed)'\n  exit 0\nfi\nexit 0\n",
+                rustup_log.display()
+            ),
+        );
+        write_executable(&dir.path().join("mksquashfs"), "#!/bin/sh\nexit 0\n");
+        write_executable(
+            &dir.path().join("rustc"),
+            "#!/bin/sh\necho 'rustc 1.95.0'\n",
+        );
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", dir.path());
+        }
+
+        assert_eq!(ensure_install_prereqs(false, "en"), 0);
+
+        let cargo_logged = fs::read_to_string(cargo_log).expect("read cargo log");
+        let rustup_logged = fs::read_to_string(rustup_log).expect("read rustup log");
+        assert!(rustup_logged.contains("target list"));
+        assert!(rustup_logged.contains("target add wasm32-wasip2"));
+        assert!(cargo_logged.contains("install cargo-component"));
 
         unsafe {
             match original_path {
@@ -2415,6 +2543,16 @@ mod tests {
                 log.display()
             ),
         );
+        write_executable(&dir.path().join("mksquashfs"), "#!/bin/sh\nexit 0\n");
+        write_executable(
+            &dir.path().join("rustc"),
+            "#!/bin/sh\necho 'rustc 1.95.0'\n",
+        );
+        write_executable(
+            &dir.path().join("rustup"),
+            "#!/bin/sh\nif [ \"$1\" = \"target\" ] && [ \"$2\" = \"list\" ]; then\n  echo 'wasm32-wasip2 (installed)'\n  exit 0\nfi\nexit 0\n",
+        );
+        write_executable(&dir.path().join("cargo-component"), "#!/bin/sh\nexit 0\n");
 
         let original_path = env::var_os("PATH");
         unsafe {
