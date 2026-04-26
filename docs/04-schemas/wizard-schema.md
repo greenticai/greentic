@@ -9,7 +9,7 @@ installed toolchain in this environment.
 
 ## Provenance
 
-- Tool version: `gtc 1.0.5`
+- Tool version: `gtc 0.9.47`
 - Command:
 
 ```bash

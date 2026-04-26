@@ -12,12 +12,12 @@ one of this repo's real canonical production components.
 
 ## Provenance
 
-- Tool version: `greentic-flow 0.5.5`
+- Tool version: `greentic-flow 0.4.70`
 - Command:
 
 ```bash
 greentic-flow component-schema oci://acme/widget:1 \
-  --resolver fixture:///home/maarten/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/greentic-flow-0.5.5/tests/fixtures/registry \
+  --resolver fixture:///home/bimbim/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/greentic-flow-0.5.5/tests/fixtures/registry \
   --format json
 ```
 
