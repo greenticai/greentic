@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-use greentic_i18n::normalize_locale;
+use greentic_i18n_lib::normalize_tag;
 use gtc::error::{GtcError, GtcResult};
 use serde_json::Value;
 
@@ -38,6 +38,23 @@ pub(super) fn tf(locale: &str, key: &'static str, replacements: &[(&str, &str)])
 // these localized strings alive for the whole CLI process.
 pub(super) fn leak_str(value: String) -> &'static str {
     Box::leak(value.into_boxed_str())
+}
+
+fn normalize_locale(value: &str) -> String {
+    let cleaned = value
+        .split('.')
+        .next()
+        .unwrap_or(value)
+        .replace('_', "-")
+        .to_ascii_lowercase();
+    let lower = normalize_tag(&cleaned)
+        .map(|tag| tag.as_str().to_string())
+        .unwrap_or(cleaned);
+    match lower.split('-').next() {
+        Some("en") => "en".to_string(),
+        Some(primary) if !primary.is_empty() => primary.to_string(),
+        _ => "en".to_string(),
+    }
 }
 
 pub(super) fn i18n() -> &'static I18nCatalog {
