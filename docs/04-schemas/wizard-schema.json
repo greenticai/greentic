@@ -882,14 +882,8 @@
                 "component": {
                   "type": "string"
                 },
-                "err_map": {
-                  "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
-                },
                 "flow": {
                   "type": "string"
-                },
-                "in_map": {
-                  "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
                 },
                 "mode": {
                   "enum": [
@@ -899,26 +893,6 @@
                     "remove"
                   ],
                   "type": "string"
-                },
-                "operation": {
-                  "type": "string"
-                },
-                "out_map": {
-                  "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
-                },
-                "routing": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "out",
-                        "reply"
-                      ]
-                    },
-                    {
-                      "type": "array"
-                    }
-                  ],
-                  "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
                 },
                 "step_id": {
                   "type": "string"
@@ -948,14 +922,8 @@
                 "component": {
                   "type": "string"
                 },
-                "err_map": {
-                  "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
-                },
                 "flow": {
                   "type": "string"
-                },
-                "in_map": {
-                  "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
                 },
                 "mode": {
                   "enum": [
@@ -965,26 +933,6 @@
                     "remove"
                   ],
                   "type": "string"
-                },
-                "operation": {
-                  "type": "string"
-                },
-                "out_map": {
-                  "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
-                },
-                "routing": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "out",
-                        "reply"
-                      ]
-                    },
-                    {
-                      "type": "array"
-                    }
-                  ],
-                  "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
                 },
                 "step_id": {
                   "type": "string"
@@ -1015,14 +963,8 @@
                 "component": {
                   "type": "string"
                 },
-                "err_map": {
-                  "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
-                },
                 "flow": {
                   "type": "string"
-                },
-                "in_map": {
-                  "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
                 },
                 "mode": {
                   "enum": [
@@ -1032,26 +974,6 @@
                     "remove"
                   ],
                   "type": "string"
-                },
-                "operation": {
-                  "type": "string"
-                },
-                "out_map": {
-                  "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
-                },
-                "routing": {
-                  "anyOf": [
-                    {
-                      "enum": [
-                        "out",
-                        "reply"
-                      ]
-                    },
-                    {
-                      "type": "array"
-                    }
-                  ],
-                  "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
                 },
                 "step_id": {
                   "type": "string"
@@ -1194,14 +1116,8 @@
                       "component": {
                         "type": "string"
                       },
-                      "err_map": {
-                        "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
-                      },
                       "flow": {
                         "type": "string"
-                      },
-                      "in_map": {
-                        "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
                       },
                       "mode": {
                         "enum": [
@@ -1210,26 +1126,6 @@
                           "update",
                           "remove"
                         ]
-                      },
-                      "operation": {
-                        "type": "string"
-                      },
-                      "out_map": {
-                        "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
-                      },
-                      "routing": {
-                        "anyOf": [
-                          {
-                            "enum": [
-                              "out",
-                              "reply"
-                            ]
-                          },
-                          {
-                            "type": "array"
-                          }
-                        ],
-                        "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
                       },
                       "step_id": {
                         "type": "string"
@@ -1257,14 +1153,8 @@
                       "component": {
                         "type": "string"
                       },
-                      "err_map": {
-                        "description": "Optional flow authoring error-output mapping. This is separate from component `answers`."
-                      },
                       "flow": {
                         "type": "string"
-                      },
-                      "in_map": {
-                        "description": "Optional flow authoring input mapping. This is separate from component `answers` and may reference flow payload/state/config such as `config.<key>`."
                       },
                       "mode": {
                         "enum": [
@@ -1273,26 +1163,6 @@
                           "update",
                           "remove"
                         ]
-                      },
-                      "operation": {
-                        "type": "string"
-                      },
-                      "out_map": {
-                        "description": "Optional flow authoring success-output mapping. This is separate from component `answers`."
-                      },
-                      "routing": {
-                        "anyOf": [
-                          {
-                            "enum": [
-                              "out",
-                              "reply"
-                            ]
-                          },
-                          {
-                            "type": "array"
-                          }
-                        ],
-                        "description": "Optional routing intent. Use \"out\", \"reply\", or an explicit route array such as [{\"to\":\"next\"}]."
                       },
                       "step_id": {
                         "type": "string"
@@ -1370,41 +1240,6 @@
         "answers": {
           "additionalProperties": false,
           "properties": {
-            "asset_staging": {
-              "description": "External files or directories to copy into the generated pack root before delegate/build steps run. Relative sources resolve from the AnswerDocument location; destinations must stay inside pack_dir.",
-              "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "destination": {
-                    "type": "string"
-                  },
-                  "kind": {
-                    "enum": [
-                      "file",
-                      "directory"
-                    ],
-                    "type": "string"
-                  },
-                  "overwrite": {
-                    "default": true,
-                    "type": "boolean"
-                  },
-                  "recursive": {
-                    "type": "boolean"
-                  },
-                  "source": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "source",
-                  "destination",
-                  "kind"
-                ],
-                "type": "object"
-              },
-              "type": "array"
-            },
             "component_wizard_answers": {
               "$ref": "#/$defs/greentic_component_wizard_any_mode",
               "description": "Nested greentic-component wizard answers for component-level replay inside greentic-pack."
