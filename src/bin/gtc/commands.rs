@@ -213,9 +213,7 @@ fn capture_companion_schema(binary: &str, debug: bool, locale: &str) -> Option<V
         Ok(raw) => match serde_json::from_str(&raw) {
             Ok(value) => Some(value),
             Err(err) => {
-                eprintln!(
-                    "warning: companion schema from {binary} is not valid JSON: {err}"
-                );
+                eprintln!("warning: companion schema from {binary} is not valid JSON: {err}");
                 None
             }
         },
