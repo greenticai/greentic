@@ -16,16 +16,21 @@ concurrency:
 
 jobs:
   # Stage 1 — tests + version stamping. Outputs the stamped dev version
-  # {M.m.GITHUB_RUN_ID} consumed by binaries + publish.
+  # consumed by binaries + publish. Form is M.m.p-dev.{RUN_ID} for
+  # dual-role repos (require-pre-release: true) so dev library publishes
+  # sort below stable on crates.io; M.m.{RUN_ID} regular release for
+  # binary-only repos (no stable namespace to protect) and pure libraries.
   dev-prepare:
     uses: greenticai/.github/.github/workflows/dev-prepare.yml@main
+    with:
+      require-pre-release: true
 
   dev-binaries-gtc:
     needs: dev-prepare
     uses: greenticai/.github/.github/workflows/dev-release-binaries.yml@main
     with:
       package: gtc
-      version: ${{ needs.dev-prepare.outputs.version }}
+      version: ${{ needs.dev-prepare.outputs.binary-version }}
 
   dev-publish:
     needs: [dev-prepare, dev-binaries-gtc]
@@ -33,6 +38,8 @@ jobs:
     with:
       version: ${{ needs.dev-prepare.outputs.version }}
       crates: "gtc"
+      binary-version: ${{ needs.dev-prepare.outputs.binary-version }}
       binary-crates: "gtc"
       dual-role-binary-crates: "gtc"
+      require-pre-release: true
     secrets: inherit
