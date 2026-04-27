@@ -1,6 +1,6 @@
 [package]
 name = "gtc"
-version = "1.0.10"
+version = "1.0.11"
 edition = "2024"
 rust-version = "1.95"
 description = "Greentic - The digital workers operating system"
@@ -21,7 +21,7 @@ clap = { version = "4.5", features = ["std"] }
 directories = "6"
 flate2 = "1.1"
 greentic-distributor-client = { version = "0.5", features = ["dist-client", "oci-components"] }
-greentic-i18n = "0.4"
+greentic-i18n-lib = "0.5"
 greentic-types = "0.5"
 # `oci-distribution` 0.11.0 is still the newest crates.io release available as
 # of 2026-03-30, so ARCH-017 is tracked as resolved-by-verification rather than
@@ -40,6 +40,7 @@ tar = "0.4"
 tempfile = "3.23"
 thiserror = "2.0"
 tokio = { version = "1.52", features = ["rt"] }
+which = "8"
 zeroize = "1.8"
 zip = { version = "8", default-features = false, features = ["deflate"] }
 

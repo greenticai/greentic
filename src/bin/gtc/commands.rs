@@ -3,6 +3,7 @@ use std::fs;
 use std::io::{self, Write};
 
 use clap::ArgMatches;
+use serde_json::Value;
 
 use crate::admin::{
     load_admin_registry, remove_admin_registry_entry, run_admin_access, run_admin_add_client,
@@ -16,7 +17,7 @@ use crate::docs_cmd::run_docs;
 use crate::extensions::{run_extension_setup, run_extension_start, run_extension_wizard};
 use crate::i18n_support::i18n;
 use crate::install::{run_install, run_update};
-use crate::process::{passthrough, run_doctor};
+use crate::process::{passthrough, run_binary_capture, run_doctor};
 use crate::router::{
     collect_tail, detect_locale, locale_from_args, parse_raw_passthrough, passthrough_help_request,
     route_passthrough_subcommand,
@@ -104,10 +105,131 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 return run_extension_setup(sub_matches, &tail, debug, &locale);
             }
             let (binary, args) = route_passthrough_subcommand(name, &tail, &locale).expect("route");
+            if name == "wizard" && has_schema_flag(&args) {
+                return run_wizard_schema(binary, &args, debug, &locale);
+            }
             passthrough(binary, &args, debug, &locale)
         }
         _ => 2,
     }
+}
+
+fn run_wizard_schema(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
+    let raw = match run_binary_capture(binary, args, debug, locale) {
+        Ok(raw) => raw,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let mut schema: Value = match serde_json::from_str(&raw) {
+        Ok(schema) => schema,
+        Err(err) => {
+            eprintln!("invalid wizard schema JSON from {binary}: {err}");
+            return 1;
+        }
+    };
+    rewrite_nested_schema_refs(&mut schema);
+    match serde_json::to_string_pretty(&schema) {
+        Ok(rendered) => {
+            println!("{rendered}");
+            0
+        }
+        Err(err) => {
+            eprintln!("failed to render wizard schema JSON: {err}");
+            1
+        }
+    }
+}
+
+fn has_schema_flag(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--schema" || arg.starts_with("--schema="))
+}
+
+fn rewrite_nested_schema_refs(schema: &mut Value) {
+    rewrite_nested_schema_refs_at(schema, &[], &[], &[], false);
+}
+
+fn rewrite_nested_schema_refs_at(
+    value: &mut Value,
+    value_path: &[String],
+    defs_path: &[String],
+    def_names: &[String],
+    nested_defs: bool,
+) {
+    match value {
+        Value::Object(object) => {
+            let mut current_defs_path = defs_path.to_vec();
+            let mut current_def_names = def_names.to_vec();
+            let mut current_nested_defs = nested_defs;
+            if let Some(Value::Object(defs)) = object.get("$defs") {
+                current_defs_path = value_path.to_vec();
+                current_defs_path.push("$defs".to_string());
+                current_def_names = defs.keys().cloned().collect();
+                current_nested_defs = current_defs_path != ["$defs".to_string()];
+            }
+
+            if current_nested_defs
+                && let Some(Value::String(reference)) = object.get_mut("$ref")
+                && let Some(rewritten) =
+                    rewrite_local_ref(reference, &current_defs_path, &current_def_names)
+            {
+                *reference = rewritten;
+            }
+
+            for (key, child) in object.iter_mut() {
+                let mut child_path = value_path.to_vec();
+                child_path.push(key.clone());
+                rewrite_nested_schema_refs_at(
+                    child,
+                    &child_path,
+                    &current_defs_path,
+                    &current_def_names,
+                    current_nested_defs,
+                );
+            }
+        }
+        Value::Array(items) => {
+            for (index, item) in items.iter_mut().enumerate() {
+                let mut item_path = value_path.to_vec();
+                item_path.push(index.to_string());
+                rewrite_nested_schema_refs_at(item, &item_path, defs_path, def_names, nested_defs);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn rewrite_local_ref(
+    reference: &str,
+    defs_path: &[String],
+    def_names: &[String],
+) -> Option<String> {
+    let remaining = reference.strip_prefix("#/$defs/")?;
+    let (name, suffix) = remaining.split_once('/').unwrap_or((remaining, ""));
+    if !def_names.iter().any(|def_name| def_name == name) {
+        return None;
+    }
+    let mut pointer = format!("#/{}", json_pointer_path(defs_path));
+    pointer.push('/');
+    pointer.push_str(&escape_json_pointer_segment(name));
+    if !suffix.is_empty() {
+        pointer.push('/');
+        pointer.push_str(suffix);
+    }
+    Some(pointer)
+}
+
+fn json_pointer_path(path: &[String]) -> String {
+    path.iter()
+        .map(|segment| escape_json_pointer_segment(segment))
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn escape_json_pointer_segment(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
 }
 
 fn run_help(sub_matches: &ArgMatches, locale: &str) -> i32 {
