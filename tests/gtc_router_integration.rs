@@ -243,7 +243,25 @@ fn wizard_schema_passthrough_emits_dev_schema() {
             "answers": {
                 "type": "object",
                 "properties": {
-                    "selected_action": { "enum": ["pack", "bundle"] }
+                    "selected_action": { "enum": ["pack", "bundle"] },
+                    "delegate_answer_document": {
+                        "$ref": "#/$defs/greentic_pack_wizard_answers"
+                    }
+                }
+            }
+        },
+        "$defs": {
+            "greentic_pack_wizard_answers": {
+                "type": "object",
+                "$defs": {
+                    "greentic_component_wizard_any_mode": {
+                        "type": "object"
+                    }
+                },
+                "properties": {
+                    "component_wizard_answers": {
+                        "$ref": "#/$defs/greentic_component_wizard_any_mode"
+                    }
                 }
             }
         }
@@ -286,6 +304,62 @@ fn wizard_schema_passthrough_emits_dev_schema() {
             .collect::<Vec<_>>(),
         vec!["pack", "bundle"]
     );
+    assert_all_local_refs_exist(&emitted);
+    assert_eq!(
+        emitted
+            .pointer("/$defs/greentic_pack_wizard_answers/properties/component_wizard_answers/$ref")
+            .and_then(serde_json::Value::as_str),
+        Some("#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_any_mode")
+    );
+}
+
+fn assert_all_local_refs_exist(schema: &serde_json::Value) {
+    let mut missing = Vec::new();
+    collect_missing_local_refs(schema, schema, "", &mut missing);
+    assert!(
+        missing.is_empty(),
+        "schema contains missing local refs: {missing:?}"
+    );
+}
+
+fn collect_missing_local_refs(
+    root: &serde_json::Value,
+    value: &serde_json::Value,
+    path: &str,
+    missing: &mut Vec<String>,
+) {
+    match value {
+        serde_json::Value::Object(object) => {
+            if let Some(reference) = object.get("$ref").and_then(serde_json::Value::as_str)
+                && reference.starts_with("#/")
+                && !json_pointer_exists(root, reference)
+            {
+                missing.push(format!("{path} -> {reference}"));
+            }
+            for (key, child) in object {
+                let child_path = format!("{path}/{}", escape_json_pointer_segment(key));
+                collect_missing_local_refs(root, child, &child_path, missing);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, child) in items.iter().enumerate() {
+                let child_path = format!("{path}/{index}");
+                collect_missing_local_refs(root, child, &child_path, missing);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn json_pointer_exists(root: &serde_json::Value, reference: &str) -> bool {
+    let Some(pointer) = reference.strip_prefix('#') else {
+        return false;
+    };
+    root.pointer(pointer).is_some()
+}
+
+fn escape_json_pointer_segment(segment: &str) -> String {
+    segment.replace('~', "~0").replace('/', "~1")
 }
 
 #[test]
@@ -513,6 +587,7 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
     sandbox.write_exit_tool("greentic-operator", 0);
     sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
     fs::create_dir_all(&cargo_home).expect("cargo_home");
 
     let mut extra = HashMap::new();
@@ -547,6 +622,7 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
     sandbox.write_exit_tool("greentic-operator", 0);
     sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
 
     let mock_root = sandbox.path().join("mock-dist");
     fs::create_dir_all(&mock_root).expect("mock root");
@@ -709,6 +785,7 @@ fn install_skips_tenant_when_public_install_fails() {
     sandbox.write_exit_tool("greentic-dev", 23);
     sandbox.write_exit_tool("greentic-operator", 0);
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
 
     let mock_root = sandbox.path().join("mock-dist");
     fs::create_dir_all(&mock_root).expect("mock root");
@@ -1191,6 +1268,16 @@ impl TestSandbox {
         );
     }
 
+    fn write_install_prereq_tools(&self) {
+        self.write_exit_tool("mksquashfs", 0);
+        self.write_stdout_tool("rustc", "rustc 1.95.0\n", 0);
+        self.compile_rust_tool_at(
+            &self.binary_path("rustup"),
+            &rust_rustup_target_tool_program(),
+        );
+        self.write_exit_tool("cargo-component", 0);
+    }
+
     #[cfg(unix)]
     fn write_setup_bundle_tool(&self, name: &str, log_file: &Path) {
         let path = self.binary_path(name);
@@ -1336,6 +1423,20 @@ fn main() {{
 }}
 "#
     )
+}
+
+fn rust_rustup_target_tool_program() -> String {
+    r#"
+fn main() {
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    if args.first().map(String::as_str) == Some("target")
+        && args.get(1).map(String::as_str) == Some("list")
+    {
+        println!("wasm32-wasip2 (installed)");
+    }
+}
+"#
+    .to_string()
 }
 
 fn rust_cargo_binstall_tool_program(log_file: &Path, fail_on_contains: Option<&str>) -> String {

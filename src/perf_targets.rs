@@ -4,7 +4,7 @@ use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use crate::config::GtcConfig;
-use greentic_i18n::{normalize_locale, select_locale_with_sources};
+use greentic_i18n_lib::normalize_tag;
 use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone)]
@@ -163,6 +163,41 @@ pub fn detect_locale(
     );
 
     normalize_locale(&selected)
+}
+
+fn normalize_locale(value: &str) -> String {
+    let cleaned = value
+        .split('.')
+        .next()
+        .unwrap_or(value)
+        .replace('_', "-")
+        .to_ascii_lowercase();
+    let lower = normalize_tag(&cleaned)
+        .map(|tag| tag.as_str().to_string())
+        .unwrap_or(cleaned);
+    match lower.split('-').next() {
+        Some("en") => "en".to_string(),
+        Some(primary) if !primary.is_empty() => primary.to_string(),
+        _ => "en".to_string(),
+    }
+}
+
+fn select_locale_with_sources(
+    cli_locale: Option<&str>,
+    explicit: Option<&str>,
+    env_locale: Option<&str>,
+    system_locale: Option<&str>,
+) -> String {
+    for value in [cli_locale, explicit, env_locale, system_locale]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+    {
+        if !value.is_empty() {
+            return normalize_locale(value);
+        }
+    }
+    "en".to_string()
 }
 
 pub fn locale_from_args(raw_args: &[String]) -> Option<String> {
