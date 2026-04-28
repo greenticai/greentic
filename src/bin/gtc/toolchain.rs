@@ -950,7 +950,7 @@ mod tests {
             )
             .get_matches_from(["toolchain"]);
 
-        let options = ToolchainInstallOptions::from_matches(&matches).expect("options");
+        let options = ToolchainInstallOptions::from_matches(&matches, "stable").expect("options");
         assert_eq!(
             options.source,
             ToolchainSource::Channel("stable".to_string())
@@ -983,7 +983,7 @@ mod tests {
                 "--dry-run",
             ]);
 
-        let options = ToolchainInstallOptions::from_matches(&matches).expect("options");
+        let options = ToolchainInstallOptions::from_matches(&matches, "stable").expect("options");
         assert_eq!(
             options.source,
             ToolchainSource::LocalManifest(PathBuf::from("/tmp/manifest.json"))
