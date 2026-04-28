@@ -32,7 +32,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
             Arg::new("version")
                 .long("version")
                 .short('V')
-                .action(ArgAction::Version)
+                .action(ArgAction::SetTrue)
                 .global(true)
                 .help_heading(options_heading)
                 .help(t(locale, "gtc.help.flag.version").into_owned()),

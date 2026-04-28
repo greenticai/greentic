@@ -541,6 +541,27 @@ pub(crate) fn read_installed_toolchain() -> GtcResult<Option<InstalledToolchain>
     Ok(Some(state))
 }
 
+pub(crate) fn installed_toolchain_label() -> String {
+    match read_installed_toolchain() {
+        Ok(Some(state)) => {
+            let mut label = state.version;
+            if let Some(channel) = state.channel.filter(|value| !value.trim().is_empty()) {
+                label.push_str(&format!(" ({channel})"));
+            }
+            if let Some(digest) = state
+                .resolved_digest
+                .as_deref()
+                .filter(|value| !value.trim().is_empty())
+            {
+                label.push_str(&format!(" [{digest}]"));
+            }
+            label
+        }
+        Ok(None) => "not installed".to_string(),
+        Err(err) => format!("unknown ({err})"),
+    }
+}
+
 pub(crate) fn write_installed_toolchain(state: &InstalledToolchain) -> GtcResult<()> {
     let path = installed_toolchain_path()?;
     if let Some(parent) = path.parent() {

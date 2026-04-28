@@ -7,6 +7,7 @@ use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 
 use super::deploy::{ChildProcessEnv, StartTarget};
+use super::toolchain::installed_toolchain_label;
 use super::{
     BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, FLOW_BIN, OP_BIN, PACK_BIN, RUNNER_BIN,
     SECRETS_BIN, SETUP_BIN, START_BIN,
@@ -212,6 +213,11 @@ fn passthrough_in_dir_with_env(
 
 pub(super) fn run_doctor(locale: &str) -> i32 {
     let mut failed = false;
+
+    println!(
+        "Greentic toolchain release: {}",
+        installed_toolchain_label()
+    );
 
     for binary in [
         DEV_BIN,

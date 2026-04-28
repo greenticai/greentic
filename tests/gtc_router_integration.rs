@@ -7,13 +7,36 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
 fn version_flag_prints_cargo_package_version() {
-    let output = Command::new(env!("CARGO_BIN_EXE_gtc"))
-        .arg("--version")
-        .output()
-        .expect("run gtc --version");
+    let sandbox = TestSandbox::new("version_flag_prints_cargo_package_version");
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+    let output = sandbox.run_gtc_capture(["--version"], extra);
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.trim().starts_with("gtc "));
+    assert!(stdout.starts_with("gtc "));
+    assert!(stdout.contains("Greentic toolchain release: not installed"));
+}
+
+#[test]
+fn version_flag_prints_installed_toolchain_release() {
+    let sandbox = TestSandbox::new("version_flag_prints_installed_toolchain_release");
+    let state_dir = sandbox.path().join("toolchain-state");
+    write_installed_toolchain_state(&state_dir, "1.0.4", "stable", "sha256:testdigest");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        state_dir.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["--version"], extra);
+    assert_eq!(output.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("gtc "));
+    assert!(stdout.contains("Greentic toolchain release: 1.0.4 (stable) [sha256:testdigest]"));
 }
 
 #[test]
@@ -479,6 +502,12 @@ fn doctor_uses_greentic_dev_bin_override() {
     sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
 
     let mut extra = HashMap::new();
+    let state_dir = sandbox.path().join("toolchain-state");
+    write_installed_toolchain_state(&state_dir, "1.0.4", "stable", "sha256:testdigest");
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        state_dir.display().to_string(),
+    );
     extra.insert(
         "GREENTIC_DEV_BIN".to_string(),
         override_bin.display().to_string(),
@@ -488,6 +517,7 @@ fn doctor_uses_greentic_dev_bin_override() {
     assert_eq!(output.status.code(), Some(0));
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Greentic toolchain release: 1.0.4 (stable) [sha256:testdigest]"));
     assert!(stdout.contains("greentic-dev: OK (greentic-dev local-test)"));
     assert!(stdout.contains("greentic-bundle: OK (greentic-bundle 0.0.0)"));
     assert!(stdout.contains("greentic-component: OK (greentic-component 0.0.0)"));
@@ -1507,6 +1537,31 @@ fn write_latest_toolchain_manifest(root: &Path) -> PathBuf {
     )
     .expect("write latest toolchain manifest");
     path
+}
+
+fn write_installed_toolchain_state(root: &Path, version: &str, channel: &str, digest: &str) {
+    fs::create_dir_all(root).expect("create toolchain state dir");
+    let state = serde_json::json!({
+        "schema": "greentic.installed-toolchain.v1",
+        "source_kind": "channel",
+        "source": format!("ghcr.io/greenticai/greentic-versions/gtc:{channel}"),
+        "resolved_digest": digest,
+        "channel": channel,
+        "version": version,
+        "installed_at": "2026-04-28T00:00:00Z",
+        "packages": [
+            {
+                "crate": "greentic-dev",
+                "bins": ["greentic-dev"],
+                "version": "0.5.9"
+            }
+        ]
+    });
+    fs::write(
+        root.join("installed.json"),
+        serde_json::to_vec_pretty(&state).expect("installed state json"),
+    )
+    .expect("write installed toolchain state");
 }
 
 fn rust_exit_tool_program(exit_code: i32) -> String {

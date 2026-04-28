@@ -22,6 +22,7 @@ use crate::router::{
     collect_tail, detect_locale, locale_from_args, parse_raw_passthrough, passthrough_help_request,
     route_passthrough_subcommand,
 };
+use crate::toolchain::installed_toolchain_label;
 
 pub(super) fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
@@ -47,9 +48,14 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
 
     let debug = matches.get_flag("debug-router");
 
+    if matches.get_flag("version") {
+        print_version();
+        return 0;
+    }
+
     match matches.subcommand() {
         Some(("version", _)) => {
-            println!("gtc {}", env!("CARGO_PKG_VERSION"));
+            print_version();
             0
         }
         Some(("doctor", _)) => run_doctor(&locale),
@@ -115,6 +121,14 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         }
         _ => 2,
     }
+}
+
+fn print_version() {
+    println!("gtc {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "Greentic toolchain release: {}",
+        installed_toolchain_label()
+    );
 }
 
 fn run_wizard_schema(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
