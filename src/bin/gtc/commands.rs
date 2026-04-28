@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 
 use clap::ArgMatches;
 use serde_json::Value;
@@ -22,9 +23,11 @@ use crate::router::{
     collect_tail, detect_locale, locale_from_args, parse_raw_passthrough, passthrough_help_request,
     route_passthrough_subcommand,
 };
+use crate::toolchain::installed_toolchain_label;
 
 pub(super) fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
+    let default_install_channel = default_install_channel_for_invocation(raw_args.first());
     let cli_locale = locale_from_args(&raw_args);
     let locale = detect_locale(&raw_args, i18n.default_locale());
     let raw_passthrough = parse_raw_passthrough(&raw_args);
@@ -47,14 +50,21 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
 
     let debug = matches.get_flag("debug-router");
 
+    if matches.get_flag("version") {
+        print_version();
+        return 0;
+    }
+
     match matches.subcommand() {
         Some(("version", _)) => {
-            println!("gtc {}", env!("CARGO_PKG_VERSION"));
+            print_version();
             0
         }
         Some(("doctor", _)) => run_doctor(&locale),
         Some(("docs", sub_matches)) => run_docs(sub_matches, debug, &locale),
-        Some(("install", sub_matches)) => run_install(sub_matches, debug, &locale),
+        Some(("install", sub_matches)) => {
+            run_install(sub_matches, default_install_channel, debug, &locale)
+        }
         Some(("update", _)) => run_update(debug, &locale),
         Some(("help", sub_matches)) => run_help(sub_matches, &locale),
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
@@ -106,12 +116,40 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
             }
             let (binary, args) = route_passthrough_subcommand(name, &tail, &locale).expect("route");
             if name == "wizard" && has_schema_flag(&args) {
+                if has_schema_full_flag(&args) {
+                    return run_wizard_schema_full(binary, &args, debug, &locale);
+                }
                 return run_wizard_schema(binary, &args, debug, &locale);
             }
             passthrough(binary, &args, debug, &locale)
         }
         _ => 2,
     }
+}
+
+pub(super) fn default_install_channel_for_invocation(invocation: Option<&String>) -> &'static str {
+    let Some(invocation) = invocation else {
+        return "stable";
+    };
+    let Some(file_name) = Path::new(invocation)
+        .file_stem()
+        .and_then(|value| value.to_str())
+    else {
+        return "stable";
+    };
+    if file_name.ends_with("-dev") {
+        "dev"
+    } else {
+        "stable"
+    }
+}
+
+fn print_version() {
+    println!("gtc {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "Greentic toolchain release: {}",
+        installed_toolchain_label()
+    );
 }
 
 fn run_wizard_schema(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
@@ -145,6 +183,80 @@ fn run_wizard_schema(binary: &str, args: &[String], debug: bool, locale: &str) -
 fn has_schema_flag(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--schema" || arg.starts_with("--schema="))
+}
+
+fn has_schema_full_flag(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--schema=full")
+}
+
+fn strip_schema_full(args: &[String]) -> Vec<String> {
+    args.iter()
+        .map(|arg| {
+            if arg == "--schema=full" {
+                "--schema".to_string()
+            } else {
+                arg.clone()
+            }
+        })
+        .collect()
+}
+
+fn run_wizard_schema_full(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
+    let stripped = strip_schema_full(args);
+
+    let launcher_raw = match run_binary_capture(binary, &stripped, debug, locale) {
+        Ok(raw) => raw,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let mut launcher: Value = match serde_json::from_str(&launcher_raw) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("invalid wizard schema JSON from {binary}: {err}");
+            return 1;
+        }
+    };
+    rewrite_nested_schema_refs(&mut launcher);
+
+    let component =
+        capture_companion_schema(super::COMPONENT_BIN, debug, locale).unwrap_or(Value::Null);
+    let flow = capture_companion_schema(super::FLOW_BIN, debug, locale).unwrap_or(Value::Null);
+
+    let aggregated = serde_json::json!({
+        "launcher": launcher,
+        "component": component,
+        "flow": flow,
+    });
+
+    match serde_json::to_string_pretty(&aggregated) {
+        Ok(rendered) => {
+            println!("{rendered}");
+            0
+        }
+        Err(err) => {
+            eprintln!("failed to render wizard schema JSON: {err}");
+            1
+        }
+    }
+}
+
+fn capture_companion_schema(binary: &str, debug: bool, locale: &str) -> Option<Value> {
+    let args = vec!["wizard".to_string(), "--schema".to_string()];
+    match run_binary_capture(binary, &args, debug, locale) {
+        Ok(raw) => match serde_json::from_str(&raw) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                eprintln!("warning: companion schema from {binary} is not valid JSON: {err}");
+                None
+            }
+        },
+        Err(err) => {
+            eprintln!("warning: companion schema from {binary} unavailable: {err}");
+            None
+        }
+    }
 }
 
 fn rewrite_nested_schema_refs(schema: &mut Value) {

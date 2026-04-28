@@ -22,6 +22,8 @@ mod process;
 mod prompt;
 #[path = "gtc/router.rs"]
 mod router;
+#[path = "gtc/toolchain.rs"]
+mod toolchain;
 
 use std::path::Path;
 
@@ -40,6 +42,9 @@ use archive::{extract_tar_archive, extract_zip_bytes};
 #[cfg(test)]
 #[allow(unused_imports)]
 use cli::build_cli;
+#[cfg(test)]
+#[allow(unused_imports)]
+use commands::default_install_channel_for_invocation;
 use commands::run;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -69,7 +74,10 @@ use install::{
 };
 #[cfg(test)]
 #[allow(unused_imports)]
-use process::{apply_default_deploy_env_for_target, resolve_companion_binary_from};
+use process::{
+    apply_default_deploy_env_for_target, resolve_companion_binary_from,
+    resolve_companion_binary_from_invocation,
+};
 #[cfg(test)]
 #[allow(unused_imports)]
 use prompt::parse_prompt_choice;
@@ -89,12 +97,18 @@ const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
 const START_BIN: &str = "greentic-start";
+const COMPONENT_BIN: &str = "greentic-component";
+const FLOW_BIN: &str = "greentic-flow";
+const PACK_BIN: &str = "greentic-pack";
+const RUNNER_BIN: &str = "greentic-runner";
+const SECRETS_BIN: &str = "greentic-secrets";
 fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
     let exit_code = run(raw_args);
     std::process::exit(exit_code);
 }
 
+#[allow(dead_code)]
 fn sha256_file(path: &Path) -> Result<String, String> {
     perf_sha256_file(path)
 }
