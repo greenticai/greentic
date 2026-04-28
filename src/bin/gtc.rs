@@ -89,6 +89,8 @@ const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
 const SETUP_BIN: &str = "greentic-setup";
 const START_BIN: &str = "greentic-start";
+const COMPONENT_BIN: &str = "greentic-component";
+const FLOW_BIN: &str = "greentic-flow";
 fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
     let exit_code = run(raw_args);
