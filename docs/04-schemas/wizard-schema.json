@@ -369,19 +369,19 @@
           "description": "Any greentic-component wizard answer document supported by greentic-pack replay.",
           "oneOf": [
             {
-              "$ref": "#/$defs/greentic_component_wizard_create"
+              "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_create"
             },
             {
-              "$ref": "#/$defs/greentic_component_wizard_add_operation"
+              "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_add_operation"
             },
             {
-              "$ref": "#/$defs/greentic_component_wizard_update_operation"
+              "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_update_operation"
             },
             {
-              "$ref": "#/$defs/greentic_component_wizard_build_test"
+              "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_build_test"
             },
             {
-              "$ref": "#/$defs/greentic_component_wizard_doctor"
+              "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_doctor"
             }
           ]
         },
@@ -698,6 +698,73 @@
           "title": "greentic-component wizard doctor answers",
           "type": "object"
         },
+        "greentic_component_wizard_qa_envelope": {
+          "additionalProperties": true,
+          "description": "greentic-component QA replay envelope accepted by `greentic-component wizard --qa-answers`.",
+          "properties": {
+            "fields": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "mode": {
+              "default": "create",
+              "type": "string"
+            },
+            "schema": {
+              "const": "component-wizard-run/v1",
+              "type": "string"
+            }
+          },
+          "required": [
+            "schema",
+            "mode",
+            "fields"
+          ],
+          "type": "object"
+        },
+        "greentic_component_wizard_simple_fields": {
+          "additionalProperties": true,
+          "description": "Convenience shape for answers.component_wizard_answers. greentic-pack wraps this object in the greentic-component QA replay envelope before invoking `greentic-component wizard --qa-answers`.",
+          "properties": {
+            "abi_version": {
+              "type": "string"
+            },
+            "component_name": {
+              "type": "string"
+            },
+            "filesystem_mode": {
+              "type": "string"
+            },
+            "http_client": {
+              "type": "boolean"
+            },
+            "messaging_inbound": {
+              "type": "boolean"
+            },
+            "messaging_outbound": {
+              "type": "boolean"
+            },
+            "output_dir": {
+              "type": "string"
+            },
+            "secret_keys": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "secrets_enabled": {
+              "type": "boolean"
+            },
+            "telemetry_scope": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "component_name"
+          ],
+          "type": "object"
+        },
         "greentic_component_wizard_update_operation": {
           "$id": "https://greenticai.github.io/greentic-component/schemas/wizard/update-operation.answers.schema.json",
           "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -877,7 +944,7 @@
                   "type": "string"
                 },
                 "answers": {
-                  "$ref": "#/$defs/greentic_flow_step_answers"
+                  "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_flow_step_answers"
                 },
                 "component": {
                   "type": "string"
@@ -943,7 +1010,7 @@
                   "type": "string"
                 },
                 "answers": {
-                  "$ref": "#/$defs/greentic_flow_step_answers"
+                  "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_flow_step_answers"
                 },
                 "component": {
                   "type": "string"
@@ -1010,7 +1077,7 @@
                   "type": "string"
                 },
                 "answers": {
-                  "$ref": "#/$defs/greentic_flow_step_answers"
+                  "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_flow_step_answers"
                 },
                 "component": {
                   "type": "string"
@@ -1071,7 +1138,7 @@
           "properties": {
             "actions": {
               "items": {
-                "$ref": "#/$defs/greentic_flow_wizard_action"
+                "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_flow_wizard_action"
               },
               "type": "array"
             },
@@ -1406,8 +1473,18 @@
               "type": "array"
             },
             "component_wizard_answers": {
-              "$ref": "#/$defs/greentic_component_wizard_any_mode",
-              "description": "Nested greentic-component wizard answers for component-level replay inside greentic-pack."
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_any_mode"
+                },
+                {
+                  "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_simple_fields"
+                },
+                {
+                  "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_component_wizard_qa_envelope"
+                }
+              ],
+              "description": "Nested greentic-component wizard answers for component-level replay inside greentic-pack. Accepts either the greentic-component QA replay envelope or the simple component fields object; simple fields are wrapped as {\"schema\":\"component-wizard-run/v1\",\"mode\":\"create\",\"fields\":...} before replay."
             },
             "create_pack_id": {
               "type": "string"
@@ -1445,10 +1522,10 @@
             "flow_wizard_answers": {
               "anyOf": [
                 {
-                  "$ref": "#/$defs/greentic_flow_wizard_generic_schema"
+                  "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_flow_wizard_generic_schema"
                 },
                 {
-                  "$ref": "#/$defs/greentic_flow_wizard_runtime_schema"
+                  "$ref": "#/$defs/greentic_pack_wizard_answers/$defs/greentic_flow_wizard_runtime_schema"
                 }
               ],
               "description": "Nested greentic-flow wizard answers. The generic plan contract is provided here, and the current greentic-flow runtime schema is embedded under #/$defs/greentic_flow_wizard_runtime_schema."

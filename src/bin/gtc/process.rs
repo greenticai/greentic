@@ -7,7 +7,11 @@ use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 
 use super::deploy::{ChildProcessEnv, StartTarget};
-use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, START_BIN};
+use super::toolchain::installed_toolchain_label;
+use super::{
+    BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, FLOW_BIN, OP_BIN, PACK_BIN, RUNNER_BIN,
+    SECRETS_BIN, SETUP_BIN, START_BIN,
+};
 use crate::i18n_support::{t, t_or};
 
 pub(super) fn run_binary_checked(
@@ -138,7 +142,17 @@ pub(super) fn resolve_cargo_bin_dir() -> GtcResult<PathBuf> {
 }
 
 pub(super) fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
-    passthrough_in_dir(binary, args, debug, locale, None)
+    passthrough_in_dir_with_env(binary, args, debug, locale, None, None)
+}
+
+pub(super) fn passthrough_with_env(
+    binary: &str,
+    args: &[String],
+    debug: bool,
+    locale: &str,
+    extra_env: &ChildProcessEnv,
+) -> i32 {
+    passthrough_in_dir_with_env(binary, args, debug, locale, None, Some(extra_env))
 }
 
 pub(super) fn passthrough_in_dir(
@@ -147,6 +161,17 @@ pub(super) fn passthrough_in_dir(
     debug: bool,
     locale: &str,
     cwd: Option<&Path>,
+) -> i32 {
+    passthrough_in_dir_with_env(binary, args, debug, locale, cwd, None)
+}
+
+fn passthrough_in_dir_with_env(
+    binary: &str,
+    args: &[String],
+    debug: bool,
+    locale: &str,
+    cwd: Option<&Path>,
+    extra_env: Option<&ChildProcessEnv>,
 ) -> i32 {
     if debug {
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
@@ -163,6 +188,9 @@ pub(super) fn passthrough_in_dir(
         .stderr(Stdio::inherit());
     if let Some(cwd) = cwd {
         process.current_dir(cwd);
+    }
+    if let Some(extra_env) = extra_env {
+        extra_env.apply(&mut process);
     }
 
     match process.status() {
@@ -186,10 +214,20 @@ pub(super) fn passthrough_in_dir(
 pub(super) fn run_doctor(locale: &str) -> i32 {
     let mut failed = false;
 
+    println!(
+        "Greentic toolchain release: {}",
+        installed_toolchain_label()
+    );
+
     for binary in [
         DEV_BIN,
         OP_BIN,
         BUNDLE_BIN,
+        COMPONENT_BIN,
+        FLOW_BIN,
+        PACK_BIN,
+        RUNNER_BIN,
+        SECRETS_BIN,
         SETUP_BIN,
         DEPLOYER_BIN,
         START_BIN,
@@ -283,23 +321,62 @@ fn print_missing_op_message(locale: &str) {
 }
 
 fn resolve_binary_command(binary: &str) -> String {
-    if let Some(path) = resolve_companion_binary(binary) {
+    let invocation = env::args().next();
+    if let Some(path) = resolve_companion_binary_from_parts(
+        invocation.as_deref(),
+        env::current_exe().ok().as_deref(),
+        binary,
+    ) {
         return path.display().to_string();
     }
+    let physical_binary = companion_binary_for_invocation(invocation.as_deref(), binary);
     match binary {
         DEV_BIN => GtcConfig::from_env()
             .dev_bin_override()
             .map(|value| value.to_string_lossy().to_string())
-            .unwrap_or_else(|| binary.to_string()),
-        _ => binary.to_string(),
+            .unwrap_or(physical_binary),
+        _ => physical_binary,
     }
 }
 
 pub(super) fn resolve_companion_binary(binary: &str) -> Option<PathBuf> {
-    resolve_companion_binary_from(env::current_exe().ok().as_deref(), binary)
+    let invocation = env::args().next();
+    resolve_companion_binary_from_parts(
+        invocation.as_deref(),
+        env::current_exe().ok().as_deref(),
+        binary,
+    )
 }
 
+pub(super) fn resolve_companion_command(binary: &str) -> PathBuf {
+    resolve_companion_binary(binary).unwrap_or_else(|| {
+        let invocation = env::args().next();
+        PathBuf::from(companion_binary_for_invocation(
+            invocation.as_deref(),
+            binary,
+        ))
+    })
+}
+
+#[cfg(test)]
 pub(super) fn resolve_companion_binary_from(
+    current_exe: Option<&Path>,
+    binary: &str,
+) -> Option<PathBuf> {
+    resolve_companion_binary_from_parts(None, current_exe, binary)
+}
+
+#[cfg(test)]
+pub(super) fn resolve_companion_binary_from_invocation(
+    invocation: Option<&str>,
+    current_exe: Option<&Path>,
+    binary: &str,
+) -> Option<PathBuf> {
+    resolve_companion_binary_from_parts(invocation, current_exe, binary)
+}
+
+fn resolve_companion_binary_from_parts(
+    invocation: Option<&str>,
     current_exe: Option<&Path>,
     binary: &str,
 ) -> Option<PathBuf> {
@@ -308,23 +385,57 @@ pub(super) fn resolve_companion_binary_from(
         return Some(PathBuf::from(path));
     }
 
+    let physical_binary = companion_binary_for_invocation(invocation, binary);
     if let Some(current_exe) = current_exe {
         let exe_dir = current_exe.parent()?;
-        if let Some(sibling) = resolve_binary_in_dir(exe_dir, binary) {
+        if let Some(sibling) = resolve_binary_in_dir(exe_dir, &physical_binary) {
             return Some(sibling);
         }
 
-        if let Some(workspace_candidate) = resolve_workspace_local_binary(current_exe, binary) {
+        if let Some(workspace_candidate) =
+            resolve_workspace_local_binary(current_exe, binary, &physical_binary)
+        {
             return Some(workspace_candidate);
         }
     }
 
     if let Ok(cargo_bin_dir) = resolve_cargo_bin_dir()
-        && let Some(cargo_candidate) = resolve_binary_in_dir(&cargo_bin_dir, binary)
+        && let Some(cargo_candidate) = resolve_binary_in_dir(&cargo_bin_dir, &physical_binary)
     {
         return Some(cargo_candidate);
     }
     None
+}
+
+fn companion_binary_for_invocation(invocation: Option<&str>, binary: &str) -> String {
+    if !invocation_has_dev_suffix(invocation) || !is_greentic_companion_binary(binary) {
+        return binary.to_string();
+    }
+    format!("{binary}-dev")
+}
+
+fn invocation_has_dev_suffix(invocation: Option<&str>) -> bool {
+    invocation
+        .and_then(|value| Path::new(value).file_stem())
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.ends_with("-dev"))
+}
+
+fn is_greentic_companion_binary(binary: &str) -> bool {
+    matches!(
+        binary,
+        DEV_BIN
+            | OP_BIN
+            | BUNDLE_BIN
+            | COMPONENT_BIN
+            | DEPLOYER_BIN
+            | FLOW_BIN
+            | PACK_BIN
+            | RUNNER_BIN
+            | SECRETS_BIN
+            | SETUP_BIN
+            | START_BIN
+    )
 }
 
 pub(super) fn resolve_binary_in_dir(dir: &Path, binary: &str) -> Option<PathBuf> {
@@ -342,14 +453,23 @@ fn binary_file_candidates(dir: &Path, binary: &str) -> Vec<PathBuf> {
     candidates
 }
 
-fn resolve_workspace_local_binary(current_exe: &Path, binary: &str) -> Option<PathBuf> {
+fn resolve_workspace_local_binary(
+    current_exe: &Path,
+    logical_binary: &str,
+    physical_binary: &str,
+) -> Option<PathBuf> {
     let repo_dir = current_exe.parent()?.parent()?.parent()?;
     let workspace_root = repo_dir.parent()?;
-    let repo_name = match binary {
+    let repo_name = match logical_binary {
         DEV_BIN => "greentic-dev",
         OP_BIN => "greentic-operator",
         BUNDLE_BIN => "greentic-bundle",
+        COMPONENT_BIN => "greentic-component",
         DEPLOYER_BIN => "greentic-deployer",
+        FLOW_BIN => "greentic-flow",
+        PACK_BIN => "greentic-pack",
+        RUNNER_BIN => "greentic-runner",
+        SECRETS_BIN => "greentic-secrets",
         SETUP_BIN => "greentic-setup",
         START_BIN => "greentic-start",
         _ => return None,
@@ -360,7 +480,7 @@ fn resolve_workspace_local_binary(current_exe: &Path, binary: &str) -> Option<Pa
         .join("debug")
         .as_path()
         .to_path_buf();
-    resolve_binary_in_dir(&candidate, binary)
+    resolve_binary_in_dir(&candidate, physical_binary)
 }
 
 fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
@@ -369,7 +489,12 @@ fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
         DEV_BIN => cfg.dev_bin_override(),
         OP_BIN => cfg.operator_bin_override(),
         BUNDLE_BIN => cfg.bundle_bin_override(),
+        COMPONENT_BIN => cfg.component_bin_override(),
         DEPLOYER_BIN => cfg.deployer_bin_override(),
+        FLOW_BIN => cfg.flow_bin_override(),
+        PACK_BIN => cfg.pack_bin_override(),
+        RUNNER_BIN => cfg.runner_bin_override(),
+        SECRETS_BIN => cfg.secrets_bin_override(),
         SETUP_BIN => cfg.setup_bin_override(),
         START_BIN => cfg.start_bin_override(),
         _ => None,

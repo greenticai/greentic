@@ -78,8 +78,28 @@ impl GtcConfig {
         self.non_empty_var_os("GREENTIC_BUNDLE_BIN")
     }
 
+    pub fn component_bin_override(&self) -> Option<OsString> {
+        self.non_empty_var_os("GREENTIC_COMPONENT_BIN")
+    }
+
     pub fn deployer_bin_override(&self) -> Option<OsString> {
         self.non_empty_var_os("GREENTIC_DEPLOYER_BIN")
+    }
+
+    pub fn flow_bin_override(&self) -> Option<OsString> {
+        self.non_empty_var_os("GREENTIC_FLOW_BIN")
+    }
+
+    pub fn pack_bin_override(&self) -> Option<OsString> {
+        self.non_empty_var_os("GREENTIC_PACK_BIN")
+    }
+
+    pub fn runner_bin_override(&self) -> Option<OsString> {
+        self.non_empty_var_os("GREENTIC_RUNNER_BIN")
+    }
+
+    pub fn secrets_bin_override(&self) -> Option<OsString> {
+        self.non_empty_var_os("GREENTIC_SECRETS_BIN")
     }
 
     pub fn setup_bin_override(&self) -> Option<OsString> {

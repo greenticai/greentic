@@ -4,11 +4,7 @@ Implementation owner: repo-local schema sync tooling
 
 # Drift Report
 
-## Generated Status Docs Changed
+No schema drift was detected during the latest sync run.
 
-- `/Users/maarten/Documents/GitHub/agentic/greentic/docs/04-schemas/setup-schema.md`
-
-## Docs Likely Needing Manual Review
-
-- `docs/02-cli/gtc-setup.md`
-
+This means the generated schema artifacts and their markdown wrappers were
+already in sync with the current tool outputs used by the refresh command.
