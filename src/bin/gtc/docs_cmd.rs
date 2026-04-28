@@ -83,7 +83,8 @@ fn resolve_repo_root_from_exe(current_exe: &Path) -> Option<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::{resolve_repo_root_from_exe, resolve_sync_script_path};
+    use super::{resolve_repo_root_from_exe, resolve_sync_script_path, run_docs, run_sync_schemas};
+    use clap::Command;
     use std::env;
     use std::path::Path;
 
@@ -113,5 +114,39 @@ mod tests {
             resolved.canonicalize().expect("canonicalize resolved"),
             script.canonicalize().expect("canonicalize script"),
         );
+    }
+
+    #[test]
+    fn resolve_repo_root_from_short_exe_path_returns_none() {
+        assert!(resolve_repo_root_from_exe(Path::new("/gtc")).is_none());
+    }
+
+    #[test]
+    fn resolve_sync_script_path_returns_none_when_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old = env::current_dir().expect("cwd");
+        env::set_current_dir(dir.path()).expect("set cwd");
+        let resolved = resolve_sync_script_path();
+        env::set_current_dir(old).expect("restore cwd");
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn run_docs_returns_usage_error_for_unknown_subcommand_state() {
+        let matches = Command::new("docs").get_matches_from(["docs"]);
+        assert_eq!(run_docs(&matches, false, "en"), 2);
+    }
+
+    #[test]
+    fn run_sync_schemas_fails_when_script_cannot_be_found() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old = env::current_dir().expect("cwd");
+        env::set_current_dir(dir.path()).expect("set cwd");
+
+        let matches = Command::new("sync-schemas").get_matches_from(["sync-schemas"]);
+        let code = run_sync_schemas(&matches, false);
+
+        env::set_current_dir(old).expect("restore cwd");
+        assert_eq!(code, 1);
     }
 }
