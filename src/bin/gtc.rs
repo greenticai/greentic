@@ -93,6 +93,9 @@ const SETUP_BIN: &str = "greentic-setup";
 const START_BIN: &str = "greentic-start";
 const COMPONENT_BIN: &str = "greentic-component";
 const FLOW_BIN: &str = "greentic-flow";
+const PACK_BIN: &str = "greentic-pack";
+const RUNNER_BIN: &str = "greentic-runner";
+const SECRETS_BIN: &str = "greentic-secrets";
 fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
     let exit_code = run(raw_args);

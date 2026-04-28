@@ -469,6 +469,11 @@ fn doctor_uses_greentic_dev_bin_override() {
     sandbox.write_exit_tool("greentic-dev", 92);
     sandbox.write_version_tool("greentic-operator", "greentic-operator 0.0.0");
     sandbox.write_version_tool("greentic-bundle", "greentic-bundle 0.0.0");
+    sandbox.write_version_tool("greentic-component", "greentic-component 0.0.0");
+    sandbox.write_version_tool("greentic-flow", "greentic-flow 0.0.0");
+    sandbox.write_version_tool("greentic-pack", "greentic-pack 0.0.0");
+    sandbox.write_version_tool("greentic-runner", "greentic-runner 0.0.0");
+    sandbox.write_version_tool("greentic-secrets", "greentic-secrets 0.0.0");
     sandbox.write_version_tool("greentic-setup", "greentic-setup 0.0.0");
     sandbox.write_version_tool("greentic-start", "greentic-start 0.0.0");
     sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
@@ -484,6 +489,12 @@ fn doctor_uses_greentic_dev_bin_override() {
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("greentic-dev: OK (greentic-dev local-test)"));
+    assert!(stdout.contains("greentic-bundle: OK (greentic-bundle 0.0.0)"));
+    assert!(stdout.contains("greentic-component: OK (greentic-component 0.0.0)"));
+    assert!(stdout.contains("greentic-flow: OK (greentic-flow 0.0.0)"));
+    assert!(stdout.contains("greentic-pack: OK (greentic-pack 0.0.0)"));
+    assert!(stdout.contains("greentic-runner: OK (greentic-runner 0.0.0)"));
+    assert!(stdout.contains("greentic-secrets: OK (greentic-secrets 0.0.0)"));
 }
 
 #[test]
@@ -1405,6 +1416,11 @@ impl TestSandbox {
             ("greentic-operator", "GREENTIC_OPERATOR_BIN"),
             ("greentic-setup", "GREENTIC_SETUP_BIN"),
             ("greentic-bundle", "GREENTIC_BUNDLE_BIN"),
+            ("greentic-component", "GREENTIC_COMPONENT_BIN"),
+            ("greentic-flow", "GREENTIC_FLOW_BIN"),
+            ("greentic-pack", "GREENTIC_PACK_BIN"),
+            ("greentic-runner", "GREENTIC_RUNNER_BIN"),
+            ("greentic-secrets", "GREENTIC_SECRETS_BIN"),
             ("greentic-start", "GREENTIC_START_BIN"),
             ("greentic-deployer", "GREENTIC_DEPLOYER_BIN"),
         ] {

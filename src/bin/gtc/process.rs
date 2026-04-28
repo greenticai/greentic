@@ -7,7 +7,10 @@ use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 
 use super::deploy::{ChildProcessEnv, StartTarget};
-use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, START_BIN};
+use super::{
+    BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, FLOW_BIN, OP_BIN, PACK_BIN, RUNNER_BIN,
+    SECRETS_BIN, SETUP_BIN, START_BIN,
+};
 use crate::i18n_support::{t, t_or};
 
 pub(super) fn run_binary_checked(
@@ -214,6 +217,11 @@ pub(super) fn run_doctor(locale: &str) -> i32 {
         DEV_BIN,
         OP_BIN,
         BUNDLE_BIN,
+        COMPONENT_BIN,
+        FLOW_BIN,
+        PACK_BIN,
+        RUNNER_BIN,
+        SECRETS_BIN,
         SETUP_BIN,
         DEPLOYER_BIN,
         START_BIN,
@@ -373,7 +381,12 @@ fn resolve_workspace_local_binary(current_exe: &Path, binary: &str) -> Option<Pa
         DEV_BIN => "greentic-dev",
         OP_BIN => "greentic-operator",
         BUNDLE_BIN => "greentic-bundle",
+        COMPONENT_BIN => "greentic-component",
         DEPLOYER_BIN => "greentic-deployer",
+        FLOW_BIN => "greentic-flow",
+        PACK_BIN => "greentic-pack",
+        RUNNER_BIN => "greentic-runner",
+        SECRETS_BIN => "greentic-secrets",
         SETUP_BIN => "greentic-setup",
         START_BIN => "greentic-start",
         _ => return None,
@@ -393,7 +406,12 @@ fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
         DEV_BIN => cfg.dev_bin_override(),
         OP_BIN => cfg.operator_bin_override(),
         BUNDLE_BIN => cfg.bundle_bin_override(),
+        COMPONENT_BIN => cfg.component_bin_override(),
         DEPLOYER_BIN => cfg.deployer_bin_override(),
+        FLOW_BIN => cfg.flow_bin_override(),
+        PACK_BIN => cfg.pack_bin_override(),
+        RUNNER_BIN => cfg.runner_bin_override(),
+        SECRETS_BIN => cfg.secrets_bin_override(),
         SETUP_BIN => cfg.setup_bin_override(),
         START_BIN => cfg.start_bin_override(),
         _ => None,
