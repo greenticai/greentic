@@ -72,7 +72,7 @@ pub(crate) enum ToolchainSource {
 }
 
 impl ToolchainInstallOptions {
-    pub(crate) fn from_matches(matches: &ArgMatches) -> GtcResult<Self> {
+    pub(crate) fn from_matches(matches: &ArgMatches, default_channel: &str) -> GtcResult<Self> {
         let source = if let Some(path) = matches.get_one::<String>("manifest") {
             ToolchainSource::LocalManifest(PathBuf::from(path))
         } else if let Some(release) = matches
@@ -86,7 +86,7 @@ impl ToolchainInstallOptions {
                 .get_one::<String>("channel")
                 .map(|value| value.trim())
                 .filter(|value| !value.is_empty())
-                .unwrap_or("stable");
+                .unwrap_or(default_channel);
             ToolchainSource::Channel(channel.to_string())
         };
 

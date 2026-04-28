@@ -25,7 +25,12 @@ use super::process::{passthrough_with_env, resolve_cargo_bin_dir, run_binary_cap
 use super::toolchain::{ToolchainInstallOptions, ToolchainSource, run_toolchain_install};
 use super::{DEPLOYER_BIN, DEV_BIN, sha256_file};
 
-pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
+pub(super) fn run_install(
+    sub_matches: &ArgMatches,
+    default_channel: &str,
+    debug: bool,
+    locale: &str,
+) -> i32 {
     println!("{}", t(locale, "gtc.install.public_mode"));
 
     let preflight_status = ensure_install_prereqs(debug, locale);
@@ -33,7 +38,7 @@ pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -
         return preflight_status;
     }
 
-    let options = match ToolchainInstallOptions::from_matches(sub_matches) {
+    let options = match ToolchainInstallOptions::from_matches(sub_matches, default_channel) {
         Ok(options) => options,
         Err(err) => {
             eprintln!("{err}");

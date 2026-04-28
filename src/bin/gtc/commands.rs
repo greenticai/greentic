@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 
 use clap::ArgMatches;
 use serde_json::Value;
@@ -26,6 +27,7 @@ use crate::toolchain::installed_toolchain_label;
 
 pub(super) fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
+    let default_install_channel = default_install_channel_for_invocation(raw_args.first());
     let cli_locale = locale_from_args(&raw_args);
     let locale = detect_locale(&raw_args, i18n.default_locale());
     let raw_passthrough = parse_raw_passthrough(&raw_args);
@@ -60,7 +62,9 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         }
         Some(("doctor", _)) => run_doctor(&locale),
         Some(("docs", sub_matches)) => run_docs(sub_matches, debug, &locale),
-        Some(("install", sub_matches)) => run_install(sub_matches, debug, &locale),
+        Some(("install", sub_matches)) => {
+            run_install(sub_matches, default_install_channel, debug, &locale)
+        }
         Some(("update", _)) => run_update(debug, &locale),
         Some(("help", sub_matches)) => run_help(sub_matches, &locale),
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
@@ -120,6 +124,23 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
             passthrough(binary, &args, debug, &locale)
         }
         _ => 2,
+    }
+}
+
+pub(super) fn default_install_channel_for_invocation(invocation: Option<&String>) -> &'static str {
+    let Some(invocation) = invocation else {
+        return "stable";
+    };
+    let Some(file_name) = Path::new(invocation)
+        .file_stem()
+        .and_then(|value| value.to_str())
+    else {
+        return "stable";
+    };
+    if file_name.ends_with("-dev") {
+        "dev"
+    } else {
+        "stable"
     }
 }
 

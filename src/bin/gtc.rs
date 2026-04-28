@@ -42,6 +42,9 @@ use archive::{extract_tar_archive, extract_zip_bytes};
 #[cfg(test)]
 #[allow(unused_imports)]
 use cli::build_cli;
+#[cfg(test)]
+#[allow(unused_imports)]
+use commands::default_install_channel_for_invocation;
 use commands::run;
 #[cfg(test)]
 #[allow(unused_imports)]

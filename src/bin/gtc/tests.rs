@@ -1,10 +1,10 @@
 use super::{
     AdminRegistryDocument, DEV_BIN, StartTarget, admin_registry_path, build_cli, build_wizard_args,
-    collect_tail, detect_bundle_root, detect_locale, ensure_admin_certs_ready, extract_tar_archive,
-    fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
-    normalize_expected_sha256, normalize_install_arch, parse_prompt_choice,
-    parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
-    remove_admin_registry_entry, resolve_admin_cert_dir,
+    collect_tail, default_install_channel_for_invocation, detect_bundle_root, detect_locale,
+    ensure_admin_certs_ready, extract_tar_archive, fingerprint_bundle_dir, locale_from_args,
+    normalize_bundle_fingerprint, normalize_expected_sha256, normalize_install_arch,
+    parse_prompt_choice, parse_start_cli_options, parse_start_request, parse_stop_cli_options,
+    parse_stop_request, remove_admin_registry_entry, resolve_admin_cert_dir,
     resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
     resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
     resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
@@ -332,6 +332,34 @@ fn resolve_companion_binary_uses_env_override() {
     unsafe {
         std::env::remove_var("GREENTIC_DEV_BIN");
     }
+}
+
+#[test]
+fn default_install_channel_uses_stable_for_normal_gtc_invocation() {
+    assert_eq!(
+        default_install_channel_for_invocation(Some(&"gtc".to_string())),
+        "stable"
+    );
+    assert_eq!(
+        default_install_channel_for_invocation(Some(&"/usr/local/bin/gtc".to_string())),
+        "stable"
+    );
+}
+
+#[test]
+fn default_install_channel_uses_dev_for_dev_suffixed_invocation() {
+    assert_eq!(
+        default_install_channel_for_invocation(Some(&"gtc-dev".to_string())),
+        "dev"
+    );
+    assert_eq!(
+        default_install_channel_for_invocation(Some(&"target/debug/gtc-dev".to_string())),
+        "dev"
+    );
+    assert_eq!(
+        default_install_channel_for_invocation(Some(&"gtc-dev.exe".to_string())),
+        "dev"
+    );
 }
 
 #[test]
