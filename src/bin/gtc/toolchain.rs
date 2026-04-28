@@ -951,7 +951,10 @@ mod tests {
             .get_matches_from(["toolchain"]);
 
         let options = ToolchainInstallOptions::from_matches(&matches).expect("options");
-        assert_eq!(options.source, ToolchainSource::Channel("stable".to_string()));
+        assert_eq!(
+            options.source,
+            ToolchainSource::Channel("stable".to_string())
+        );
         assert!(!options.force);
         assert!(!options.dry_run);
     }
@@ -1045,7 +1048,13 @@ mod tests {
             resolved.source,
             "ghcr.io/greenticai/greentic-versions/gtc:stable"
         );
-        assert!(resolved.digest.as_deref().unwrap_or("").starts_with("sha256:"));
+        assert!(
+            resolved
+                .digest
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("sha256:")
+        );
     }
 
     #[test]
