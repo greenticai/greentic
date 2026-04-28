@@ -214,7 +214,8 @@ fn truncate_identifier(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        deployment_name, sanitize_identifier, stop_request_to_start_request, truncate_identifier,
+        deployment_name, read_single_vm_status, run_single_vm_apply, run_single_vm_destroy,
+        sanitize_identifier, stop_request_to_start_request, truncate_identifier,
     };
     #[cfg(unix)]
     use super::{load_or_prepare_single_vm_artifact, write_single_vm_spec};
@@ -338,6 +339,28 @@ mod tests {
             env::remove_var("XDG_STATE_HOME");
         }
         assert_eq!(reused, artifact);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn read_single_vm_status_returns_none_for_empty_output() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _deployer_guard = crate::tests::fake_deployer_contract(None);
+        let spec = tempfile::NamedTempFile::new().expect("spec");
+
+        let status = read_single_vm_status(spec.path(), false, "en").expect("status");
+        assert!(status.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_single_vm_apply_and_destroy_accept_successful_deployer_exit() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _deployer_guard = crate::tests::fake_deployer_contract(None);
+        let spec = tempfile::NamedTempFile::new().expect("spec");
+
+        run_single_vm_apply(spec.path(), false, "en").expect("apply");
+        run_single_vm_destroy(spec.path(), false, "en").expect("destroy");
     }
 
     #[cfg(unix)]

@@ -872,6 +872,54 @@ mod tests {
     }
 
     #[test]
+    fn remove_admin_registry_entry_can_match_by_client_cn_and_report_no_match() {
+        let mut registry = AdminRegistryDocument {
+            admins: vec![AdminRegistryEntry {
+                name: Some("alice".to_string()),
+                client_cn: "CN=alice".to_string(),
+                public_key: "a".to_string(),
+                added_at_epoch_s: 1,
+            }],
+        };
+
+        assert!(!remove_admin_registry_entry(
+            &mut registry,
+            Some("CN=missing"),
+            None
+        ));
+        assert!(remove_admin_registry_entry(
+            &mut registry,
+            Some("CN=alice"),
+            None
+        ));
+        assert!(registry.admins.is_empty());
+    }
+
+    #[test]
+    fn resolve_admin_cert_dir_prefers_bundle_local_admin_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join(".greentic").join("admin").join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        for name in ["ca.crt", "server.crt", "server.key"] {
+            fs::write(certs.join(name), name).expect("write cert");
+        }
+
+        assert_eq!(resolve_admin_cert_dir(dir.path()), certs);
+    }
+
+    #[test]
+    fn resolve_admin_cert_dir_uses_bundle_certs_dir_when_admin_certs_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        for name in ["ca.crt", "server.crt", "server.key"] {
+            fs::write(certs.join(name), name).expect("write cert");
+        }
+
+        assert_eq!(resolve_admin_cert_dir(dir.path()), certs);
+    }
+
+    #[test]
     fn resolve_admin_cert_dir_falls_back_to_default_when_bundle_has_no_certs() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert_eq!(
@@ -889,6 +937,43 @@ mod tests {
 
         let err = ensure_admin_certs_ready(dir.path(), Some(&certs)).expect_err("missing files");
         assert!(err.to_string().contains("required file missing"));
+    }
+
+    #[test]
+    fn load_admin_registry_reports_invalid_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = admin_registry_path(dir.path());
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(&path, "{not json").expect("write");
+
+        let err = load_admin_registry(dir.path()).expect_err("invalid json");
+        assert!(err.to_string().contains("failed to parse admin registry"));
+    }
+
+    #[test]
+    fn ensure_admin_certs_ready_accepts_explicit_dir_with_required_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        for name in ["ca.crt", "server.crt", "server.key"] {
+            fs::write(certs.join(name), name).expect("write cert");
+        }
+
+        let resolved = ensure_admin_certs_ready(dir.path(), Some(&certs)).expect("certs");
+        assert_eq!(resolved, certs);
+    }
+
+    #[test]
+    fn ensure_admin_certs_ready_uses_existing_bundle_local_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join(".greentic").join("admin").join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        for name in ["ca.crt", "server.crt", "server.key"] {
+            fs::write(certs.join(name), name).expect("write cert");
+        }
+
+        let resolved = ensure_admin_certs_ready(dir.path(), None).expect("certs");
+        assert_eq!(resolved, certs);
     }
 
     #[test]
@@ -924,5 +1009,11 @@ mod tests {
         assert!(json.contains("\"status\": \"ok\""));
         assert!(yaml.contains("status: ok"));
         assert_eq!(text, "plain-text");
+    }
+
+    #[test]
+    fn render_admin_http_body_rejects_invalid_json_output_modes() {
+        assert!(render_admin_http_body("{bad", "json").is_err());
+        assert!(render_admin_http_body("{bad", "yaml").is_err());
     }
 }
