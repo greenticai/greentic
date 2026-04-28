@@ -90,9 +90,15 @@ pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -
 
     let env_name = tenant_env_var_name(&tenant);
     let mut child_env = ChildProcessEnv::new();
-    child_env.set(env_name, key);
+    child_env.set(env_name.clone(), key);
 
-    let tenant_args = vec!["install".to_string(), "--tenant".to_string(), tenant];
+    let tenant_args = vec![
+        "install".to_string(),
+        "--tenant".to_string(),
+        tenant,
+        "--token".to_string(),
+        format!("env:{env_name}"),
+    ];
     passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env)
 }
 

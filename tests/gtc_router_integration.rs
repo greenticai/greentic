@@ -717,8 +717,13 @@ fn install_tenant_mode_delegates_to_greentic_dev_after_toolchain_success() {
     );
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
-    assert!(logged.contains("install --tenant acme"));
+    let args_line = logged.lines().next().unwrap_or_default();
+    assert_eq!(
+        args_line,
+        "install --tenant acme --token env:GREENTIC_ACME_KEY"
+    );
     assert!(!logged.contains("--key"));
+    assert!(!args_line.contains("secret-token"));
     assert!(logged.contains("GREENTIC_ACME_KEY=secret-token"));
     assert!(!logged.contains("install tools"));
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
