@@ -106,6 +106,9 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
             }
             let (binary, args) = route_passthrough_subcommand(name, &tail, &locale).expect("route");
             if name == "wizard" && has_schema_flag(&args) {
+                if has_schema_full_flag(&args) {
+                    return run_wizard_schema_full(binary, &args, debug, &locale);
+                }
                 return run_wizard_schema(binary, &args, debug, &locale);
             }
             passthrough(binary, &args, debug, &locale)
@@ -145,6 +148,80 @@ fn run_wizard_schema(binary: &str, args: &[String], debug: bool, locale: &str) -
 fn has_schema_flag(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--schema" || arg.starts_with("--schema="))
+}
+
+fn has_schema_full_flag(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--schema=full")
+}
+
+fn strip_schema_full(args: &[String]) -> Vec<String> {
+    args.iter()
+        .map(|arg| {
+            if arg == "--schema=full" {
+                "--schema".to_string()
+            } else {
+                arg.clone()
+            }
+        })
+        .collect()
+}
+
+fn run_wizard_schema_full(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
+    let stripped = strip_schema_full(args);
+
+    let launcher_raw = match run_binary_capture(binary, &stripped, debug, locale) {
+        Ok(raw) => raw,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let mut launcher: Value = match serde_json::from_str(&launcher_raw) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("invalid wizard schema JSON from {binary}: {err}");
+            return 1;
+        }
+    };
+    rewrite_nested_schema_refs(&mut launcher);
+
+    let component =
+        capture_companion_schema(super::COMPONENT_BIN, debug, locale).unwrap_or(Value::Null);
+    let flow = capture_companion_schema(super::FLOW_BIN, debug, locale).unwrap_or(Value::Null);
+
+    let aggregated = serde_json::json!({
+        "launcher": launcher,
+        "component": component,
+        "flow": flow,
+    });
+
+    match serde_json::to_string_pretty(&aggregated) {
+        Ok(rendered) => {
+            println!("{rendered}");
+            0
+        }
+        Err(err) => {
+            eprintln!("failed to render wizard schema JSON: {err}");
+            1
+        }
+    }
+}
+
+fn capture_companion_schema(binary: &str, debug: bool, locale: &str) -> Option<Value> {
+    let args = vec!["wizard".to_string(), "--schema".to_string()];
+    match run_binary_capture(binary, &args, debug, locale) {
+        Ok(raw) => match serde_json::from_str(&raw) {
+            Ok(value) => Some(value),
+            Err(err) => {
+                eprintln!("warning: companion schema from {binary} is not valid JSON: {err}");
+                None
+            }
+        },
+        Err(err) => {
+            eprintln!("warning: companion schema from {binary} unavailable: {err}");
+            None
+        }
+    }
 }
 
 fn rewrite_nested_schema_refs(schema: &mut Value) {
