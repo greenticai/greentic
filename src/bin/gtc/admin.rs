@@ -759,3 +759,261 @@ fn render_admin_http_body(body: &str, output: &str) -> GtcResult<String> {
         _ => Ok(body.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AdminRegistryDocument, AdminRegistryEntry, RemoteAdminContext, admin_registry_path,
+        build_remote_admin_client, ensure_admin_certs_ready, load_admin_registry,
+        remove_admin_registry_entry, render_admin_http_body, resolve_admin_cert_dir,
+        save_admin_registry, upsert_admin_registry_entry,
+    };
+    use std::fs;
+    use std::path::PathBuf;
+
+    #[test]
+    fn load_admin_registry_returns_empty_when_file_is_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = load_admin_registry(dir.path()).expect("registry");
+        assert!(registry.admins.is_empty());
+    }
+
+    #[test]
+    fn save_and_load_admin_registry_round_trip() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = AdminRegistryDocument {
+            admins: vec![AdminRegistryEntry {
+                name: Some("alice".to_string()),
+                client_cn: "CN=alice".to_string(),
+                public_key: "ssh-ed25519 AAAA".to_string(),
+                added_at_epoch_s: 7,
+            }],
+        };
+
+        save_admin_registry(dir.path(), &registry).expect("save");
+        let loaded = load_admin_registry(dir.path()).expect("load");
+        assert_eq!(loaded.admins, registry.admins);
+        assert_eq!(
+            admin_registry_path(dir.path()),
+            dir.path()
+                .join(".greentic")
+                .join("admin")
+                .join("admins.json")
+        );
+    }
+
+    #[test]
+    fn upsert_updates_existing_entry_and_sorts_new_entries() {
+        let mut registry = AdminRegistryDocument {
+            admins: vec![AdminRegistryEntry {
+                name: Some("zeta".to_string()),
+                client_cn: "CN=zeta".to_string(),
+                public_key: "old".to_string(),
+                added_at_epoch_s: 1,
+            }],
+        };
+
+        upsert_admin_registry_entry(
+            &mut registry,
+            Some("alpha".to_string()),
+            "CN=alpha".to_string(),
+            "alpha-key".to_string(),
+        );
+        upsert_admin_registry_entry(
+            &mut registry,
+            Some("zeta-renamed".to_string()),
+            "CN=zeta".to_string(),
+            "new".to_string(),
+        );
+
+        assert_eq!(
+            registry
+                .admins
+                .iter()
+                .map(|entry| entry.client_cn.as_str())
+                .collect::<Vec<_>>(),
+            vec!["CN=alpha", "CN=zeta"]
+        );
+        let updated = registry
+            .admins
+            .iter()
+            .find(|entry| entry.client_cn == "CN=zeta")
+            .expect("updated");
+        assert_eq!(updated.name.as_deref(), Some("zeta-renamed"));
+        assert_eq!(updated.public_key, "new");
+    }
+
+    #[test]
+    fn remove_admin_registry_entry_can_match_by_name() {
+        let mut registry = AdminRegistryDocument {
+            admins: vec![
+                AdminRegistryEntry {
+                    name: Some("alice".to_string()),
+                    client_cn: "CN=alice".to_string(),
+                    public_key: "a".to_string(),
+                    added_at_epoch_s: 1,
+                },
+                AdminRegistryEntry {
+                    name: Some("bob".to_string()),
+                    client_cn: "CN=bob".to_string(),
+                    public_key: "b".to_string(),
+                    added_at_epoch_s: 2,
+                },
+            ],
+        };
+
+        assert!(remove_admin_registry_entry(
+            &mut registry,
+            None,
+            Some("alice")
+        ));
+        assert_eq!(registry.admins.len(), 1);
+        assert_eq!(registry.admins[0].client_cn, "CN=bob");
+    }
+
+    #[test]
+    fn remove_admin_registry_entry_can_match_by_client_cn_and_report_no_match() {
+        let mut registry = AdminRegistryDocument {
+            admins: vec![AdminRegistryEntry {
+                name: Some("alice".to_string()),
+                client_cn: "CN=alice".to_string(),
+                public_key: "a".to_string(),
+                added_at_epoch_s: 1,
+            }],
+        };
+
+        assert!(!remove_admin_registry_entry(
+            &mut registry,
+            Some("CN=missing"),
+            None
+        ));
+        assert!(remove_admin_registry_entry(
+            &mut registry,
+            Some("CN=alice"),
+            None
+        ));
+        assert!(registry.admins.is_empty());
+    }
+
+    #[test]
+    fn resolve_admin_cert_dir_prefers_bundle_local_admin_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join(".greentic").join("admin").join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        for name in ["ca.crt", "server.crt", "server.key"] {
+            fs::write(certs.join(name), name).expect("write cert");
+        }
+
+        assert_eq!(resolve_admin_cert_dir(dir.path()), certs);
+    }
+
+    #[test]
+    fn resolve_admin_cert_dir_uses_bundle_certs_dir_when_admin_certs_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        for name in ["ca.crt", "server.crt", "server.key"] {
+            fs::write(certs.join(name), name).expect("write cert");
+        }
+
+        assert_eq!(resolve_admin_cert_dir(dir.path()), certs);
+    }
+
+    #[test]
+    fn resolve_admin_cert_dir_falls_back_to_default_when_bundle_has_no_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            resolve_admin_cert_dir(dir.path()),
+            PathBuf::from("/etc/greentic/admin")
+        );
+    }
+
+    #[test]
+    fn ensure_admin_certs_ready_rejects_explicit_dir_with_missing_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        fs::write(certs.join("ca.crt"), "ca").expect("write ca");
+
+        let err = ensure_admin_certs_ready(dir.path(), Some(&certs)).expect_err("missing files");
+        assert!(err.to_string().contains("required file missing"));
+    }
+
+    #[test]
+    fn load_admin_registry_reports_invalid_json() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = admin_registry_path(dir.path());
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(&path, "{not json").expect("write");
+
+        let err = load_admin_registry(dir.path()).expect_err("invalid json");
+        assert!(err.to_string().contains("failed to parse admin registry"));
+    }
+
+    #[test]
+    fn ensure_admin_certs_ready_accepts_explicit_dir_with_required_files() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        for name in ["ca.crt", "server.crt", "server.key"] {
+            fs::write(certs.join(name), name).expect("write cert");
+        }
+
+        let resolved = ensure_admin_certs_ready(dir.path(), Some(&certs)).expect("certs");
+        assert_eq!(resolved, certs);
+    }
+
+    #[test]
+    fn ensure_admin_certs_ready_uses_existing_bundle_local_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = dir.path().join(".greentic").join("admin").join("certs");
+        fs::create_dir_all(&certs).expect("mkdir");
+        for name in ["ca.crt", "server.crt", "server.key"] {
+            fs::write(certs.join(name), name).expect("write cert");
+        }
+
+        let resolved = ensure_admin_certs_ready(dir.path(), None).expect("certs");
+        assert_eq!(resolved, certs);
+    }
+
+    #[test]
+    fn build_remote_admin_client_supports_bearer_auth() {
+        let context = RemoteAdminContext {
+            base_url: "https://example.test/admin/v1".to_string(),
+            auth: super::AdminAuth::Bearer("token".to_string()),
+        };
+        build_remote_admin_client(&context).expect("client");
+    }
+
+    #[test]
+    fn build_remote_admin_client_supports_generated_mtls_material() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let certs = ensure_admin_certs_ready(dir.path(), None).expect("certs");
+        let context = RemoteAdminContext {
+            base_url: "https://127.0.0.1:8443/admin/v1".to_string(),
+            auth: super::AdminAuth::Mtls {
+                ca_cert_path: certs.join("ca.crt"),
+                client_cert_path: certs.join("client.crt"),
+                client_key_path: certs.join("client.key"),
+            },
+        };
+        build_remote_admin_client(&context).expect("client");
+    }
+
+    #[test]
+    fn render_admin_http_body_formats_json_and_yaml() {
+        let json = render_admin_http_body(r#"{"status":"ok"}"#, "json").expect("json");
+        let yaml = render_admin_http_body(r#"{"status":"ok"}"#, "yaml").expect("yaml");
+        let text = render_admin_http_body("plain-text", "text").expect("text");
+
+        assert!(json.contains("\"status\": \"ok\""));
+        assert!(yaml.contains("status: ok"));
+        assert_eq!(text, "plain-text");
+    }
+
+    #[test]
+    fn render_admin_http_body_rejects_invalid_json_output_modes() {
+        assert!(render_admin_http_body("{bad", "json").is_err());
+        assert!(render_admin_http_body("{bad", "yaml").is_err());
+    }
+}
