@@ -1,14 +1,9 @@
 use std::collections::HashMap;
 use std::env;
 use std::fs;
-#[cfg(unix)]
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
-
-#[cfg(unix)]
-use sha2::{Digest, Sha256};
 
 #[test]
 fn version_flag_prints_cargo_package_version() {
@@ -577,11 +572,12 @@ fn runtime_start_routes_to_greentic_start_cli() {
 }
 
 #[test]
-fn install_public_mode_calls_greentic_dev_install_tools() {
-    let sandbox = TestSandbox::new("install_public_mode_calls_greentic_dev_install_tools");
+fn install_public_mode_installs_manifest_toolchain() {
+    let sandbox = TestSandbox::new("install_public_mode_installs_manifest_toolchain");
     let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
     let cargo_home = sandbox.path().join("cargo-home");
+    let manifest_path = write_toolchain_manifest(sandbox.path());
 
     sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
@@ -592,8 +588,19 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
 
     let mut extra = HashMap::new();
     extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
 
-    let output = sandbox.run_gtc_capture(["install"], extra);
+    let output = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--manifest",
+            manifest_path.to_str().expect("utf8"),
+        ],
+        extra,
+    );
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -602,130 +609,80 @@ fn install_public_mode_calls_greentic_dev_install_tools() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let logged = fs::read_to_string(log_file).expect("read dev log");
-    assert!(logged.contains("install tools"));
+    let logged = fs::read_to_string(log_file).unwrap_or_default();
+    assert!(!logged.contains("install tools"));
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
     assert!(cargo_logged.contains("binstall -V"));
     assert!(cargo_logged.contains("search cargo-binstall --limit 1"));
-    assert!(cargo_logged.contains("binstall -y --disable-strategies compile greentic-dev"));
-    assert!(cargo_logged.contains("binstall -y --disable-strategies compile greentic-operator"));
+    assert!(
+        cargo_logged.contains(
+            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+        )
+    );
+    assert!(cargo_logged.contains(
+        "binstall -y --locked --force greentic-runner --version 0.5.10 --bin greentic-runner"
+    ));
+    assert!(cargo_logged.contains(
+        "binstall -y --locked --force greentic-runner --version 0.5.10 --bin greentic-runner-cli"
+    ));
+}
+
+#[test]
+fn install_latest_manifest_resolves_prerelease_before_binstall() {
+    let sandbox = TestSandbox::new("install_latest_manifest_resolves_prerelease_before_binstall");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
+    let manifest_path = write_latest_toolchain_manifest(sandbox.path());
+
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--manifest",
+            manifest_path.to_str().expect("utf8"),
+        ],
+        extra,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
+    assert!(cargo_logged.contains("search greentic-flow --limit 1"));
+    assert!(cargo_logged.contains(
+        "binstall -y --locked --force greentic-flow --version 0.6.0-dev.25001174716 --bin greentic-flow"
+    ));
 }
 
 #[test]
 #[cfg(unix)]
-fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
-    let sandbox = TestSandbox::new("install_tenant_mode_uses_env_key_and_installs_tools_and_docs");
+fn install_tenant_mode_delegates_to_greentic_dev_after_toolchain_success() {
+    let sandbox =
+        TestSandbox::new("install_tenant_mode_delegates_to_greentic_dev_after_toolchain_success");
     let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
+    let manifest_path = write_toolchain_manifest(sandbox.path());
 
     sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
     sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
     sandbox.write_install_prereq_tools();
-
-    let mock_root = sandbox.path().join("mock-dist");
-    fs::create_dir_all(&mock_root).expect("mock root");
-
-    let tool_zip = mock_root.join("tool.zip");
-    write_tool_zip(
-        &tool_zip,
-        "greentic-enterprise-tool",
-        b"#!/bin/sh\necho tool\n",
-    );
-    let tool_sha256 = sha256_file(&tool_zip);
-
-    let doc_path = mock_root.join("guide.md");
-    fs::write(&doc_path, b"# enterprise guide\n").expect("doc write");
-
-    let tool_manifest = serde_json::json!({
-        "$schema": "https://raw.githubusercontent.com/greentic-biz/customers-tools/main/schemas/tool.schema.json",
-        "schema_version": "1",
-        "id": "greentic-enterprise-tool",
-        "name": "Enterprise Tool",
-        "description": "fixture",
-        "install": {
-            "type": "release-binary",
-            "binary_name": "greentic-enterprise-tool",
-            "targets": [
-                {
-                    "os": "macos",
-                    "arch": "x86_64",
-                    "url": format!("file://{}", tool_zip.display()),
-                    "sha256": tool_sha256.clone()
-                },
-                {
-                    "os": "macos",
-                    "arch": "aarch64",
-                    "url": format!("file://{}", tool_zip.display()),
-                    "sha256": tool_sha256.clone()
-                },
-                {
-                    "os": "linux",
-                    "arch": "x86_64",
-                    "url": format!("file://{}", tool_zip.display()),
-                    "sha256": tool_sha256.clone()
-                },
-                {
-                    "os": "linux",
-                    "arch": "aarch64",
-                    "url": format!("file://{}", tool_zip.display()),
-                    "sha256": tool_sha256
-                }
-            ]
-        },
-        "docs": []
-    });
-
-    let doc_manifest = serde_json::json!({
-        "$schema": "https://raw.githubusercontent.com/greentic-biz/customers-tools/main/schemas/doc.schema.json",
-        "schema_version": "1",
-        "id": "enterprise-guide",
-        "title": "Enterprise Guide",
-        "source": {
-            "type": "download",
-            "url": format!("file://{}", doc_path.display())
-        },
-        "download_file_name": "enterprise-guide.md",
-        "default_relative_path": "guides"
-    });
-
-    let manifest = serde_json::json!({
-        "$schema": "https://raw.githubusercontent.com/greentic-biz/customers-tools/main/schemas/tenant-tools.schema.json",
-        "schema_version": "1",
-        "tenant": "acme",
-        "tools": [
-            {
-                "id": "greentic-enterprise-tool",
-                "url": format!("file://{}", mock_root.join("tool-manifest.json").display())
-            }
-        ],
-        "docs": [
-            {
-                "id": "enterprise-guide",
-                "url": format!("file://{}", mock_root.join("doc-manifest.json").display())
-            }
-        ]
-    });
-
-    fs::write(
-        mock_root.join("tool-manifest.json"),
-        serde_json::to_vec_pretty(&tool_manifest).expect("tool manifest json"),
-    )
-    .expect("tool manifest write");
-
-    fs::write(
-        mock_root.join("doc-manifest.json"),
-        serde_json::to_vec_pretty(&doc_manifest).expect("doc manifest json"),
-    )
-    .expect("doc manifest write");
-
-    let manifest_path = mock_root.join("manifest.json");
-    fs::write(
-        &manifest_path,
-        serde_json::to_vec_pretty(&manifest).expect("manifest json"),
-    )
-    .expect("manifest write");
 
     let cargo_home = sandbox.path().join("cargo-home");
     let home = sandbox.path().join("home");
@@ -733,15 +690,24 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
     fs::create_dir_all(&home).expect("home");
 
     let mut extra = HashMap::new();
-    extra.insert(
-        "GTC_TENANT_MANIFEST_URL_TEMPLATE".to_string(),
-        format!("file://{}", manifest_path.display()),
-    );
     extra.insert("GREENTIC_ACME_KEY".to_string(), "secret-token".to_string());
     extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
     extra.insert("HOME".to_string(), home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
 
-    let output = sandbox.run_gtc_capture(["install", "--tenant", "acme"], extra);
+    let output = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--manifest",
+            manifest_path.to_str().expect("utf8"),
+            "--tenant",
+            "acme",
+        ],
+        extra,
+    );
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -750,28 +716,15 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let installed_tool = cargo_home.join("bin").join("greentic-enterprise-tool");
-    assert!(
-        installed_tool.exists(),
-        "tool should be installed to cargo bin"
-    );
-
-    let installed_doc = home
-        .join(".greentic")
-        .join("artifacts")
-        .join("docs")
-        .join("guides")
-        .join("enterprise-guide.md");
-    assert!(
-        installed_doc.exists(),
-        "doc should be installed to artifacts root"
-    );
-
     let logged = fs::read_to_string(log_file).expect("read dev log");
-    assert!(logged.contains("install tools"));
+    assert!(logged.contains("install --tenant acme --key secret-token"));
+    assert!(!logged.contains("install tools"));
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
-    assert!(cargo_logged.contains("binstall -y --disable-strategies compile greentic-dev"));
-    assert!(cargo_logged.contains("binstall -y --disable-strategies compile greentic-operator"));
+    assert!(
+        cargo_logged.contains(
+            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+        )
+    );
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(!stderr.contains("secret-token"));
@@ -780,41 +733,178 @@ fn install_tenant_mode_uses_env_key_and_installs_tools_and_docs() {
 #[test]
 fn install_skips_tenant_when_public_install_fails() {
     let sandbox = TestSandbox::new("install_skips_tenant_when_public_install_fails");
+    let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
+    let manifest_path = write_toolchain_manifest(sandbox.path());
 
-    sandbox.write_exit_tool("greentic-dev", 23);
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
-    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, Some("greentic-runner-cli"));
     sandbox.write_install_prereq_tools();
+    sandbox.write_contract_deployer_tool("greentic-deployer");
 
-    let mock_root = sandbox.path().join("mock-dist");
-    fs::create_dir_all(&mock_root).expect("mock root");
-    fs::write(mock_root.join("index.json"), b"{}").expect("index write");
+    let cargo_home = sandbox.path().join("cargo-home");
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
 
     let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
     extra.insert(
-        "GTC_DIST_MOCK_ROOT".to_string(),
-        mock_root.display().to_string(),
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
     );
     extra.insert("GREENTIC_ACME_KEY".to_string(), "secret-token".to_string());
 
-    let output = sandbox.run_gtc_capture(["install", "--tenant", "acme"], extra);
-    assert_eq!(output.status.code(), Some(23));
+    let output = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--manifest",
+            manifest_path.to_str().expect("utf8"),
+            "--tenant",
+            "acme",
+        ],
+        extra,
+    );
+    assert_eq!(output.status.code(), Some(1));
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
-    assert!(cargo_logged.contains("binstall -y --disable-strategies compile greentic-dev"));
-    assert!(cargo_logged.contains("binstall -y --disable-strategies compile greentic-operator"));
+    assert!(cargo_logged.contains("greentic-runner-cli"));
+    let logged = fs::read_to_string(log_file).unwrap_or_default();
+    assert!(!logged.contains("--tenant acme"));
 }
 
 #[test]
-fn update_calls_binstall_force_for_all_companions() {
-    let sandbox = TestSandbox::new("update_calls_binstall_force_for_all_companions");
+fn install_dry_run_executes_nothing() {
+    let sandbox = TestSandbox::new("install_dry_run_executes_nothing");
+    let log_file = sandbox.path().join("dev.log");
     let cargo_log_file = sandbox.path().join("cargo.log");
+    let manifest_path = write_toolchain_manifest(sandbox.path());
+    let cargo_home = sandbox.path().join("cargo-home");
+    let state_dir = sandbox.path().join("toolchain-state");
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert("GREENTIC_ACME_KEY".to_string(), "secret-token".to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        state_dir.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--manifest",
+            manifest_path.to_str().expect("utf8"),
+            "--tenant",
+            "acme",
+            "--dry-run",
+        ],
+        extra,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
+    assert!(!cargo_logged.contains("--locked --force"));
+    assert!(!state_dir.join("installed.json").exists());
+    let dev_logged = fs::read_to_string(log_file).unwrap_or_default();
+    assert!(!dev_logged.contains("--tenant acme"));
+}
+
+#[test]
+fn install_skips_when_digest_is_unchanged() {
+    let sandbox = TestSandbox::new("install_skips_when_digest_is_unchanged");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let manifest_path = write_toolchain_manifest(sandbox.path());
+    let cargo_home = sandbox.path().join("cargo-home");
+    let state_dir = sandbox.path().join("toolchain-state");
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        state_dir.display().to_string(),
+    );
+
+    let first = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--manifest",
+            manifest_path.to_str().expect("utf8"),
+        ],
+        extra.clone(),
+    );
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    fs::write(&cargo_log_file, "").expect("clear cargo log");
+    let second = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--manifest",
+            manifest_path.to_str().expect("utf8"),
+        ],
+        extra,
+    );
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+
+    let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
+    assert!(!cargo_logged.contains("--locked --force"));
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(stdout.contains("Greentic toolchain is already up to date."));
+}
+
+#[test]
+fn update_installs_manifest_toolchain_with_force() {
+    let sandbox = TestSandbox::new("update_installs_manifest_toolchain_with_force");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let manifest_path = write_toolchain_manifest(sandbox.path());
+    let cargo_home = sandbox.path().join("cargo-home");
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
 
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
-    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_install_prereq_tools();
+    sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_exit_tool("greentic-operator", 0);
 
-    let output = sandbox.run_gtc_capture(["update"], HashMap::new());
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["update"], extra);
     assert_eq!(
         output.status.code(),
         Some(0),
@@ -824,55 +914,53 @@ fn update_calls_binstall_force_for_all_companions() {
     );
 
     let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
-    assert!(cargo_logged.contains("binstall -y --force --disable-strategies compile greentic-dev"));
     assert!(
-        cargo_logged.contains("binstall -y --force --disable-strategies compile greentic-operator")
-    );
-    assert!(
-        cargo_logged.contains("binstall -y --force --disable-strategies compile greentic-bundle")
-    );
-    assert!(
-        cargo_logged.contains("binstall -y --force --disable-strategies compile greentic-setup")
-    );
-    assert!(
-        cargo_logged.contains("binstall -y --force --disable-strategies compile greentic-start")
-    );
-    assert!(
-        cargo_logged.contains("binstall -y --force --disable-strategies compile greentic-deployer")
+        cargo_logged.contains(
+            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+        )
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Updating greentic-dev"));
-    assert!(stdout.contains("Updated greentic-dev: OK"));
+    assert!(stdout.contains("Installing greentic-dev binary greentic-dev"));
 }
 
 #[test]
-fn update_reports_failure_and_continues() {
-    let sandbox = TestSandbox::new("update_reports_failure_and_continues");
+fn update_reports_manifest_install_failure() {
+    let sandbox = TestSandbox::new("update_reports_manifest_install_failure");
     let cargo_log_file = sandbox.path().join("cargo.log");
+    let manifest_path = write_toolchain_manifest(sandbox.path());
+    let cargo_home = sandbox.path().join("cargo-home");
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
 
-    sandbox.write_cargo_binstall_tool(&cargo_log_file, Some("greentic-bundle"));
-    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, Some("greentic-runner-cli"));
+    sandbox.write_install_prereq_tools();
+    sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_exit_tool("greentic-operator", 0);
 
-    let output = sandbox.run_gtc_capture(["update"], HashMap::new());
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["update"], extra);
     assert_eq!(
         output.status.code(),
         Some(1),
-        "should exit 1 when any package fails"
+        "should exit 1 when a manifest package fails"
     );
 
     let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
     assert!(cargo_logged.contains("greentic-dev"));
-    assert!(cargo_logged.contains("greentic-bundle"));
-    assert!(cargo_logged.contains("greentic-start"));
-    assert!(cargo_logged.contains("greentic-deployer"));
+    assert!(cargo_logged.contains("greentic-runner-cli"));
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        stderr.contains("greentic-bundle: FAIL")
-            || stderr.contains("Updated greentic-bundle: FAIL")
-    );
+    assert!(stderr.contains("Installed greentic-runner binary greentic-runner-cli: FAIL"));
 }
 
 #[test]
@@ -1116,31 +1204,6 @@ fn stop_single_vm_destroy_removes_saved_state() {
     );
 }
 
-#[cfg(unix)]
-fn write_tool_zip(path: &Path, file_name: &str, contents: &[u8]) {
-    let file = fs::File::create(path).expect("zip create");
-    let mut zip = zip::ZipWriter::new(file);
-    let options = zip::write::SimpleFileOptions::default();
-    zip.start_file(format!("bin/{file_name}"), options)
-        .expect("zip start file");
-    zip.write_all(contents).expect("zip write");
-    zip.finish().expect("zip finish");
-}
-
-#[cfg(unix)]
-fn sha256_file(path: &Path) -> String {
-    let bytes = fs::read(path).expect("read file for sha256");
-    let mut hasher = Sha256::new();
-    hasher.update(bytes);
-    let digest = hasher.finalize();
-    let mut hex = String::with_capacity(digest.len() * 2);
-    for byte in digest {
-        use std::fmt::Write as _;
-        write!(&mut hex, "{byte:02x}").expect("hex digest write");
-    }
-    hex
-}
-
 fn create_minimal_bundle_dir(path: &Path) {
     fs::create_dir_all(path.join("packs")).expect("packs dir");
     fs::write(path.join("bundle.yaml"), "bundle_id: demo\n").expect("bundle.yaml");
@@ -1348,6 +1411,67 @@ fn rust_string_literal(value: &str) -> String {
     format!("{value:?}")
 }
 
+fn write_toolchain_manifest(root: &Path) -> PathBuf {
+    let path = root.join("toolchain-manifest.json");
+    let manifest = serde_json::json!({
+        "schema": "greentic.toolchain-manifest.v1",
+        "toolchain": "gtc",
+        "version": "1.0.4",
+        "channel": "stable",
+        "packages": [
+            {
+                "crate": "greentic-dev",
+                "bins": ["greentic-dev"],
+                "version": "0.5.9"
+            },
+            {
+                "crate": "greentic-runner",
+                "bins": ["greentic-runner", "greentic-runner-cli"],
+                "version": "0.5.10"
+            },
+            {
+                "crate": "greentic-deployer",
+                "bins": ["greentic-deployer"],
+                "version": "0.4.3"
+            }
+        ]
+    });
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("write toolchain manifest");
+    path
+}
+
+fn write_latest_toolchain_manifest(root: &Path) -> PathBuf {
+    let path = root.join("latest-toolchain-manifest.json");
+    let manifest = serde_json::json!({
+        "schema": "greentic.toolchain-manifest.v1",
+        "toolchain": "gtc",
+        "version": "dev",
+        "channel": "dev",
+        "packages": [
+            {
+                "crate": "greentic-flow",
+                "bins": ["greentic-flow"],
+                "version": "latest"
+            },
+            {
+                "crate": "greentic-deployer",
+                "bins": ["greentic-deployer"],
+                "version": "0.4.3"
+            }
+        ]
+    });
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("write latest toolchain manifest");
+    path
+}
+
 fn rust_exit_tool_program(exit_code: i32) -> String {
     format!("fn main() {{ std::process::exit({exit_code}); }}",)
 }
@@ -1507,6 +1631,10 @@ fn main() {{
     writeln!(file, "{{}}", joined).expect("write log");
 
     if args.first().map(String::as_str) == Some("search") {{
+        if args.get(1).map(String::as_str) == Some("greentic-flow") {{
+            println!("greentic-flow = \"0.6.0-dev.25001174716\" # mock");
+            return;
+        }}
         println!("cargo-binstall = \"1.0.0\" # mock");
         return;
     }}

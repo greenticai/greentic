@@ -128,6 +128,47 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .num_args(1)
                         .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.key.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("channel")
+                        .long("channel")
+                        .value_name("CHANNEL")
+                        .num_args(1)
+                        .conflicts_with("release")
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.channel.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("release")
+                        .long("release")
+                        .value_name("RELEASE")
+                        .num_args(1)
+                        .conflicts_with("channel")
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.release.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("manifest")
+                        .long("manifest")
+                        .value_name("PATH")
+                        .num_args(1)
+                        .conflicts_with_all(["channel", "release"])
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.manifest.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("force")
+                        .long("force")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.force.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.dry_run.help").into_owned()),
                 ),
         )
         .subcommand(

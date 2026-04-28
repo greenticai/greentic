@@ -22,6 +22,8 @@ mod process;
 mod prompt;
 #[path = "gtc/router.rs"]
 mod router;
+#[path = "gtc/toolchain.rs"]
+mod toolchain;
 
 use std::path::Path;
 
@@ -95,6 +97,7 @@ fn main() {
     std::process::exit(exit_code);
 }
 
+#[allow(dead_code)]
 fn sha256_file(path: &Path) -> Result<String, String> {
     perf_sha256_file(path)
 }
