@@ -1,6 +1,7 @@
 use std::env;
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 
 use clap::ArgMatches;
 use serde_json::Value;
@@ -22,9 +23,11 @@ use crate::router::{
     collect_tail, detect_locale, locale_from_args, parse_raw_passthrough, passthrough_help_request,
     route_passthrough_subcommand,
 };
+use crate::toolchain::installed_toolchain_label;
 
 pub(super) fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
+    let default_install_channel = default_install_channel_for_invocation(raw_args.first());
     let cli_locale = locale_from_args(&raw_args);
     let locale = detect_locale(&raw_args, i18n.default_locale());
     let raw_passthrough = parse_raw_passthrough(&raw_args);
@@ -47,14 +50,21 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
 
     let debug = matches.get_flag("debug-router");
 
+    if matches.get_flag("version") {
+        print_version();
+        return 0;
+    }
+
     match matches.subcommand() {
         Some(("version", _)) => {
-            println!("gtc {}", env!("CARGO_PKG_VERSION"));
+            print_version();
             0
         }
         Some(("doctor", _)) => run_doctor(&locale),
         Some(("docs", sub_matches)) => run_docs(sub_matches, debug, &locale),
-        Some(("install", sub_matches)) => run_install(sub_matches, debug, &locale),
+        Some(("install", sub_matches)) => {
+            run_install(sub_matches, default_install_channel, debug, &locale)
+        }
         Some(("update", _)) => run_update(debug, &locale),
         Some(("help", sub_matches)) => run_help(sub_matches, &locale),
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
@@ -115,6 +125,31 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         }
         _ => 2,
     }
+}
+
+pub(super) fn default_install_channel_for_invocation(invocation: Option<&String>) -> &'static str {
+    let Some(invocation) = invocation else {
+        return "stable";
+    };
+    let Some(file_name) = Path::new(invocation)
+        .file_stem()
+        .and_then(|value| value.to_str())
+    else {
+        return "stable";
+    };
+    if file_name.ends_with("-dev") {
+        "dev"
+    } else {
+        "stable"
+    }
+}
+
+fn print_version() {
+    println!("gtc {}", env!("CARGO_PKG_VERSION"));
+    println!(
+        "Greentic toolchain release: {}",
+        installed_toolchain_label()
+    );
 }
 
 fn run_wizard_schema(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {

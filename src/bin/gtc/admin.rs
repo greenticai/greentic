@@ -17,7 +17,7 @@ use serde_yaml_bw as serde_yaml;
 
 use crate::DEPLOYER_BIN;
 use crate::deploy::resolve_local_mutable_bundle_dir;
-use crate::process::resolve_companion_binary;
+use crate::process::resolve_companion_command;
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq)]
 pub(super) struct AdminRegistryDocument {
@@ -352,8 +352,7 @@ pub(super) fn run_admin_tunnel(sub_matches: &ArgMatches, _locale: &str) -> i32 {
         }
     };
 
-    let deployer_bin =
-        resolve_companion_binary(DEPLOYER_BIN).unwrap_or_else(|| PathBuf::from(DEPLOYER_BIN));
+    let deployer_bin = resolve_companion_command(DEPLOYER_BIN);
     let status = ProcessCommand::new(&deployer_bin)
         .args([
             "aws",
@@ -512,8 +511,7 @@ fn run_admin_deployer_command(sub_matches: &ArgMatches, admin_subcommand: &str) 
         }
     };
 
-    let deployer_bin =
-        resolve_companion_binary(DEPLOYER_BIN).unwrap_or_else(|| PathBuf::from(DEPLOYER_BIN));
+    let deployer_bin = resolve_companion_command(DEPLOYER_BIN);
     let status = ProcessCommand::new(&deployer_bin)
         .args([
             target,
@@ -547,8 +545,7 @@ fn capture_admin_deployer_command(
     admin_subcommand: &str,
     output: &str,
 ) -> GtcResult<String> {
-    let deployer_bin =
-        resolve_companion_binary(DEPLOYER_BIN).unwrap_or_else(|| PathBuf::from(DEPLOYER_BIN));
+    let deployer_bin = resolve_companion_command(DEPLOYER_BIN);
     let output = ProcessCommand::new(&deployer_bin)
         .args([
             target,

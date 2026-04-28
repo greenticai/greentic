@@ -42,6 +42,9 @@ use archive::{extract_tar_archive, extract_zip_bytes};
 #[cfg(test)]
 #[allow(unused_imports)]
 use cli::build_cli;
+#[cfg(test)]
+#[allow(unused_imports)]
+use commands::default_install_channel_for_invocation;
 use commands::run;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -71,7 +74,10 @@ use install::{
 };
 #[cfg(test)]
 #[allow(unused_imports)]
-use process::{apply_default_deploy_env_for_target, resolve_companion_binary_from};
+use process::{
+    apply_default_deploy_env_for_target, resolve_companion_binary_from,
+    resolve_companion_binary_from_invocation,
+};
 #[cfg(test)]
 #[allow(unused_imports)]
 use prompt::parse_prompt_choice;
