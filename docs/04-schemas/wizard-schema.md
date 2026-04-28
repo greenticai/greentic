@@ -9,7 +9,7 @@ installed toolchain in this environment.
 
 ## Provenance
 
-- Tool version: `gtc 1.0.11`
+- Tool version: `gtc 1.0.12`
 - Command:
 
 ```bash
@@ -31,41 +31,17 @@ gtc wizard --schema
 ## What This Schema Represents
 
 The emitted schema is the launcher-level answer contract exposed by the current
-installed `gtc` toolchain. Its `$defs` include `greentic_bundle_wizard_answers`
-and `greentic_pack_wizard_answers`, which cover the bundle and pack delegate
-paths end-to-end.
+installed `gtc` toolchain.
 
 It is not only a tiny top-level wrapper. The raw JSON also embeds nested schema
 material for delegated pack and bundle answers, which is why the captured raw
 artifact is substantially larger than a simple launcher contract.
-
-## Component And Flow Sub-Schemas
-
-The launcher schema deliberately does not inline component-level or flow-level
-wizard answer shapes — those contracts live with the tools that own them, and
-each is a self-contained schema document with its own top-level identity. To
-validate nested `component_wizard_answers` or `flow_wizard_answers` blocks
-inside an `answers.json`, fetch the relevant sub-schema directly from the
-companion binary:
-
-```bash
-greentic-component wizard --schema   # qa-answers envelope (schema: component-wizard-run/v1)
-greentic-flow wizard --schema        # flow plan answers
-```
-
-Both return flat schemas (no nested `$defs`). Validate each nested answers
-block against its own sub-schema in addition to validating the outer
-`answers.json` against the launcher schema documented above. `gtc wizard
---schema` alone will not detect mistakes inside the nested component or flow
-blocks.
 
 ## How To Use It
 
 - Use this schema before creating or validating wizard `answers.json` input for
   the launcher path.
 - Treat the raw JSON artifact as the canonical machine-derived reference.
-- For nested `component_wizard_answers` and `flow_wizard_answers` blocks, also
-  validate against the per-tool sub-schemas described above.
 - Use prose docs such as [`../02-cli/gtc-wizard.md`](../02-cli/gtc-wizard.md)
   only as interpretation and guidance around the emitted contract.
 

@@ -12,7 +12,7 @@ one of this repo's real canonical production components.
 
 ## Provenance
 
-- Tool version: `greentic-flow 0.5.5`
+- Tool version: `greentic-flow 0.5.7`
 - Command:
 
 ```bash

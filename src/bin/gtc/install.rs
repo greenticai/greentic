@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::env;
 use std::fs;
 use std::fs::File;
@@ -17,9 +19,11 @@ use super::archive::{
     extract_squashfs_file, extract_tar_bytes, extract_targz_bytes, extract_zip_bytes,
     looks_like_gzip, looks_like_squashfs, looks_like_zip, safe_join, set_executable_if_unix,
 };
+use super::deploy::ChildProcessEnv;
 use super::i18n_support::{t, tf};
-use super::process::{passthrough, resolve_cargo_bin_dir, run_binary_capture};
-use super::{BUNDLE_BIN, DEPLOYER_BIN, DEV_BIN, OP_BIN, SETUP_BIN, START_BIN, sha256_file};
+use super::process::{passthrough_with_env, resolve_cargo_bin_dir, run_binary_capture};
+use super::toolchain::{ToolchainInstallOptions, ToolchainSource, run_toolchain_install};
+use super::{DEPLOYER_BIN, DEV_BIN, sha256_file};
 
 pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
     println!("{}", t(locale, "gtc.install.public_mode"));
@@ -29,10 +33,20 @@ pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -
         return preflight_status;
     }
 
-    let public_args = vec!["install".to_string(), "tools".to_string()];
-    let public_status = passthrough(DEV_BIN, &public_args, debug, locale);
-    if public_status != 0 {
-        return public_status;
+    let options = match ToolchainInstallOptions::from_matches(sub_matches) {
+        Ok(options) => options,
+        Err(err) => {
+            eprintln!("{err}");
+            return 2;
+        }
+    };
+    let dry_run = options.dry_run;
+    let toolchain_status = run_toolchain_install(options, debug, locale);
+    if toolchain_status != 0 {
+        return toolchain_status;
+    }
+    if dry_run {
+        return 0;
     }
 
     if let Err(err) = ensure_deployer_dist_pack(debug, locale) {
@@ -74,237 +88,37 @@ pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -
         }
     };
 
-    let manifest_url = match resolve_tenant_manifest_url(&tenant, &key, locale) {
-        Ok(url) => url,
-        Err(err) => {
-            eprintln!("{}: {err}", t(locale, "gtc.err.pull_failed"));
-            return 1;
-        }
-    };
+    let env_name = tenant_env_var_name(&tenant);
+    let mut child_env = ChildProcessEnv::new();
+    child_env.set(env_name.clone(), key);
 
-    let manifest_bytes = match fetch_download_bytes_with_auth(&manifest_url, &key, locale) {
-        Ok(bytes) => bytes,
-        Err(err) => {
-            eprintln!(
-                "{}: {err}",
-                tf(
-                    locale,
-                    "gtc.err.pull_failed",
-                    &[("oci", manifest_url.as_str())]
-                )
-            );
-            return 1;
-        }
-    };
-
-    let manifest: TenantInstallManifest = match serde_json::from_slice(&manifest_bytes) {
-        Ok(manifest) => manifest,
-        Err(err) => {
-            eprintln!("{}: {err}", t(locale, "gtc.err.invalid_manifest"));
-            return 1;
-        }
-    };
-
-    if manifest.schema_version != "1" {
-        eprintln!(
-            "{}: unsupported schema_version '{}'",
-            t(locale, "gtc.err.invalid_manifest"),
-            manifest.schema_version
-        );
-        return 1;
-    }
-
-    if manifest.tenant != tenant {
-        eprintln!(
-            "{}: tenant '{}' does not match requested tenant '{}'",
-            t(locale, "gtc.err.invalid_manifest"),
-            manifest.tenant,
-            tenant
-        );
-        return 1;
-    }
-
-    let cargo_bin_dir = match resolve_cargo_bin_dir() {
-        Ok(path) => path,
-        Err(err) => {
-            eprintln!("{}: {err}", t(locale, "gtc.err.install_dir"));
-            return 1;
-        }
-    };
-
-    let artifacts_root = match resolve_artifacts_root() {
-        Ok(path) => path,
-        Err(err) => {
-            eprintln!("{}: {err}", t(locale, "gtc.err.install_dir"));
-            return 1;
-        }
-    };
-
-    let mut any_failed = false;
-    let current_os = match current_install_os() {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-    let current_arch = match current_install_arch() {
-        Ok(value) => value,
-        Err(code) => return code,
-    };
-
-    for tool in manifest.tools {
-        let result = install_tenant_tool_reference(
-            &tool,
-            &tenant,
-            &key,
-            &current_os,
-            &current_arch,
-            &cargo_bin_dir,
-            locale,
-        );
-        match result {
-            Ok(()) => {
-                println!(
-                    "{}",
-                    tf(
-                        locale,
-                        "gtc.install.item_ok",
-                        &[("kind", "tool"), ("name", tool.id.as_str())]
-                    )
-                );
-            }
-            Err(err) => {
-                any_failed = true;
-                eprintln!(
-                    "{}: {err}",
-                    tf(
-                        locale,
-                        "gtc.install.item_fail",
-                        &[("kind", "tool"), ("name", tool.id.as_str())]
-                    )
-                );
-            }
-        }
-    }
-
-    for doc in manifest.docs {
-        let result = install_tenant_doc_reference(&doc, &tenant, &key, &artifacts_root, locale);
-        match result {
-            Ok(paths) => {
-                println!(
-                    "{}",
-                    tf(
-                        locale,
-                        "gtc.install.item_ok",
-                        &[("kind", "doc"), ("name", doc.id.as_str())]
-                    )
-                );
-                for path in paths {
-                    println!("  -> {}", path.display());
-                }
-            }
-            Err(err) => {
-                any_failed = true;
-                eprintln!(
-                    "{}: {err}",
-                    tf(
-                        locale,
-                        "gtc.install.item_fail",
-                        &[("kind", "doc"), ("name", doc.id.as_str())]
-                    )
-                );
-            }
-        }
-    }
-
-    for asset in manifest.store_assets {
-        let result = install_store_asset_reference(&asset, &tenant, &key, &artifacts_root, locale);
-        match result {
-            Ok(paths) => {
-                println!(
-                    "{}",
-                    tf(
-                        locale,
-                        "gtc.install.item_ok",
-                        &[("kind", "store asset"), ("name", asset.id.as_str())]
-                    )
-                );
-                for path in paths {
-                    println!("  -> {}", path.display());
-                }
-            }
-            Err(err) => {
-                any_failed = true;
-                eprintln!(
-                    "{}: {err}",
-                    tf(
-                        locale,
-                        "gtc.install.item_fail",
-                        &[("kind", "store asset"), ("name", asset.id.as_str())]
-                    )
-                );
-            }
-        }
-    }
-
-    if any_failed {
-        eprintln!("{}", t(locale, "gtc.install.summary_failed"));
-        1
-    } else {
-        println!("{}", t(locale, "gtc.install.summary_ok"));
-        0
-    }
+    let tenant_args = vec![
+        "install".to_string(),
+        "--tenant".to_string(),
+        tenant,
+        "--token".to_string(),
+        format!("env:{env_name}"),
+    ];
+    passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env)
 }
 
 pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
     println!("{}", t(locale, "gtc.update.start"));
 
-    if !is_binstall_available(debug, locale) {
-        eprintln!("{}", t(locale, "gtc.update.binstall_missing"));
-        return 1;
+    let preflight_status = ensure_install_prereqs(debug, locale);
+    if preflight_status != 0 {
+        return preflight_status;
     }
 
-    let mut any_failed = false;
-
-    for package in [
-        DEV_BIN,
-        OP_BIN,
-        BUNDLE_BIN,
-        SETUP_BIN,
-        START_BIN,
-        DEPLOYER_BIN,
-    ] {
-        println!(
-            "{}",
-            tf(locale, "gtc.update.updating", &[("package", package)])
-        );
-
-        let status = install_companion_package(package, true, debug, locale);
-        if status != 0 {
-            any_failed = true;
-            eprintln!(
-                "{}",
-                tf(locale, "gtc.update.item_fail", &[("package", package)])
-            );
-        } else {
-            println!(
-                "{}",
-                tf(locale, "gtc.update.item_ok", &[("package", package)])
-            );
-        }
-    }
-
-    let tools_args = vec!["install".to_string(), "tools".to_string()];
-    let tools_status = passthrough(DEV_BIN, &tools_args, debug, locale);
-    if tools_status != 0 {
-        any_failed = true;
-    }
-
-    if any_failed {
-        eprintln!("{}", t(locale, "gtc.update.summary_failed"));
-        1
-    } else {
-        println!("{}", t(locale, "gtc.update.summary_ok"));
-        0
-    }
+    run_toolchain_install(
+        ToolchainInstallOptions {
+            source: ToolchainSource::Channel("stable".to_string()),
+            force: true,
+            dry_run: false,
+        },
+        debug,
+        locale,
+    )
 }
 
 pub(crate) fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
@@ -334,18 +148,6 @@ pub(crate) fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         }
     }
 
-    if which::which("cargo-component").is_err() {
-        println!("Installing cargo-component...");
-        let status = run_cargo(
-            &["install".to_string(), "cargo-component".to_string()],
-            debug,
-            locale,
-        );
-        if status != 0 {
-            return status;
-        }
-    }
-
     let installed_binstall = detect_binstall_version(debug, locale);
     let latest_binstall = latest_binstall_version(debug, locale);
 
@@ -367,15 +169,19 @@ pub(crate) fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
         }
     }
 
-    for package in [
-        DEV_BIN,
-        OP_BIN,
-        BUNDLE_BIN,
-        SETUP_BIN,
-        START_BIN,
-        DEPLOYER_BIN,
-    ] {
-        let status = install_companion_package(package, false, debug, locale);
+    if which::which("cargo-component").is_err() {
+        println!("Installing cargo-component...");
+        let status = run_cargo(
+            &[
+                "binstall".to_string(),
+                "-y".to_string(),
+                "--locked".to_string(),
+                "--force".to_string(),
+                "cargo-component".to_string(),
+            ],
+            debug,
+            locale,
+        );
         if status != 0 {
             return status;
         }
@@ -875,7 +681,11 @@ fn run_command_capture(
         .ok()
 }
 
-fn run_cargo_capture(args: &[&str], debug: bool, locale: &str) -> Option<std::process::Output> {
+pub(crate) fn run_cargo_capture(
+    args: &[&str],
+    debug: bool,
+    locale: &str,
+) -> Option<std::process::Output> {
     run_command_capture("cargo", args, debug, locale)
 }
 
@@ -900,7 +710,7 @@ fn run_command(command: &str, args: &[&str], debug: bool, locale: &str) -> i32 {
     }
 }
 
-fn run_cargo(args: &[String], debug: bool, locale: &str) -> i32 {
+pub(crate) fn run_cargo(args: &[String], debug: bool, locale: &str) -> i32 {
     let borrowed: Vec<&str> = args.iter().map(String::as_str).collect();
     run_command("cargo", &borrowed, debug, locale)
 }
@@ -1773,7 +1583,7 @@ mod tests {
         ensure_install_prereqs, fetch_download_bytes_with_auth, fetch_json_bytes_with_auth,
         install_companion_package, install_tenant_doc_reference, install_tenant_tool_reference,
         is_binstall_available, latest_binstall_version, query_command_trimmed, recurse_files,
-        required_deployer_dist_pack_filenames, run_update,
+        required_deployer_dist_pack_filenames,
     };
     #[cfg(unix)]
     use crate::tests::{env_test_lock, fake_deployer_contract};
@@ -2535,12 +2345,8 @@ mod tests {
         let logged = fs::read_to_string(log).expect("read log");
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(logged.contains("install cargo-binstall --locked"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-dev"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-operator"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-bundle"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-setup"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-start"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-deployer"));
+        assert!(!logged.contains("greentic-dev"));
+        assert!(!logged.contains("greentic-operator"));
 
         unsafe {
             match original_path {
@@ -2672,7 +2478,8 @@ mod tests {
         let rustup_logged = fs::read_to_string(rustup_log).expect("read rustup log");
         assert!(rustup_logged.contains("target list"));
         assert!(rustup_logged.contains("target add wasm32-wasip2"));
-        assert!(cargo_logged.contains("install cargo-component"));
+        assert!(cargo_logged.contains("binstall -y --locked --force cargo-component"));
+        assert!(!cargo_logged.contains("install cargo-component"));
 
         unsafe {
             match original_path {
@@ -2768,91 +2575,13 @@ mod tests {
         assert!(logged.contains("binstall -V"));
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(!logged.contains("install cargo-binstall --locked"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-dev"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-operator"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-bundle"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-setup"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-start"));
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-deployer"));
+        assert!(!logged.contains("greentic-dev"));
+        assert!(!logged.contains("greentic-operator"));
 
         unsafe {
             match original_path {
                 Some(value) => env::set_var("PATH", value),
                 None => env::remove_var("PATH"),
-            }
-        }
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn run_update_reports_failure_after_attempting_all_packages_and_tools() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let dir = executable_tempdir();
-        let cargo_log = dir.path().join("cargo.log");
-        let dev_log = dir.path().join("dev.log");
-        let cargo = dir.path().join("cargo");
-        let dev = dir.path().join("greentic-dev");
-
-        write_executable(
-            &cargo,
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\ncase \" $* \" in\n  *\" greentic-operator \"*) exit 9 ;;\nesac\nexit 0\n",
-                cargo_log.display()
-            ),
-        );
-        write_executable(
-            &dev,
-            &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
-                dev_log.display()
-            ),
-        );
-
-        let original_path = env::var_os("PATH");
-        let original_dev_bin = env::var_os("GREENTIC_DEV_BIN");
-        unsafe {
-            env::set_var("PATH", dir.path());
-            env::set_var("GREENTIC_DEV_BIN", &dev);
-        }
-
-        assert_eq!(run_update(false, "en"), 1);
-
-        let cargo_logged = fs::read_to_string(cargo_log).expect("read cargo log");
-        assert!(
-            cargo_logged.contains("binstall -y --force --disable-strategies compile greentic-dev")
-        );
-        assert!(
-            cargo_logged
-                .contains("binstall -y --force --disable-strategies compile greentic-operator")
-        );
-        assert!(
-            cargo_logged
-                .contains("binstall -y --force --disable-strategies compile greentic-bundle")
-        );
-        assert!(
-            cargo_logged
-                .contains("binstall -y --force --disable-strategies compile greentic-setup")
-        );
-        assert!(
-            cargo_logged
-                .contains("binstall -y --force --disable-strategies compile greentic-start")
-        );
-        assert!(
-            cargo_logged
-                .contains("binstall -y --force --disable-strategies compile greentic-deployer")
-        );
-
-        let dev_logged = fs::read_to_string(dev_log).expect("read dev log");
-        assert!(dev_logged.contains("install tools"));
-
-        unsafe {
-            match original_path {
-                Some(value) => env::set_var("PATH", value),
-                None => env::remove_var("PATH"),
-            }
-            match original_dev_bin {
-                Some(value) => env::set_var("GREENTIC_DEV_BIN", value),
-                None => env::remove_var("GREENTIC_DEV_BIN"),
             }
         }
     }

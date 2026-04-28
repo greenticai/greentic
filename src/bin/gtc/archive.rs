@@ -178,6 +178,7 @@ fn ensure_no_symlink_ancestors(base: &Path, candidate: &Path) -> GtcResult<()> {
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 pub(super) fn set_executable_if_unix(path: &Path) -> GtcResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
