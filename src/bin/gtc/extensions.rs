@@ -545,6 +545,7 @@ mod tests {
         resolve_descriptor_working_directory, resolve_handoff_output_path, resolve_registry_path,
         write_launcher_handoff,
     };
+    use crate::tests::env_test_lock;
     use clap::{Arg, ArgAction, Command};
     use std::env;
     use std::fs;
@@ -709,7 +710,9 @@ mod tests {
 
     #[test]
     fn registry_path_uses_env_when_present() {
-        let matches = Command::new("wizard").get_matches_from(["wizard"]);
+        let matches = Command::new("wizard")
+            .arg(Arg::new("extension-registry").long("extension-registry"))
+            .get_matches_from(["wizard"]);
         unsafe {
             env::set_var("GTC_EXTENSION_REGISTRY", "/tmp/env-registry.json");
         }
@@ -722,22 +725,26 @@ mod tests {
 
     #[test]
     fn handoff_output_path_defaults_under_cwd() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let old = env::current_dir().expect("cwd");
         env::set_current_dir(dir.path()).expect("set cwd");
 
-        let matches = Command::new("wizard").get_matches_from(["wizard"]);
+        let matches = Command::new("wizard")
+            .arg(Arg::new("emit-extension-handoff").long("emit-extension-handoff"))
+            .get_matches_from(["wizard"]);
         let resolved = resolve_handoff_output_path(&matches).expect("handoff path");
 
         env::set_current_dir(old).expect("restore cwd");
-        assert_eq!(
-            resolved,
-            dir.path()
-                .join(".greentic")
-                .join("wizard")
-                .join("extensions")
-                .join("launcher-handoff.json")
-        );
+        let expected = dir
+            .path()
+            .canonicalize()
+            .expect("canonicalize tempdir")
+            .join(".greentic")
+            .join("wizard")
+            .join("extensions")
+            .join("launcher-handoff.json");
+        assert_eq!(resolved, expected);
     }
 
     #[test]

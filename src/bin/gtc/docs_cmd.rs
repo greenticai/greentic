@@ -84,6 +84,7 @@ fn resolve_repo_root_from_exe(current_exe: &Path) -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::{resolve_repo_root_from_exe, resolve_sync_script_path, run_docs, run_sync_schemas};
+    use crate::tests::env_test_lock;
     use clap::Command;
     use std::env;
     use std::path::Path;
@@ -97,6 +98,7 @@ mod tests {
 
     #[test]
     fn resolve_sync_script_path_prefers_repo_cwd() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let ci_dir = dir.path().join("ci");
         std::fs::create_dir_all(&ci_dir).expect("mkdir");
@@ -123,6 +125,7 @@ mod tests {
 
     #[test]
     fn resolve_sync_script_path_returns_none_when_missing() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let old = env::current_dir().expect("cwd");
         env::set_current_dir(dir.path()).expect("set cwd");
@@ -139,6 +142,7 @@ mod tests {
 
     #[test]
     fn run_sync_schemas_fails_when_script_cannot_be_found() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let old = env::current_dir().expect("cwd");
         env::set_current_dir(dir.path()).expect("set cwd");
