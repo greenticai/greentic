@@ -481,6 +481,89 @@ fn op_help_passthrough_routes_to_greentic_operator() {
 }
 
 #[test]
+fn gtc_dev_wizard_routes_to_dev_suffixed_greentic_dev() {
+    let sandbox = TestSandbox::new("gtc_dev_wizard_routes_to_dev_suffixed_greentic_dev");
+    let log_file = sandbox.path().join("wizard-dev.log");
+    sandbox.write_arg_logger_tool("greentic-dev-dev", &log_file, 0);
+
+    let output = sandbox.run_gtc_dev_capture(
+        ["wizard", "--locale", "fr", "--answers", "oci://example"],
+        HashMap::new(),
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read wizard log");
+    assert!(logged.contains("wizard --locale fr --answers oci://example"));
+}
+
+#[test]
+fn gtc_dev_dev_routes_to_dev_suffixed_greentic_dev() {
+    let sandbox = TestSandbox::new("gtc_dev_dev_routes_to_dev_suffixed_greentic_dev");
+    let log_file = sandbox.path().join("dev-dev.log");
+    sandbox.write_arg_logger_tool("greentic-dev-dev", &log_file, 0);
+
+    let output = sandbox.run_gtc_dev_capture(["dev", "flow", "list"], HashMap::new());
+    assert_eq!(output.status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    assert!(logged.contains("flow list"));
+}
+
+#[test]
+fn gtc_dev_op_routes_to_dev_suffixed_operator() {
+    let sandbox = TestSandbox::new("gtc_dev_op_routes_to_dev_suffixed_operator");
+    let log_file = sandbox.path().join("op-dev.log");
+    sandbox.write_arg_logger_tool("greentic-operator-dev", &log_file, 0);
+
+    let output = sandbox.run_gtc_dev_capture(["op", "--help"], HashMap::new());
+    assert_eq!(output.status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read op log");
+    assert!(logged.contains("--help"));
+}
+
+#[test]
+fn gtc_dev_doctor_checks_dev_suffixed_companions() {
+    let sandbox = TestSandbox::new("gtc_dev_doctor_checks_dev_suffixed_companions");
+    sandbox.write_version_tool("greentic-dev-dev", "greentic-dev-dev 0.0.0");
+    sandbox.write_version_tool("greentic-operator-dev", "greentic-operator-dev 0.0.0");
+    sandbox.write_version_tool("greentic-bundle-dev", "greentic-bundle-dev 0.0.0");
+    sandbox.write_version_tool("greentic-component-dev", "greentic-component-dev 0.0.0");
+    sandbox.write_version_tool("greentic-flow-dev", "greentic-flow-dev 0.0.0");
+    sandbox.write_version_tool("greentic-pack-dev", "greentic-pack-dev 0.0.0");
+    sandbox.write_version_tool("greentic-runner-dev", "greentic-runner-dev 0.0.0");
+    sandbox.write_version_tool("greentic-secrets-dev", "greentic-secrets-dev 0.0.0");
+    sandbox.write_version_tool("greentic-setup-dev", "greentic-setup-dev 0.0.0");
+    sandbox.write_version_tool("greentic-start-dev", "greentic-start-dev 0.0.0");
+    sandbox.write_version_tool("greentic-deployer-dev", "greentic-deployer-dev 0.0.0");
+
+    let output = sandbox.run_gtc_dev_capture(["doctor"], HashMap::new());
+    assert_eq!(output.status.code(), Some(0));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("greentic-dev: OK (greentic-dev-dev 0.0.0)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("greentic-flow: OK (greentic-flow-dev 0.0.0)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("greentic-pack: OK (greentic-pack-dev 0.0.0)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("greentic-runner: OK (greentic-runner-dev 0.0.0)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("greentic-deployer: OK (greentic-deployer-dev 0.0.0)"),
+        "{stdout}"
+    );
+}
+
+#[test]
 fn doctor_uses_greentic_dev_bin_override() {
     let sandbox = TestSandbox::new("doctor_uses_greentic_dev_bin_override");
     let override_bin = sandbox.path().join("bin").join("greentic-dev-local");
@@ -1433,12 +1516,35 @@ impl TestSandbox {
         args: [&str; N],
         extra_env: HashMap<String, String>,
     ) -> std::process::Output {
+        self.run_gtc_binary_capture(Path::new(env!("CARGO_BIN_EXE_gtc")), args, extra_env)
+    }
+
+    fn run_gtc_dev_capture<const N: usize>(
+        &self,
+        args: [&str; N],
+        extra_env: HashMap<String, String>,
+    ) -> std::process::Output {
+        let dev_launcher = self.binary_path("gtc-dev");
+        if !dev_launcher.is_file() {
+            fs::hard_link(env!("CARGO_BIN_EXE_gtc"), &dev_launcher)
+                .or_else(|_| fs::copy(env!("CARGO_BIN_EXE_gtc"), &dev_launcher).map(|_| ()))
+                .expect("create gtc-dev launcher");
+        }
+        self.run_gtc_binary_capture(&dev_launcher, args, extra_env)
+    }
+
+    fn run_gtc_binary_capture<const N: usize>(
+        &self,
+        binary: &Path,
+        args: [&str; N],
+        extra_env: HashMap<String, String>,
+    ) -> std::process::Output {
         let current_path = env::var_os("PATH").unwrap_or_default();
         let mut path_entries = vec![self.root.clone()];
         path_entries.extend(env::split_paths(&current_path));
         let merged_path = env::join_paths(path_entries).expect("join PATH");
 
-        let mut cmd = Command::new(env!("CARGO_BIN_EXE_gtc"));
+        let mut cmd = Command::new(binary);
         cmd.args(args).env("PATH", merged_path);
 
         for (binary, env_key) in [
@@ -1454,6 +1560,7 @@ impl TestSandbox {
             ("greentic-start", "GREENTIC_START_BIN"),
             ("greentic-deployer", "GREENTIC_DEPLOYER_BIN"),
         ] {
+            cmd.env_remove(env_key);
             let path = self.binary_path(binary);
             if path.is_file() {
                 cmd.env(env_key, path);

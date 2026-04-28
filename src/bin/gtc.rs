@@ -74,7 +74,10 @@ use install::{
 };
 #[cfg(test)]
 #[allow(unused_imports)]
-use process::{apply_default_deploy_env_for_target, resolve_companion_binary_from};
+use process::{
+    apply_default_deploy_env_for_target, resolve_companion_binary_from,
+    resolve_companion_binary_from_invocation,
+};
 #[cfg(test)]
 #[allow(unused_imports)]
 use prompt::parse_prompt_choice;

@@ -1,11 +1,12 @@
 use super::{
-    AdminRegistryDocument, DEV_BIN, StartTarget, admin_registry_path, build_cli, build_wizard_args,
-    collect_tail, default_install_channel_for_invocation, detect_bundle_root, detect_locale,
-    ensure_admin_certs_ready, extract_tar_archive, fingerprint_bundle_dir, locale_from_args,
-    normalize_bundle_fingerprint, normalize_expected_sha256, normalize_install_arch,
-    parse_prompt_choice, parse_start_cli_options, parse_start_request, parse_stop_cli_options,
-    parse_stop_request, remove_admin_registry_entry, resolve_admin_cert_dir,
-    resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
+    AdminRegistryDocument, DEV_BIN, FLOW_BIN, StartTarget, admin_registry_path, build_cli,
+    build_wizard_args, collect_tail, default_install_channel_for_invocation, detect_bundle_root,
+    detect_locale, ensure_admin_certs_ready, extract_tar_archive, fingerprint_bundle_dir,
+    locale_from_args, normalize_bundle_fingerprint, normalize_expected_sha256,
+    normalize_install_arch, parse_prompt_choice, parse_start_cli_options, parse_start_request,
+    parse_stop_cli_options, parse_stop_request, remove_admin_registry_entry,
+    resolve_admin_cert_dir, resolve_canonical_target_provider_pack_from,
+    resolve_companion_binary_from, resolve_companion_binary_from_invocation,
     resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
     resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
     run_admin_access, run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry,
@@ -405,6 +406,52 @@ fn resolve_companion_binary_falls_back_to_sibling_binary() {
 }
 
 #[test]
+fn resolve_companion_binary_uses_dev_sibling_for_dev_invocation() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let exe_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&exe_dir).expect("mkdir");
+    let current_exe = exe_dir.join("gtc-dev");
+    let sibling = exe_dir.join("greentic-flow-dev");
+    std::fs::write(&current_exe, b"").expect("write gtc-dev");
+    std::fs::write(&sibling, b"").expect("write companion");
+
+    unsafe {
+        std::env::remove_var("GREENTIC_FLOW_BIN");
+    }
+    let resolved = resolve_companion_binary_from_invocation(
+        Some("gtc-dev"),
+        Some(current_exe.as_path()),
+        FLOW_BIN,
+    )
+    .expect("path");
+    assert_eq!(resolved, sibling);
+}
+
+#[test]
+fn resolve_companion_binary_maps_greentic_dev_to_dev_dev_for_dev_invocation() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let exe_dir = temp.path().join("bin");
+    std::fs::create_dir_all(&exe_dir).expect("mkdir");
+    let current_exe = exe_dir.join("gtc-dev");
+    let sibling = exe_dir.join("greentic-dev-dev");
+    std::fs::write(&current_exe, b"").expect("write gtc-dev");
+    std::fs::write(&sibling, b"").expect("write companion");
+
+    unsafe {
+        std::env::remove_var("GREENTIC_DEV_BIN");
+    }
+    let resolved = resolve_companion_binary_from_invocation(
+        Some("gtc-dev"),
+        Some(current_exe.as_path()),
+        DEV_BIN,
+    )
+    .expect("path");
+    assert_eq!(resolved, sibling);
+}
+
+#[test]
 fn resolve_companion_binary_falls_back_to_workspace_local_binary() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let temp = tempfile::tempdir().expect("tempdir");
@@ -430,6 +477,52 @@ fn resolve_companion_binary_falls_back_to_workspace_local_binary() {
     let resolved =
         resolve_companion_binary_from(Some(current_exe.as_path()), DEV_BIN).expect("path");
     assert_eq!(resolved, companion);
+}
+
+#[test]
+fn resolve_companion_binary_uses_dev_workspace_binary_for_dev_invocation() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let temp = tempfile::tempdir().expect("tempdir");
+    let workspace = temp.path();
+    let current_exe = workspace
+        .join("greentic")
+        .join("target")
+        .join("debug")
+        .join("gtc-dev");
+    let companion = workspace
+        .join("greentic-flow")
+        .join("target")
+        .join("debug")
+        .join("greentic-flow-dev");
+    std::fs::create_dir_all(current_exe.parent().expect("gtc dir")).expect("mkdir gtc");
+    std::fs::create_dir_all(companion.parent().expect("flow dir")).expect("mkdir flow");
+    std::fs::write(&current_exe, b"").expect("write gtc-dev");
+    std::fs::write(&companion, b"").expect("write companion");
+
+    unsafe {
+        std::env::remove_var("GREENTIC_FLOW_BIN");
+    }
+    let resolved = resolve_companion_binary_from_invocation(
+        Some("target/debug/gtc-dev"),
+        Some(current_exe.as_path()),
+        FLOW_BIN,
+    )
+    .expect("path");
+    assert_eq!(resolved, companion);
+}
+
+#[test]
+fn resolve_companion_binary_env_override_wins_for_dev_invocation() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::set_var("GREENTIC_FLOW_BIN", "/tmp/custom-flow");
+    }
+    let resolved =
+        resolve_companion_binary_from_invocation(Some("gtc-dev"), None, FLOW_BIN).expect("path");
+    assert_eq!(resolved, PathBuf::from("/tmp/custom-flow"));
+    unsafe {
+        std::env::remove_var("GREENTIC_FLOW_BIN");
+    }
 }
 
 #[test]
