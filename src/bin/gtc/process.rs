@@ -138,7 +138,17 @@ pub(super) fn resolve_cargo_bin_dir() -> GtcResult<PathBuf> {
 }
 
 pub(super) fn passthrough(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
-    passthrough_in_dir(binary, args, debug, locale, None)
+    passthrough_in_dir_with_env(binary, args, debug, locale, None, None)
+}
+
+pub(super) fn passthrough_with_env(
+    binary: &str,
+    args: &[String],
+    debug: bool,
+    locale: &str,
+    extra_env: &ChildProcessEnv,
+) -> i32 {
+    passthrough_in_dir_with_env(binary, args, debug, locale, None, Some(extra_env))
 }
 
 pub(super) fn passthrough_in_dir(
@@ -147,6 +157,17 @@ pub(super) fn passthrough_in_dir(
     debug: bool,
     locale: &str,
     cwd: Option<&Path>,
+) -> i32 {
+    passthrough_in_dir_with_env(binary, args, debug, locale, cwd, None)
+}
+
+fn passthrough_in_dir_with_env(
+    binary: &str,
+    args: &[String],
+    debug: bool,
+    locale: &str,
+    cwd: Option<&Path>,
+    extra_env: Option<&ChildProcessEnv>,
 ) -> i32 {
     if debug {
         eprintln!("{} {} {:?}", t(locale, "gtc.debug.exec"), binary, args);
@@ -163,6 +184,9 @@ pub(super) fn passthrough_in_dir(
         .stderr(Stdio::inherit());
     if let Some(cwd) = cwd {
         process.current_dir(cwd);
+    }
+    if let Some(extra_env) = extra_env {
+        extra_env.apply(&mut process);
     }
 
     match process.status() {

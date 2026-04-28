@@ -19,8 +19,9 @@ use super::archive::{
     extract_squashfs_file, extract_tar_bytes, extract_targz_bytes, extract_zip_bytes,
     looks_like_gzip, looks_like_squashfs, looks_like_zip, safe_join, set_executable_if_unix,
 };
+use super::deploy::ChildProcessEnv;
 use super::i18n_support::{t, tf};
-use super::process::{passthrough, resolve_cargo_bin_dir, run_binary_capture};
+use super::process::{passthrough_with_env, resolve_cargo_bin_dir, run_binary_capture};
 use super::toolchain::{ToolchainInstallOptions, ToolchainSource, run_toolchain_install};
 use super::{DEPLOYER_BIN, DEV_BIN, sha256_file};
 
@@ -87,14 +88,12 @@ pub(super) fn run_install(sub_matches: &ArgMatches, debug: bool, locale: &str) -
         }
     };
 
-    let tenant_args = vec![
-        "install".to_string(),
-        "--tenant".to_string(),
-        tenant,
-        "--key".to_string(),
-        key,
-    ];
-    passthrough(DEV_BIN, &tenant_args, debug, locale)
+    let env_name = tenant_env_var_name(&tenant);
+    let mut child_env = ChildProcessEnv::new();
+    child_env.set(env_name, key);
+
+    let tenant_args = vec!["install".to_string(), "--tenant".to_string(), tenant];
+    passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env)
 }
 
 pub(super) fn run_update(debug: bool, locale: &str) -> i32 {

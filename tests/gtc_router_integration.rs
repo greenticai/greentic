@@ -678,7 +678,7 @@ fn install_tenant_mode_delegates_to_greentic_dev_after_toolchain_success() {
     let cargo_log_file = sandbox.path().join("cargo.log");
     let manifest_path = write_toolchain_manifest(sandbox.path());
 
-    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_arg_env_logger_tool("greentic-dev", &log_file, 0, "GREENTIC_ACME_KEY");
     sandbox.write_exit_tool("greentic-operator", 0);
     sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
@@ -717,7 +717,9 @@ fn install_tenant_mode_delegates_to_greentic_dev_after_toolchain_success() {
     );
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
-    assert!(logged.contains("install --tenant acme --key secret-token"));
+    assert!(logged.contains("install --tenant acme"));
+    assert!(!logged.contains("--key"));
+    assert!(logged.contains("GREENTIC_ACME_KEY=secret-token"));
     assert!(!logged.contains("install tools"));
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
     assert!(
@@ -1308,6 +1310,20 @@ impl TestSandbox {
         self.compile_rust_tool_at(&path, &rust_arg_logger_program(log_file, exit_code));
     }
 
+    fn write_arg_env_logger_tool(
+        &self,
+        name: &str,
+        log_file: &Path,
+        exit_code: i32,
+        env_key: &str,
+    ) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(
+            &path,
+            &rust_arg_env_logger_program(log_file, exit_code, env_key),
+        );
+    }
+
     fn write_version_tool(&self, name: &str, version_line: &str) {
         let path = self.binary_path(name);
         self.compile_rust_tool_at(&path, &rust_version_tool_program(version_line));
@@ -1491,6 +1507,32 @@ fn main() {{
         .expect("open log");
     let line = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
     writeln!(file, "{{}}", line).expect("write log");
+    std::process::exit({exit_code});
+}}
+"#
+    )
+}
+
+fn rust_arg_env_logger_program(log_file: &Path, exit_code: i32, env_key: &str) -> String {
+    let log_literal = rust_string_literal(&log_file.display().to_string());
+    let env_key_literal = rust_string_literal(env_key);
+    format!(
+        r#"
+use std::fs::OpenOptions;
+use std::io::Write;
+
+fn main() {{
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open({log_literal})
+        .expect("open log");
+    let line = std::env::args().skip(1).collect::<Vec<_>>().join(" ");
+    writeln!(file, "{{}}", line).expect("write args log");
+    let env_key = {env_key_literal};
+    if let Ok(value) = std::env::var(env_key) {{
+        writeln!(file, "{{}}={{}}", env_key, value).expect("write env log");
+    }}
     std::process::exit({exit_code});
 }}
 "#
