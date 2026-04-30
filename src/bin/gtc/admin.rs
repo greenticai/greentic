@@ -1,6 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::{Command as ProcessCommand, Stdio};
+use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::thread;
+use std::time::Duration;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use clap::ArgMatches;
@@ -10,7 +12,6 @@ use rcgen::{
     KeyPair, KeyUsagePurpose, SanType,
 };
 use reqwest::blocking::{Client, ClientBuilder};
-use reqwest::{Certificate, Identity};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value as JsonValue, json};
 use serde_yaml_bw as serde_yaml;
@@ -38,6 +39,16 @@ struct AdminAccessSummary {
 }
 
 #[derive(Debug, Deserialize)]
+struct AdminTokenPathSummary {
+    token_path: PathBuf,
+}
+
+#[derive(Debug, Deserialize)]
+struct TerraformOutputValue {
+    value: JsonValue,
+}
+
+#[derive(Debug, Deserialize)]
 struct MaterializedAdminCertsSummary {
     ca_cert_path: PathBuf,
     client_cert_path: PathBuf,
@@ -56,6 +67,64 @@ enum AdminAuth {
 struct RemoteAdminContext {
     base_url: String,
     auth: AdminAuth,
+}
+
+struct RemoteAdminSession {
+    context: RemoteAdminContext,
+    tunnel_child: Option<Child>,
+}
+
+fn resolve_materialized_admin_certs_from_bundle_dir(
+    bundle_dir: &Path,
+) -> GtcResult<MaterializedAdminCertsSummary> {
+    let tunnels_root = bundle_dir.join(".greentic").join("admin").join("tunnels");
+    let mut newest: Option<(SystemTime, MaterializedAdminCertsSummary)> = None;
+    let entries = fs::read_dir(&tunnels_root).map_err(|err| {
+        GtcError::io(
+            format!(
+                "failed to read AWS admin tunnels directory {}",
+                tunnels_root.display()
+            ),
+            err,
+        )
+    })?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|err| GtcError::message(format!("failed to read tunnel entry: {err}")))?;
+        let path = entry.path();
+        if !entry
+            .file_type()
+            .map_err(|err| GtcError::message(format!("failed to stat tunnel entry: {err}")))?
+            .is_dir()
+        {
+            continue;
+        }
+        let ca_cert_path = path.join("ca.crt");
+        let client_cert_path = path.join("client.crt");
+        let client_key_path = path.join("client.key");
+        if !(ca_cert_path.exists() && client_cert_path.exists() && client_key_path.exists()) {
+            continue;
+        }
+        let modified = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .unwrap_or(UNIX_EPOCH);
+        let certs = MaterializedAdminCertsSummary {
+            ca_cert_path,
+            client_cert_path,
+            client_key_path,
+        };
+        match &newest {
+            Some((current_modified, _)) if modified <= *current_modified => {}
+            _ => newest = Some((modified, certs)),
+        }
+    }
+    newest.map(|(_, certs)| certs).ok_or_else(|| {
+        GtcError::message(format!(
+            "no materialized AWS admin client certs found under {}",
+            tunnels_root.display()
+        ))
+    })
 }
 
 pub(super) fn admin_registry_path(bundle_dir: &Path) -> PathBuf {
@@ -579,9 +648,7 @@ fn resolve_remote_admin_context(
     local_port: u16,
 ) -> GtcResult<RemoteAdminContext> {
     if target == "aws" {
-        let certs_raw = capture_admin_deployer_command(bundle_dir, target, "admin-certs", "json")?;
-        let certs: MaterializedAdminCertsSummary = serde_json::from_str(&certs_raw)
-            .map_err(|err| GtcError::message(format!("failed to parse admin certs JSON: {err}")))?;
+        let certs = resolve_materialized_admin_certs_from_bundle_dir(bundle_dir)?;
         return Ok(RemoteAdminContext {
             base_url: format!("https://127.0.0.1:{local_port}/admin/v1"),
             auth: AdminAuth::Mtls {
@@ -595,9 +662,10 @@ fn resolve_remote_admin_context(
     let access_raw = capture_admin_deployer_command(bundle_dir, target, "admin-access", "json")?;
     let access: AdminAccessSummary = serde_json::from_str(&access_raw)
         .map_err(|err| GtcError::message(format!("failed to parse admin access JSON: {err}")))?;
-    let token = capture_admin_deployer_command(bundle_dir, target, "admin-token", "text")?;
+    let token = load_remote_admin_bearer_token(bundle_dir, target)?;
     let base_url = access
         .admin_public_endpoint
+        .or_else(|| load_admin_public_endpoint_from_local_deploy_outputs(bundle_dir, target).ok())
         .ok_or_else(|| GtcError::message("missing admin_public_endpoint".to_string()))?;
     Ok(RemoteAdminContext {
         base_url,
@@ -610,40 +678,369 @@ fn build_remote_admin_client(context: &RemoteAdminContext) -> GtcResult<Client> 
         AdminAuth::Bearer(_) => ClientBuilder::new()
             .build()
             .map_err(|err| GtcError::message(format!("failed to build admin client: {err}"))),
-        AdminAuth::Mtls {
-            ca_cert_path,
-            client_cert_path,
-            client_key_path,
-        } => {
-            let ca_pem = fs::read(ca_cert_path).map_err(|err| {
-                GtcError::io(format!("failed to read {}", ca_cert_path.display()), err)
-            })?;
-            let client_cert_pem = fs::read(client_cert_path).map_err(|err| {
-                GtcError::io(
-                    format!("failed to read {}", client_cert_path.display()),
-                    err,
-                )
-            })?;
-            let client_key_pem = fs::read(client_key_path).map_err(|err| {
-                GtcError::io(format!("failed to read {}", client_key_path.display()), err)
-            })?;
-            let mut identity_pem = client_cert_pem;
-            identity_pem.extend_from_slice(&client_key_pem);
-            let ca = Certificate::from_pem(&ca_pem)
-                .map_err(|err| GtcError::message(format!("failed to parse CA cert PEM: {err}")))?;
-            let identity = Identity::from_pem(&identity_pem).map_err(|err| {
-                GtcError::message(format!("failed to parse client identity PEM: {err}"))
-            })?;
-            ClientBuilder::new()
-                .use_rustls_tls()
-                .add_root_certificate(ca)
-                .identity(identity)
-                .build()
-                .map_err(|err| {
-                    GtcError::message(format!("failed to build mTLS admin client: {err}"))
-                })
+        AdminAuth::Mtls { .. } => ClientBuilder::new()
+            .build()
+            .map_err(|err| GtcError::message(format!("failed to build admin client: {err}"))),
+    }
+}
+
+fn resolve_remote_admin_session(bundle_dir: &Path, target: &str) -> GtcResult<RemoteAdminSession> {
+    if target != "aws" {
+        let context = resolve_remote_admin_context(bundle_dir, target, 8443)?;
+        return Ok(RemoteAdminSession {
+            context,
+            tunnel_child: None,
+        });
+    }
+
+    let access_raw = capture_admin_deployer_command(bundle_dir, target, "admin-access", "json")?;
+    let access: AdminAccessSummary = serde_json::from_str(&access_raw)
+        .map_err(|err| GtcError::message(format!("failed to parse admin access JSON: {err}")))?;
+    if let Some(base_url) = access
+        .admin_public_endpoint
+        .or_else(|| load_admin_public_endpoint_from_local_deploy_outputs(bundle_dir, target).ok())
+    {
+        let token = load_remote_admin_bearer_token(bundle_dir, target)?;
+        return Ok(RemoteAdminSession {
+            context: RemoteAdminContext {
+                base_url,
+                auth: AdminAuth::Bearer(token.trim().to_string()),
+            },
+            tunnel_child: None,
+        });
+    }
+
+    let deployer_bin = resolve_companion_command(DEPLOYER_BIN);
+    let child = ProcessCommand::new(&deployer_bin)
+        .args([
+            "aws",
+            "admin-tunnel",
+            "--bundle-dir",
+            &bundle_dir.display().to_string(),
+            "--local-port",
+            "8443",
+            "--container",
+            "app",
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| GtcError::io("failed to start aws admin tunnel".to_string(), err))?;
+
+    thread::sleep(Duration::from_secs(3));
+    let certs = resolve_materialized_admin_certs_from_bundle_dir(bundle_dir)?;
+
+    Ok(RemoteAdminSession {
+        context: RemoteAdminContext {
+            base_url: "https://127.0.0.1:8443/admin/v1".to_string(),
+            auth: AdminAuth::Mtls {
+                ca_cert_path: certs.ca_cert_path,
+                client_cert_path: certs.client_cert_path,
+                client_key_path: certs.client_key_path,
+            },
+        },
+        tunnel_child: Some(child),
+    })
+}
+
+fn load_remote_admin_bearer_token(bundle_dir: &Path, target: &str) -> GtcResult<String> {
+    let token_raw = capture_admin_deployer_command(bundle_dir, target, "admin-token", "json")?;
+    let token_summary: AdminTokenPathSummary = serde_json::from_str(&token_raw)
+        .map_err(|err| GtcError::message(format!("failed to parse admin token JSON: {err}")))?;
+    fs::read_to_string(&token_summary.token_path).map_err(|err| {
+        GtcError::io(
+            format!("failed to read {}", token_summary.token_path.display()),
+            err,
+        )
+    })
+}
+
+fn parse_admin_response(body: &str) -> GtcResult<JsonValue> {
+    serde_json::from_str(body).map_err(|err| {
+        let snippet = body.trim();
+        let snippet = if snippet.len() > 400 {
+            format!("{}...", &snippet[..400])
+        } else {
+            snippet.to_string()
+        };
+        GtcError::message(format!(
+            "failed to parse admin JSON response: {err}; body={snippet:?}"
+        ))
+    })
+}
+
+fn remote_admin_json_request(
+    client: &Client,
+    context: &RemoteAdminContext,
+    method: reqwest::Method,
+    path: &str,
+    body: Option<&JsonValue>,
+) -> GtcResult<JsonValue> {
+    let url = format!("{}{}", context.base_url.trim_end_matches('/'), path);
+    let method_name = method.as_str().to_string();
+    if let AdminAuth::Mtls {
+        ca_cert_path,
+        client_cert_path,
+        client_key_path,
+    } = &context.auth
+    {
+        let mut args = vec![
+            "--silent".to_string(),
+            "--show-error".to_string(),
+            "--cacert".to_string(),
+            ca_cert_path.display().to_string(),
+            "--cert".to_string(),
+            client_cert_path.display().to_string(),
+            "--key".to_string(),
+            client_key_path.display().to_string(),
+            "-X".to_string(),
+            method_name.clone(),
+            url.clone(),
+        ];
+        if let Some(body) = body {
+            args.push("-H".to_string());
+            args.push("content-type: application/json".to_string());
+            args.push("--data-binary".to_string());
+            args.push(body.to_string());
+        }
+        let output = ProcessCommand::new("curl")
+            .args(&args)
+            .output()
+            .map_err(|err| GtcError::io("failed to execute curl".to_string(), err))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(GtcError::message(format!(
+                "admin request {} {} failed via curl: {}",
+                &method_name,
+                path,
+                if stderr.is_empty() {
+                    format!("exit {}", output.status.code().unwrap_or(1))
+                } else {
+                    stderr
+                }
+            )));
+        }
+        let text = String::from_utf8(output.stdout).map_err(|err| {
+            GtcError::message(format!("invalid UTF-8 from curl admin response: {err}"))
+        })?;
+        return parse_admin_response(&text);
+    }
+
+    let mut request = client.request(method, &url);
+    match &context.auth {
+        AdminAuth::Bearer(token) => {
+            request = request.bearer_auth(token);
+        }
+        AdminAuth::Mtls { .. } => {}
+    }
+    if let Some(body) = body {
+        request = request.json(body);
+    }
+    let response = request
+        .send()
+        .map_err(|err| GtcError::message(format!("admin request failed: {err}")))?;
+    let status = response.status();
+    let text = response
+        .text()
+        .map_err(|err| GtcError::message(format!("failed to read admin response body: {err}")))?;
+    if !status.is_success() {
+        let snippet = text.trim();
+        let snippet = if snippet.len() > 400 {
+            format!("{}...", &snippet[..400])
+        } else {
+            snippet.to_string()
+        };
+        return Err(GtcError::message(format!(
+            "admin request {} {} failed with status {}: {}",
+            &method_name,
+            path,
+            status.as_u16(),
+            snippet
+        )));
+    }
+    let json = parse_admin_response(&text)?;
+    Ok(json)
+}
+
+fn load_local_setup_answers(bundle_dir: &Path) -> GtcResult<serde_json::Map<String, JsonValue>> {
+    let config_root = bundle_dir.join("state").join("config");
+    if !config_root.exists() {
+        return Ok(serde_json::Map::new());
+    }
+
+    let mut entries = Vec::new();
+    for dir_entry in fs::read_dir(&config_root)
+        .map_err(|err| GtcError::io(format!("failed to read {}", config_root.display()), err))?
+    {
+        let dir_entry =
+            dir_entry.map_err(|err| GtcError::message(format!("failed to read dir entry: {err}")))?;
+        if !dir_entry
+            .file_type()
+            .map_err(|err| GtcError::message(format!("failed to stat dir entry: {err}")))?
+            .is_dir()
+        {
+            continue;
+        }
+        let provider_id = dir_entry.file_name().to_string_lossy().to_string();
+        let path = dir_entry.path().join("setup-answers.json");
+        if !path.exists() {
+            continue;
+        }
+        let raw = fs::read_to_string(&path)
+            .map_err(|err| GtcError::io(format!("failed to read {}", path.display()), err))?;
+        let answers: JsonValue = serde_json::from_str(&raw).map_err(|err| {
+            GtcError::message(format!("failed to parse {}: {err}", path.display()))
+        })?;
+        if answers.as_object().is_some_and(|m| !m.is_empty()) {
+            entries.push((provider_id, answers));
         }
     }
+
+    entries.sort_by(|a, b| {
+        let a_key = if a.0 == "messaging-webchat-gui" { 0 } else { 1 };
+        let b_key = if b.0 == "messaging-webchat-gui" { 0 } else { 1 };
+        a_key.cmp(&b_key).then_with(|| a.0.cmp(&b.0))
+    });
+    Ok(entries.into_iter().collect())
+}
+
+pub(crate) fn replay_remote_setup_answers(
+    bundle_dir: &Path,
+    target: &str,
+    requested_tenant: &str,
+    team: Option<&str>,
+) -> GtcResult<()> {
+    let setup_answers = load_local_setup_answers(bundle_dir)?;
+    if setup_answers.is_empty() {
+        return Ok(());
+    }
+
+    let mut session = resolve_remote_admin_session(bundle_dir, target)?;
+    let client = build_remote_admin_client(&session.context)?;
+
+    let replay_result = (|| -> GtcResult<()> {
+        let setup_body = json!({
+            "tenant": requested_tenant,
+            "team": team,
+            "answers": setup_answers,
+        });
+        let mut last_error: Option<GtcError> = None;
+        for attempt in 1..=12 {
+            match remote_admin_json_request(
+                &client,
+                &session.context,
+                reqwest::Method::POST,
+                "/setup",
+                Some(&setup_body),
+            ) {
+                Ok(_) => return Ok(()),
+                Err(err) => {
+                    let message = err.to_string();
+                    let retryable = message.contains("status 401")
+                        || message.contains("status 403")
+                        || message.contains("status 404")
+                        || message.contains("status 409")
+                        || message.contains("status 429")
+                        || message.contains("status 500")
+                        || message.contains("status 502")
+                        || message.contains("status 503")
+                        || message.contains("status 504")
+                        || message.contains("curl: (7)")
+                        || message.contains("Couldn't connect to server")
+                        || message.contains("Connection refused");
+                    last_error = Some(err);
+                    if retryable && attempt < 12 {
+                        thread::sleep(Duration::from_secs(5));
+                        continue;
+                    }
+                    break;
+                }
+            }
+        }
+        Err(last_error.unwrap_or_else(|| {
+            GtcError::message("remote setup replay failed with no error".to_string())
+        }))?;
+        Ok(())
+    })();
+
+    if let Some(mut child) = session.tunnel_child.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    replay_result
+}
+
+fn load_admin_public_endpoint_from_local_deploy_outputs(
+    bundle_dir: &Path,
+    target: &str,
+) -> GtcResult<String> {
+    let mut roots = vec![bundle_dir.to_path_buf()];
+    let mut current = bundle_dir.parent();
+    while let Some(parent) = current {
+        roots.push(parent.to_path_buf());
+        current = parent.parent();
+    }
+
+    let mut stack = roots
+        .into_iter()
+        .map(|root| root.join(".greentic").join("deploy").join(target))
+        .collect::<Vec<_>>();
+    let mut newest: Option<(SystemTime, PathBuf)> = None;
+    while let Some(path) = stack.pop() {
+        let entries = match fs::read_dir(&path) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let entry_path = entry.path();
+            if entry_path.is_dir() {
+                stack.push(entry_path);
+                continue;
+            }
+            if entry_path.file_name().and_then(|n| n.to_str()) != Some("terraform-outputs.json") {
+                continue;
+            }
+            let modified = entry
+                .metadata()
+                .and_then(|meta| meta.modified())
+                .unwrap_or(UNIX_EPOCH);
+            match &newest {
+                Some((current_modified, _)) if modified <= *current_modified => {}
+                _ => newest = Some((modified, entry_path)),
+            }
+        }
+    }
+
+    let Some((_, path)) = newest else {
+        return Err(GtcError::message(format!(
+            "no terraform-outputs.json found under bundle or ancestor .greentic/deploy roots for target {target}"
+        )));
+    };
+    let raw = fs::read_to_string(&path).map_err(|err| {
+        GtcError::io(
+            format!("failed to read terraform outputs {}", path.display()),
+            err,
+        )
+    })?;
+    let outputs: std::collections::BTreeMap<String, TerraformOutputValue> =
+        serde_json::from_str(&raw).map_err(|err| {
+            GtcError::json(
+                format!("failed to parse terraform outputs {}", path.display()),
+                err,
+            )
+        })?;
+    outputs
+        .get("admin_public_endpoint")
+        .and_then(|output| output.value.as_str())
+        .map(ToString::to_string)
+        .ok_or_else(|| {
+            GtcError::message(format!(
+                "terraform outputs {} did not contain admin_public_endpoint.value",
+                path.display()
+            ))
+        })
 }
 
 fn run_remote_admin_request(

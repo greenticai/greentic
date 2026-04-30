@@ -21,6 +21,7 @@ use super::{
     append_bundle_registry_args, describe_cloud_target_requirements_for_gtc,
     validate_cloud_deploy_inputs,
 };
+use crate::admin::replay_remote_setup_answers;
 use crate::process::{
     run_binary_checked, run_binary_checked_with_target, run_binary_checked_with_target_and_env,
 };
@@ -354,7 +355,16 @@ fn run_multi_target_deployer_apply(
         Some(target),
         Some(&child_env),
     )
-    .map_err(|e| GtcError::message(e.to_string()))
+    .map_err(|e| GtcError::message(e.to_string()))?;
+
+    replay_remote_setup_answers(
+        &resolved.bundle_dir,
+        target.as_str(),
+        &request.tenant.clone().unwrap_or_else(|| "demo".to_string()),
+        request.team.as_deref(),
+    )?;
+
+    Ok(())
 }
 
 fn print_cloud_deploy_contract_hint(target: StartTarget, locale: &str) -> GtcResult<()> {
