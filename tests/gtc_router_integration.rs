@@ -1,9 +1,14 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use flate2::Compression;
+use flate2::write::GzEncoder;
+use greentic_distributor_client::{DistClient, DistOptions};
+use sha2::{Digest, Sha256};
 
 #[test]
 fn version_flag_prints_cargo_package_version() {
@@ -735,7 +740,7 @@ fn install_public_mode_installs_manifest_toolchain() {
 
     let logged = fs::read_to_string(log_file).unwrap_or_default();
     assert!(!logged.contains("install tools"));
-    let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
+    let cargo_logged = fs::read_to_string(cargo_log_file).unwrap_or_default();
     assert!(cargo_logged.contains("binstall -V"));
     assert!(cargo_logged.contains("search cargo-binstall --limit 1"));
     assert!(
@@ -749,6 +754,761 @@ fn install_public_mode_installs_manifest_toolchain() {
     assert!(cargo_logged.contains(
         "binstall -y --locked --force greentic-runner --version 0.5.10 --bin greentic-runner-cli"
     ));
+}
+
+#[test]
+fn install_release_prefetches_artifacts_and_writes_release_index() {
+    let sandbox = TestSandbox::new("install_release_prefetches_artifacts_and_writes_release_index");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
+    let cache_dir = sandbox.path().join("dist-cache");
+    let release_state_dir = sandbox.path().join("release-state");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let mock_root = write_release_artifact_mock_root(sandbox.path());
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+    extra.insert(
+        "GTC_RELEASE_STATE_DIR".to_string(),
+        release_state_dir.display().to_string(),
+    );
+    extra.insert(
+        "GTC_RELEASE_ARTIFACT_MOCK_ROOT".to_string(),
+        mock_root.display().to_string(),
+    );
+    extra.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        cache_dir.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(
+        ["install", "--release", "1.0.16", "--channel", "stable"],
+        extra,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Prefetching pack packs/messaging/messaging-webchat-gui:0.5.4"));
+    assert!(stdout.contains("Prefetched component components/templates:0.5.8 -> sha256:"));
+
+    let index_path = cache_dir.join("release-index/v1/stable/1.0.16.json");
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(&index_path).expect("read release index"))
+            .expect("parse release index");
+    assert_eq!(index["schema"], "greentic.release-index.v1");
+    assert_eq!(index["release"], "1.0.16");
+    assert_eq!(index["channel"], "stable");
+
+    let refs = index["refs"].as_object().expect("refs object");
+    for key in [
+        "ghcr.io/greenticai/packs/messaging/messaging-webchat-gui:stable",
+        "ghcr.io/greenticai/components/templates:stable",
+    ] {
+        let entry = refs.get(key).unwrap_or_else(|| panic!("missing {key}"));
+        let digest = entry["digest"].as_str().expect("digest");
+        assert!(digest.starts_with("sha256:"));
+        assert!(
+            entry["canonical_ref"]
+                .as_str()
+                .expect("canonical ref")
+                .starts_with("oci://ghcr.io/greenticai/")
+        );
+        let hex = digest.trim_start_matches("sha256:");
+        let blob = cache_dir
+            .join("artifacts/sha256")
+            .join(&hex[..2])
+            .join(&hex[2..])
+            .join("blob");
+        let cache_entry = blob.with_file_name("entry.json");
+        assert!(blob.is_file(), "missing blob for {digest}");
+        assert!(cache_entry.is_file(), "missing entry for {digest}");
+    }
+
+    let current: serde_json::Value = serde_json::from_slice(
+        &fs::read(release_state_dir.join("current.json")).expect("read current context"),
+    )
+    .expect("parse current context");
+    assert_eq!(current["release"], "1.0.16");
+    assert_eq!(current["channel"], "stable");
+}
+
+#[test]
+fn release_cache_export_then_import_restores_index_and_artifacts() {
+    let sandbox = TestSandbox::new("release_cache_export_then_import_restores_index_and_artifacts");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
+    let source_cache = sandbox.path().join("source-cache");
+    let import_cache = sandbox.path().join("import-cache");
+    let release_state_dir = sandbox.path().join("release-state");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let mock_root = write_release_artifact_mock_root(sandbox.path());
+    let archive_path = sandbox.path().join("release-cache.tar.gz");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    let mut install_env = HashMap::new();
+    install_env.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    install_env.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    install_env.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+    install_env.insert(
+        "GTC_RELEASE_STATE_DIR".to_string(),
+        release_state_dir.display().to_string(),
+    );
+    install_env.insert(
+        "GTC_RELEASE_ARTIFACT_MOCK_ROOT".to_string(),
+        mock_root.display().to_string(),
+    );
+    install_env.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        source_cache.display().to_string(),
+    );
+
+    let install = sandbox.run_gtc_capture(
+        ["install", "--release", "1.0.16", "--channel", "stable"],
+        install_env,
+    );
+    assert_eq!(
+        install.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&install.stdout),
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let mut export_env = HashMap::new();
+    export_env.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        source_cache.display().to_string(),
+    );
+    let export = sandbox.run_gtc_capture(
+        [
+            "release-cache",
+            "export",
+            "--release",
+            "1.0.16",
+            "--channel",
+            "stable",
+            "--output",
+            archive_path.to_str().expect("archive utf8"),
+        ],
+        export_env,
+    );
+    assert_eq!(
+        export.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&export.stdout),
+        String::from_utf8_lossy(&export.stderr)
+    );
+    assert!(archive_path.is_file());
+
+    let mut import_env = HashMap::new();
+    import_env.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        import_cache.display().to_string(),
+    );
+    let import = sandbox.run_gtc_capture(
+        [
+            "release-cache",
+            "import",
+            "--input",
+            archive_path.to_str().expect("archive utf8"),
+        ],
+        import_env,
+    );
+    assert_eq!(
+        import.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&import.stdout),
+        String::from_utf8_lossy(&import.stderr)
+    );
+
+    let index_path = import_cache.join("release-index/v1/stable/1.0.16.json");
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(&index_path).expect("read imported index"))
+            .expect("parse imported index");
+    let refs = index["refs"].as_object().expect("refs object");
+    assert_eq!(refs.len(), 2);
+    for entry in refs.values() {
+        let digest = entry["digest"].as_str().expect("digest");
+        let hex = digest.trim_start_matches("sha256:");
+        let blob = import_cache
+            .join("artifacts/sha256")
+            .join(&hex[..2])
+            .join(&hex[2..])
+            .join("blob");
+        assert!(blob.is_file(), "missing imported blob for {digest}");
+        assert!(
+            blob.with_file_name("entry.json").is_file(),
+            "missing imported entry for {digest}"
+        );
+    }
+
+    assert_imported_cache_resolves_stable_offline(&import_cache, &index);
+}
+
+#[test]
+fn install_release_prefetch_is_idempotent() {
+    let sandbox = TestSandbox::new("install_release_prefetch_is_idempotent");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
+    let cache_dir = sandbox.path().join("dist-cache");
+    let release_state_dir = sandbox.path().join("release-state");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let mock_root = write_release_artifact_mock_root(sandbox.path());
+    let broken_mock_root = write_release_artifact_mock_root_missing_component(sandbox.path());
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    let mut extra = release_install_env(
+        sandbox.path(),
+        &cargo_home,
+        &manifest_path,
+        &release_state_dir,
+        &mock_root,
+        &cache_dir,
+    );
+
+    let first = sandbox.run_gtc_capture(
+        ["install", "--release", "1.0.16", "--channel", "stable"],
+        extra.clone(),
+    );
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let index_path = cache_dir.join("release-index/v1/stable/1.0.16.json");
+    let first_index = fs::read(&index_path).expect("read first index");
+
+    extra.insert(
+        "GTC_RELEASE_ARTIFACT_MOCK_ROOT".to_string(),
+        broken_mock_root.display().to_string(),
+    );
+    let second = sandbox.run_gtc_capture(
+        ["install", "--release", "1.0.16", "--channel", "stable"],
+        extra,
+    );
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&second.stdout),
+        String::from_utf8_lossy(&second.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&second.stdout);
+    assert!(stdout.contains("Cached pack packs/messaging/messaging-webchat-gui:0.5.4"));
+    assert!(stdout.contains("Cached component components/templates:0.5.8"));
+    let second_index = fs::read(&index_path).expect("read second index");
+    assert_eq!(first_index, second_index);
+}
+
+#[test]
+fn install_skips_binary_when_installed_version_matches() {
+    let sandbox = TestSandbox::new("install_skips_binary_when_installed_version_matches");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
+    let manifest_path = write_single_binary_toolchain_manifest(sandbox.path());
+
+    sandbox.write_version_tool("greentic-dev", "greentic-dev 0.5.9\n");
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+    extra.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        sandbox.path().join("dist-cache").display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(
+        ["install", "--release", "1.0.16", "--channel", "stable"],
+        extra,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Installed greentic-dev binary already matches 0.5.9; skipping."));
+    let cargo_logged = fs::read_to_string(cargo_log_file).unwrap_or_default();
+    assert!(!cargo_logged.contains("greentic-dev --version 0.5.9"));
+}
+
+#[test]
+fn install_partial_prefetch_failure_preserves_previous_release_index() {
+    let sandbox =
+        TestSandbox::new("install_partial_prefetch_failure_preserves_previous_release_index");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
+    let cache_dir = sandbox.path().join("dist-cache");
+    let release_state_dir = sandbox.path().join("release-state");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let mock_root = write_release_artifact_mock_root(sandbox.path());
+    let broken_mock_root = write_release_artifact_mock_root_missing_component(sandbox.path());
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    let first = sandbox.run_gtc_capture(
+        ["install", "--release", "1.0.16", "--channel", "stable"],
+        release_install_env(
+            sandbox.path(),
+            &cargo_home,
+            &manifest_path,
+            &release_state_dir,
+            &mock_root,
+            &cache_dir,
+        ),
+    );
+    assert_eq!(
+        first.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&first.stdout),
+        String::from_utf8_lossy(&first.stderr)
+    );
+
+    let index_path = cache_dir.join("release-index/v1/stable/1.0.16.json");
+    let previous_index = fs::read(&index_path).expect("read previous index");
+    let changed_manifest_path =
+        write_release_toolchain_manifest_with_component_version(sandbox.path(), "0.5.9");
+
+    let second = sandbox.run_gtc_capture(
+        ["install", "--release", "1.0.16", "--channel", "stable"],
+        release_install_env(
+            sandbox.path(),
+            &cargo_home,
+            &changed_manifest_path,
+            &release_state_dir,
+            &broken_mock_root,
+            &cache_dir,
+        ),
+    );
+    assert_eq!(second.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&second.stderr);
+    assert!(
+        stderr.contains("failed to prefetch release artifacts"),
+        "{stderr}"
+    );
+    let after_failure = fs::read(&index_path).expect("read index after failure");
+    assert_eq!(previous_index, after_failure);
+}
+
+#[test]
+fn release_cache_import_rejects_checksum_mismatch_without_mutating_cache() {
+    let sandbox =
+        TestSandbox::new("release_cache_import_rejects_checksum_mismatch_without_mutating_cache");
+    let archive_path = write_checksum_mismatch_release_cache_archive(sandbox.path());
+    let import_cache = sandbox.path().join("import-cache");
+
+    let mut import_env = HashMap::new();
+    import_env.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        import_cache.display().to_string(),
+    );
+    let import = sandbox.run_gtc_capture(
+        [
+            "release-cache",
+            "import",
+            "--input",
+            archive_path.to_str().expect("archive utf8"),
+        ],
+        import_env,
+    );
+    assert_eq!(import.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&import.stderr);
+    assert!(stderr.contains("checksum mismatch"), "{stderr}");
+    assert!(
+        !import_cache
+            .join("release-index/v1/stable/1.0.16.json")
+            .exists()
+    );
+    assert!(!import_cache.join("artifacts").exists());
+}
+
+#[test]
+fn release_cache_export_fails_when_release_index_is_missing() {
+    let sandbox = TestSandbox::new("release_cache_export_fails_when_release_index_is_missing");
+    let cache_dir = sandbox.path().join("empty-cache");
+    let archive_path = sandbox.path().join("release-cache.tar.gz");
+
+    let mut export_env = HashMap::new();
+    export_env.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        cache_dir.display().to_string(),
+    );
+    let export = sandbox.run_gtc_capture(
+        [
+            "release-cache",
+            "export",
+            "--release",
+            "1.0.16",
+            "--channel",
+            "stable",
+            "--output",
+            archive_path.to_str().expect("archive utf8"),
+        ],
+        export_env,
+    );
+    assert_eq!(export.status.code(), Some(1));
+    assert!(!archive_path.exists());
+}
+
+#[test]
+fn release_cache_export_fails_when_indexed_blob_is_missing() {
+    let sandbox = TestSandbox::new("release_cache_export_fails_when_indexed_blob_is_missing");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
+    let cache_dir = sandbox.path().join("dist-cache");
+    let release_state_dir = sandbox.path().join("release-state");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let mock_root = write_release_artifact_mock_root(sandbox.path());
+    let archive_path = sandbox.path().join("release-cache.tar.gz");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    let install = sandbox.run_gtc_capture(
+        ["install", "--release", "1.0.16", "--channel", "stable"],
+        release_install_env(
+            sandbox.path(),
+            &cargo_home,
+            &manifest_path,
+            &release_state_dir,
+            &mock_root,
+            &cache_dir,
+        ),
+    );
+    assert_eq!(
+        install.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&install.stdout),
+        String::from_utf8_lossy(&install.stderr)
+    );
+
+    let index_path = cache_dir.join("release-index/v1/stable/1.0.16.json");
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(&index_path).expect("read release index"))
+            .expect("parse release index");
+    let digest = index["refs"]
+        .as_object()
+        .expect("refs object")
+        .values()
+        .next()
+        .expect("first ref")["digest"]
+        .as_str()
+        .expect("digest");
+    let blob = artifact_blob_path(&cache_dir, digest);
+    fs::remove_file(&blob).expect("remove indexed blob");
+
+    let mut export_env = HashMap::new();
+    export_env.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        cache_dir.display().to_string(),
+    );
+    let export = sandbox.run_gtc_capture(
+        [
+            "release-cache",
+            "export",
+            "--release",
+            "1.0.16",
+            "--channel",
+            "stable",
+            "--output",
+            archive_path.to_str().expect("archive utf8"),
+        ],
+        export_env,
+    );
+    assert_eq!(export.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&export.stderr);
+    assert!(stderr.contains("failed to read"), "{stderr}");
+}
+
+#[test]
+fn release_cache_import_rejects_missing_blob_without_mutating_cache() {
+    let sandbox =
+        TestSandbox::new("release_cache_import_rejects_missing_blob_without_mutating_cache");
+    let archive_path = write_missing_blob_release_cache_archive(sandbox.path());
+    let import_cache = sandbox.path().join("import-cache");
+
+    let mut import_env = HashMap::new();
+    import_env.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        import_cache.display().to_string(),
+    );
+    let import = sandbox.run_gtc_capture(
+        [
+            "release-cache",
+            "import",
+            "--input",
+            archive_path.to_str().expect("archive utf8"),
+        ],
+        import_env,
+    );
+    assert_eq!(import.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&import.stderr);
+    assert!(stderr.contains("release cache missing"), "{stderr}");
+    assert!(!import_cache.join("release-index").exists());
+    assert!(!import_cache.join("artifacts").exists());
+}
+
+#[test]
+fn release_cache_import_rejects_invalid_index_digest_without_mutating_cache() {
+    let sandbox = TestSandbox::new(
+        "release_cache_import_rejects_invalid_index_digest_without_mutating_cache",
+    );
+    let archive_path = write_invalid_digest_release_cache_archive(sandbox.path());
+    let import_cache = sandbox.path().join("import-cache");
+
+    let mut import_env = HashMap::new();
+    import_env.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        import_cache.display().to_string(),
+    );
+    let import = sandbox.run_gtc_capture(
+        [
+            "release-cache",
+            "import",
+            "--input",
+            archive_path.to_str().expect("archive utf8"),
+        ],
+        import_env,
+    );
+    assert_eq!(import.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&import.stderr);
+    assert!(stderr.contains("invalid artifact digest"), "{stderr}");
+    assert!(!import_cache.join("release-index").exists());
+    assert!(!import_cache.join("artifacts").exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn install_tenant_only_skips_public_install_and_delegates_to_dev() {
+    let sandbox = TestSandbox::new("install_tenant_only_skips_public_install_and_delegates_to_dev");
+    let log_file = sandbox.path().join("dev.log");
+
+    sandbox.write_arg_env_logger_tool("greentic-dev", &log_file, 0, "GREENTIC_ACME_KEY");
+
+    let mut extra = HashMap::new();
+    extra.insert("GREENTIC_ACME_KEY".to_string(), "secret-token".to_string());
+
+    let output = sandbox.run_gtc_capture(
+        ["install", "--install-tenant-only", "--tenant", "acme"],
+        extra,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("Installing public Greentic tools."));
+    let logged = fs::read_to_string(log_file).expect("read dev log");
+    let args_line = logged.lines().next().unwrap_or_default();
+    assert_eq!(
+        args_line,
+        "install --tenant acme --token env:GREENTIC_ACME_KEY"
+    );
+    assert!(logged.contains("GREENTIC_ACME_KEY=secret-token"));
+}
+
+#[test]
+fn install_binaries_only_skips_release_artifact_prefetch() {
+    let sandbox = TestSandbox::new("install_binaries_only_skips_release_artifact_prefetch");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cargo_home = sandbox.path().join("cargo-home");
+    let cache_dir = sandbox.path().join("dist-cache");
+    let release_state_dir = sandbox.path().join("release-state");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let mock_root = write_release_artifact_mock_root(sandbox.path());
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+    sandbox.write_contract_deployer_tool("greentic-deployer");
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+    sandbox.write_install_prereq_tools();
+    fs::create_dir_all(&cargo_home).expect("cargo_home");
+
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+    extra.insert(
+        "GTC_RELEASE_STATE_DIR".to_string(),
+        release_state_dir.display().to_string(),
+    );
+    extra.insert(
+        "GTC_RELEASE_ARTIFACT_MOCK_ROOT".to_string(),
+        mock_root.display().to_string(),
+    );
+    extra.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        cache_dir.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--release",
+            "1.0.16",
+            "--channel",
+            "stable",
+            "--install-binaries-only",
+        ],
+        extra,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cargo_logged = fs::read_to_string(cargo_log_file).unwrap_or_default();
+    assert!(cargo_logged.contains("greentic-dev"));
+    assert!(
+        !cache_dir
+            .join("release-index/v1/stable/1.0.16.json")
+            .exists()
+    );
+    assert!(!release_state_dir.join("current.json").exists());
+}
+
+#[test]
+fn install_packs_only_prefetches_packs_without_binaries_or_components() {
+    let sandbox =
+        TestSandbox::new("install_packs_only_prefetches_packs_without_binaries_or_components");
+    let cargo_log_file = sandbox.path().join("cargo.log");
+    let cache_dir = sandbox.path().join("dist-cache");
+    let release_state_dir = sandbox.path().join("release-state");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let mock_root = write_release_artifact_mock_root(sandbox.path());
+
+    sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+    extra.insert(
+        "GTC_RELEASE_STATE_DIR".to_string(),
+        release_state_dir.display().to_string(),
+    );
+    extra.insert(
+        "GTC_RELEASE_ARTIFACT_MOCK_ROOT".to_string(),
+        mock_root.display().to_string(),
+    );
+    extra.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        cache_dir.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "install",
+            "--manifest",
+            manifest_path.to_str().expect("utf8"),
+            "--install-packs-only",
+        ],
+        extra,
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let cargo_logged = fs::read_to_string(cargo_log_file).unwrap_or_default();
+    assert!(cargo_logged.is_empty());
+
+    let index_path = cache_dir.join("release-index/v1/stable/1.0.16.json");
+    let index: serde_json::Value =
+        serde_json::from_slice(&fs::read(&index_path).expect("read release index"))
+            .expect("parse release index");
+    let refs = index["refs"].as_object().expect("refs object");
+    assert!(refs.contains_key("ghcr.io/greenticai/packs/messaging/messaging-webchat-gui:stable"));
+    assert!(!refs.contains_key("ghcr.io/greenticai/components/templates:stable"));
+    assert!(release_state_dir.join("current.json").is_file());
 }
 
 #[test]
@@ -841,7 +1601,10 @@ fn install_tenant_mode_delegates_to_greentic_dev_after_toolchain_success() {
     );
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
-    let args_line = logged.lines().next().unwrap_or_default();
+    let args_line = logged
+        .lines()
+        .find(|line| line.starts_with("install --tenant"))
+        .unwrap_or_default();
     assert_eq!(
         args_line,
         "install --tenant acme --token env:GREENTIC_ACME_KEY"
@@ -1616,6 +2379,417 @@ fn write_toolchain_manifest(root: &Path) -> PathBuf {
     )
     .expect("write toolchain manifest");
     path
+}
+
+fn write_release_toolchain_manifest(root: &Path) -> PathBuf {
+    write_release_toolchain_manifest_with_component_version(root, "0.5.8")
+}
+
+fn write_release_toolchain_manifest_with_component_version(
+    root: &Path,
+    component_version: &str,
+) -> PathBuf {
+    let path = root.join("release-toolchain-manifest.json");
+    let manifest = serde_json::json!({
+        "schema": "greentic.toolchain-manifest.v1",
+        "toolchain": "gtc",
+        "version": "1.0.16",
+        "channel": "stable",
+        "packages": [
+            {
+                "crate": "greentic-dev",
+                "bins": ["greentic-dev"],
+                "version": "0.5.9"
+            },
+            {
+                "crate": "greentic-deployer",
+                "bins": ["greentic-deployer"],
+                "version": "0.4.3"
+            }
+        ],
+        "extension_packs": [
+            {
+                "id": "packs/messaging/messaging-webchat-gui",
+                "version": "0.5.4"
+            }
+        ],
+        "components": [
+            {
+                "id": "components/templates",
+                "version": component_version
+            }
+        ]
+    });
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("write release toolchain manifest");
+    path
+}
+
+fn write_single_binary_toolchain_manifest(root: &Path) -> PathBuf {
+    let path = root.join("single-binary-toolchain-manifest.json");
+    let manifest = serde_json::json!({
+        "schema": "greentic.toolchain-manifest.v1",
+        "toolchain": "gtc",
+        "version": "1.0.16",
+        "channel": "stable",
+        "packages": [
+            {
+                "crate": "greentic-dev",
+                "bins": ["greentic-dev"],
+                "version": "0.5.9"
+            },
+            {
+                "crate": "greentic-deployer",
+                "bins": ["greentic-deployer"],
+                "version": "0.4.3"
+            }
+        ]
+    });
+    fs::write(
+        &path,
+        serde_json::to_vec_pretty(&manifest).expect("manifest json"),
+    )
+    .expect("write single binary toolchain manifest");
+    path
+}
+
+fn write_release_artifact_mock_root(root: &Path) -> PathBuf {
+    let mock_root = root.join("release-artifacts");
+    let pack = mock_root.join("packs/webchat.gtpack");
+    let component = mock_root.join("components/templates.wasm");
+    fs::create_dir_all(pack.parent().expect("pack parent")).expect("pack dirs");
+    fs::create_dir_all(component.parent().expect("component parent")).expect("component dirs");
+    fs::write(&pack, b"webchat-pack").expect("write pack");
+    fs::write(&component, b"templates-component").expect("write component");
+    let index = serde_json::json!({
+        "ghcr.io/greenticai/packs/messaging/messaging-webchat-gui:0.5.4": "packs/webchat.gtpack",
+        "ghcr.io/greenticai/components/templates:0.5.8": "components/templates.wasm"
+    });
+    fs::write(
+        mock_root.join("index.json"),
+        serde_json::to_vec_pretty(&index).expect("index json"),
+    )
+    .expect("write mock release artifact index");
+    mock_root
+}
+
+fn write_release_artifact_mock_root_missing_component(root: &Path) -> PathBuf {
+    let mock_root = root.join("release-artifacts-missing-component");
+    let pack = mock_root.join("packs/webchat.gtpack");
+    fs::create_dir_all(pack.parent().expect("pack parent")).expect("pack dirs");
+    fs::write(&pack, b"webchat-pack").expect("write pack");
+    let index = serde_json::json!({
+        "ghcr.io/greenticai/packs/messaging/messaging-webchat-gui:0.5.4": "packs/webchat.gtpack"
+    });
+    fs::write(
+        mock_root.join("index.json"),
+        serde_json::to_vec_pretty(&index).expect("index json"),
+    )
+    .expect("write mock release artifact index");
+    mock_root
+}
+
+fn release_install_env(
+    sandbox_root: &Path,
+    cargo_home: &Path,
+    manifest_path: &Path,
+    release_state_dir: &Path,
+    mock_root: &Path,
+    cache_dir: &Path,
+) -> HashMap<String, String> {
+    let mut extra = HashMap::new();
+    extra.insert("CARGO_HOME".to_string(), cargo_home.display().to_string());
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox_root.join("toolchain-state").display().to_string(),
+    );
+    extra.insert(
+        "GTC_RELEASE_STATE_DIR".to_string(),
+        release_state_dir.display().to_string(),
+    );
+    extra.insert(
+        "GTC_RELEASE_ARTIFACT_MOCK_ROOT".to_string(),
+        mock_root.display().to_string(),
+    );
+    extra.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        cache_dir.display().to_string(),
+    );
+    extra
+}
+
+fn assert_imported_cache_resolves_stable_offline(cache_dir: &Path, index: &serde_json::Value) {
+    let expected_digest = index["refs"]["ghcr.io/greenticai/components/templates:stable"]["digest"]
+        .as_str()
+        .expect("component digest");
+    let opts = DistOptions {
+        cache_dir: cache_dir.to_path_buf(),
+        offline: true,
+        ..Default::default()
+    };
+    let client = DistClient::new(opts);
+    let artifact = client
+        .open_cached(expected_digest)
+        .expect("imported digest opens from offline cache");
+    assert_eq!(artifact.descriptor.digest, expected_digest);
+}
+
+fn artifact_blob_path(cache_dir: &Path, digest: &str) -> PathBuf {
+    let hex = digest.strip_prefix("sha256:").expect("sha256 digest");
+    cache_dir
+        .join("artifacts/sha256")
+        .join(&hex[..2])
+        .join(&hex[2..])
+        .join("blob")
+}
+
+fn write_checksum_mismatch_release_cache_archive(root: &Path) -> PathBuf {
+    let archive_path = root.join("bad-release-cache.tar.gz");
+    let digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    let artifact_rel = PathBuf::from("artifacts")
+        .join("sha256")
+        .join("11")
+        .join("11111111111111111111111111111111111111111111111111111111111111");
+    let index_rel = PathBuf::from("release-index/v1/stable/1.0.16.json");
+    let manifest = serde_json::json!({
+        "schema": "greentic.release-cache.v1",
+        "format": "tar.gz",
+        "release": "1.0.16",
+        "channel": "stable",
+        "created_at": "unix:0",
+        "artifact_count": 1
+    });
+    let index = serde_json::json!({
+        "schema": "greentic.release-index.v1",
+        "release": "1.0.16",
+        "channel": "stable",
+        "refs": {
+            "ghcr.io/greenticai/packs/demo:stable": {
+                "version": "0.1.0",
+                "digest": digest,
+                "canonical_ref": format!("oci://ghcr.io/greenticai/packs/demo@{digest}")
+            }
+        }
+    });
+    let entry = serde_json::json!({
+        "format_version": 1,
+        "cache_key": digest,
+        "digest": digest,
+        "media_type": "application/octet-stream",
+        "size_bytes": 4,
+        "artifact_type": "Pack",
+        "source_kind": "Oci",
+        "raw_ref": "oci://ghcr.io/greenticai/packs/demo:0.1.0",
+        "canonical_ref": format!("oci://ghcr.io/greenticai/packs/demo@{digest}"),
+        "fetched_at": 0,
+        "last_accessed_at": 0,
+        "last_verified_at": null,
+        "state": "Ready",
+        "advisory_epoch": null,
+        "signature_summary": null,
+        "local_path": "/unused",
+        "source_snapshot": {
+            "raw_ref": "oci://ghcr.io/greenticai/packs/demo:0.1.0",
+            "canonical_ref": format!("oci://ghcr.io/greenticai/packs/demo@{digest}"),
+            "source_kind": "Oci",
+            "authoritative": false
+        }
+    });
+
+    let mut payloads = BTreeMap::new();
+    payloads.insert(
+        PathBuf::from("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).expect("manifest bytes"),
+    );
+    payloads.insert(
+        index_rel,
+        serde_json::to_vec_pretty(&index).expect("index bytes"),
+    );
+    payloads.insert(artifact_rel.join("blob"), b"bad!".to_vec());
+    payloads.insert(
+        artifact_rel.join("entry.json"),
+        serde_json::to_vec_pretty(&entry).expect("entry bytes"),
+    );
+
+    let mut checksums = BTreeMap::new();
+    for (path, bytes) in &payloads {
+        let checksum_bytes = if path.ends_with("blob") {
+            b"good".as_slice()
+        } else {
+            bytes.as_slice()
+        };
+        checksums.insert(
+            test_archive_path_string(path),
+            test_sha256_bytes(checksum_bytes),
+        );
+    }
+    let checksums = serde_json::to_vec_pretty(&checksums).expect("checksums bytes");
+
+    let file = fs::File::create(&archive_path).expect("archive file");
+    let encoder = GzEncoder::new(file, Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    for (path, bytes) in payloads {
+        append_test_archive_bytes(&mut archive, &path, &bytes);
+    }
+    append_test_archive_bytes(&mut archive, Path::new("checksums.json"), &checksums);
+    let encoder = archive.into_inner().expect("finish tar");
+    encoder.finish().expect("finish gzip");
+    archive_path
+}
+
+fn write_missing_blob_release_cache_archive(root: &Path) -> PathBuf {
+    write_synthetic_release_cache_archive(
+        root,
+        "missing-blob-release-cache.tar.gz",
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        SyntheticArchiveMode::MissingBlob,
+    )
+}
+
+fn write_invalid_digest_release_cache_archive(root: &Path) -> PathBuf {
+    write_synthetic_release_cache_archive(
+        root,
+        "invalid-digest-release-cache.tar.gz",
+        "sha256:not-a-valid-digest",
+        SyntheticArchiveMode::InvalidDigest,
+    )
+}
+
+enum SyntheticArchiveMode {
+    MissingBlob,
+    InvalidDigest,
+}
+
+fn write_synthetic_release_cache_archive(
+    root: &Path,
+    filename: &str,
+    digest: &str,
+    mode: SyntheticArchiveMode,
+) -> PathBuf {
+    let archive_path = root.join(filename);
+    let index_rel = PathBuf::from("release-index/v1/stable/1.0.16.json");
+    let manifest = serde_json::json!({
+        "schema": "greentic.release-cache.v1",
+        "format": "tar.gz",
+        "release": "1.0.16",
+        "channel": "stable",
+        "created_at": "unix:0",
+        "artifact_count": 1
+    });
+    let index = serde_json::json!({
+        "schema": "greentic.release-index.v1",
+        "release": "1.0.16",
+        "channel": "stable",
+        "refs": {
+            "ghcr.io/greenticai/packs/demo:stable": {
+                "version": "0.1.0",
+                "digest": digest,
+                "canonical_ref": format!("oci://ghcr.io/greenticai/packs/demo@{digest}")
+            }
+        }
+    });
+
+    let mut payloads = BTreeMap::new();
+    payloads.insert(
+        PathBuf::from("manifest.json"),
+        serde_json::to_vec_pretty(&manifest).expect("manifest bytes"),
+    );
+    payloads.insert(
+        index_rel,
+        serde_json::to_vec_pretty(&index).expect("index bytes"),
+    );
+
+    if matches!(mode, SyntheticArchiveMode::MissingBlob) {
+        let hex = digest.trim_start_matches("sha256:");
+        let artifact_rel = PathBuf::from("artifacts")
+            .join("sha256")
+            .join(&hex[..2])
+            .join(&hex[2..]);
+        let entry = serde_json::json!({
+            "format_version": 1,
+            "cache_key": digest,
+            "digest": digest,
+            "media_type": "application/octet-stream",
+            "size_bytes": 4,
+            "artifact_type": "Pack",
+            "source_kind": "Oci",
+            "raw_ref": "oci://ghcr.io/greenticai/packs/demo:0.1.0",
+            "canonical_ref": format!("oci://ghcr.io/greenticai/packs/demo@{digest}"),
+            "fetched_at": 0,
+            "last_accessed_at": 0,
+            "last_verified_at": null,
+            "state": "Ready",
+            "advisory_epoch": null,
+            "signature_summary": null,
+            "local_path": "/unused",
+            "source_snapshot": {
+                "raw_ref": "oci://ghcr.io/greenticai/packs/demo:0.1.0",
+                "canonical_ref": format!("oci://ghcr.io/greenticai/packs/demo@{digest}"),
+                "source_kind": "Oci",
+                "authoritative": false
+            }
+        });
+        payloads.insert(
+            artifact_rel.join("entry.json"),
+            serde_json::to_vec_pretty(&entry).expect("entry bytes"),
+        );
+    }
+
+    let mut checksums = BTreeMap::new();
+    for (path, bytes) in &payloads {
+        checksums.insert(test_archive_path_string(path), test_sha256_bytes(bytes));
+    }
+    let checksums = serde_json::to_vec_pretty(&checksums).expect("checksums bytes");
+
+    let file = fs::File::create(&archive_path).expect("archive file");
+    let encoder = GzEncoder::new(file, Compression::default());
+    let mut archive = tar::Builder::new(encoder);
+    for (path, bytes) in payloads {
+        append_test_archive_bytes(&mut archive, &path, &bytes);
+    }
+    append_test_archive_bytes(&mut archive, Path::new("checksums.json"), &checksums);
+    let encoder = archive.into_inner().expect("finish tar");
+    encoder.finish().expect("finish gzip");
+    archive_path
+}
+
+fn append_test_archive_bytes<W: std::io::Write>(
+    archive: &mut tar::Builder<W>,
+    path: &Path,
+    bytes: &[u8],
+) {
+    let mut header = tar::Header::new_gnu();
+    header.set_size(bytes.len() as u64);
+    header.set_mode(0o644);
+    header.set_cksum();
+    archive
+        .append_data(&mut header, path, bytes)
+        .expect("append archive bytes");
+}
+
+fn test_archive_path_string(path: &Path) -> String {
+    path.components()
+        .map(|component| component.as_os_str().to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn test_sha256_bytes(bytes: &[u8]) -> String {
+    let digest = Sha256::digest(bytes);
+    let mut out = String::with_capacity("sha256:".len() + digest.len() * 2);
+    out.push_str("sha256:");
+    for byte in digest {
+        use std::fmt::Write as _;
+        let _ = write!(&mut out, "{byte:02x}");
+    }
+    out
 }
 
 fn write_latest_toolchain_manifest(root: &Path) -> PathBuf {

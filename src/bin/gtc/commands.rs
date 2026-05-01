@@ -19,6 +19,7 @@ use crate::extensions::{run_extension_setup, run_extension_start, run_extension_
 use crate::i18n_support::i18n;
 use crate::install::{run_install, run_update};
 use crate::process::{passthrough, run_binary_capture, run_doctor};
+use crate::release_cache::run_release_cache;
 use crate::router::{
     collect_tail, detect_locale, locale_from_args, parse_raw_passthrough, passthrough_help_request,
     route_passthrough_subcommand,
@@ -62,6 +63,7 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         }
         Some(("doctor", _)) => run_doctor(&locale),
         Some(("docs", sub_matches)) => run_docs(sub_matches, debug, &locale),
+        Some(("release-cache", sub_matches)) => run_release_cache(sub_matches, debug, &locale),
         Some(("install", sub_matches)) => {
             run_install(sub_matches, default_install_channel, debug, &locale)
         }

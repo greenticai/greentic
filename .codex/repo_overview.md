@@ -11,27 +11,30 @@ The repo is no longer just a minimal pass-through router. It still delegates sub
 - **Path:** `Cargo.toml`
 - **Role:** Crate manifest and package metadata.
 - **Key functionality:**
-- Declares package `gtc` version `1.1.0`.
+- Declares package `gtc` version `1.0.16`.
 - Pins `rust-version = "1.95"`.
 - Declares the `gtc` binary and `cargo-binstall` metadata for packaged release artifacts.
 - Pulls in runtime dependencies such as `clap`, `reqwest`, `greentic-distributor-client`, `greentic-i18n`, and `greentic-types`.
+- During release install work, uses the local sibling `../greentic-distributor-client` with OCI component support so `gtc install --release ...` can prefetch release artifacts through the shared distributor cache layer.
 
 - **Path:** `src/bin/gtc.rs`
 - **Role:** Binary entrypoint and module wiring.
 - **Key functionality:**
-- Wires the `gtc` submodules for CLI, commands, deploy, install, extensions, routing, prompts, archive handling, and admin operations.
+- Wires the `gtc` submodules for CLI, commands, deploy, install, release-cache export/import, extensions, routing, prompts, archive handling, and admin operations.
 - Defines companion binary constants such as `greentic-dev`, `greentic-operator`, `greentic-setup`, `greentic-start`, `greentic-bundle`, and `greentic-deployer`.
 
 - **Path:** `src/bin/gtc/cli.rs`
 - **Role:** CLI command tree and help surface.
 - **Key functionality:**
-- Defines repo-owned commands including `install`, `update`, `add-admin`, `remove-admin`, `admin`, `start`, `stop`, `dev`, `op`, `wizard`, `setup`, and `help`.
+- Defines repo-owned commands including `install`, `release-cache`, `update`, `add-admin`, `remove-admin`, `admin`, `start`, `stop`, `dev`, `op`, `wizard`, `setup`, and `help`.
 - Documents extension-handoff flags for `wizard`, `setup`, and `start`.
+- Allows `gtc install --release <version> --channel <stable|dev|rnd>` so a release can be installed with an explicit channel context.
+- `gtc install` supports combinable phase selectors: `--install-binaries-only`, `--install-packs-only`, `--install-components-only`, and `--install-tenant-only`.
 
 - **Path:** `src/bin/gtc/commands.rs`
 - **Role:** Main command dispatcher.
 - **Key functionality:**
-- Parses localized CLI args and dispatches to doctor, install, update, admin, start/stop, extension-handoff flows, or passthrough routes.
+- Parses localized CLI args and dispatches to doctor, install, release-cache, update, admin, start/stop, extension-handoff flows, or passthrough routes.
 - Owns the local behavior split between pure passthrough and repo-owned orchestration.
 
 - **Path:** `src/bin/gtc/deploy/`
@@ -45,6 +48,17 @@ The repo is no longer just a minimal pass-through router. It still delegates sub
 - **Role:** Tool install and update flows.
 - **Key functionality:**
 - Manages tenant-aware companion binary install/update behavior and remote manifest/download flows.
+- `src/bin/gtc/toolchain.rs` owns the toolchain-manifest install path, including optional `extension_packs` and `components` manifest sections.
+- For release installs, it prefetches those artifacts through `greentic-distributor-client`, verifies blob and cache-entry presence, writes a release index under `GREENTIC_CACHE_DIR/release-index/v1/<channel>/<release>.json`, and records the current release context under `~/.greentic/releases/current.json` or `GTC_RELEASE_STATE_DIR/current.json`.
+- The install path can run binaries, release packs, release components, and tenant artifact install phases independently, while no selector keeps the full default behavior.
+
+- **Path:** `src/bin/gtc/release_cache.rs`
+- **Role:** Air-gapped release cache archive export/import.
+- **Key functionality:**
+- Implements `gtc release-cache export --release <release> --channel <channel> --output <archive.tar.gz>` and `gtc release-cache import --input <archive.tar.gz>`.
+- Uses the same distributor cache root policy as `greentic-distributor-client::DistOptions::default()`.
+- Exports the release index and referenced `artifacts/sha256/.../{blob,entry.json}` files into a gzip tar archive with `manifest.json` and `checksums.json`.
+- Imports through a temporary directory, validates archive paths, schema, checksums, release index metadata, artifact count, and referenced blob/entry files before restoring into the configured cache root.
 
 - **Path:** `src/bin/gtc/admin.rs`
 - **Role:** Admin certificate, token, access, tunnel, and status operations.
@@ -119,10 +133,6 @@ The repo is no longer just a minimal pass-through router. It still delegates sub
 - **Short description:** The planning briefs remain in `.codex/` as execution history and scope boundaries for the canonical docs rollout that has now been implemented end-to-end.
 
 ## 4. Broken, Failing, or Conflicting Areas
-
-- **Location:** `cargo run --quiet --bin gtc -- --help`
-- **Evidence:** Current run fails with `error[E0432]: unresolved import greentic_i18n` from `src/perf_targets.rs`.
-- **Likely cause / nature of issue:** The current tree does not compile cleanly enough to render CLI help, so repo-local checks are likely already failing before the docs PR starts.
 
 - **Location:** `README.md` versus the broader docs program
 - **Evidence:** README now points to canonical doc entrypoints, but it still contains broad operational prose and demo-hosted answer examples.

@@ -107,6 +107,66 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 ),
         )
         .subcommand(
+            Command::new("release-cache")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.cmd.release_cache.about").into_owned())
+                .subcommand(
+                    Command::new("export")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about(t(locale, "gtc.cmd.release_cache.export.about").into_owned())
+                        .arg(
+                            Arg::new("release")
+                                .long("release")
+                                .value_name("RELEASE")
+                                .num_args(1)
+                                .required(true)
+                                .help_heading(options_heading)
+                                .help(t(locale, "gtc.arg.release_cache.release.help").into_owned()),
+                        )
+                        .arg(
+                            Arg::new("channel")
+                                .long("channel")
+                                .value_name("CHANNEL")
+                                .num_args(1)
+                                .required(true)
+                                .help_heading(options_heading)
+                                .help(t(locale, "gtc.arg.release_cache.channel.help").into_owned()),
+                        )
+                        .arg(
+                            Arg::new("output")
+                                .long("output")
+                                .value_name("PATH")
+                                .num_args(1)
+                                .required(true)
+                                .help_heading(options_heading)
+                                .help(t(locale, "gtc.arg.release_cache.output.help").into_owned()),
+                        ),
+                )
+                .subcommand(
+                    Command::new("import")
+                        .help_template(help_template)
+                        .subcommand_help_heading(commands_heading)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about(t(locale, "gtc.cmd.release_cache.import.about").into_owned())
+                        .arg(
+                            Arg::new("input")
+                                .long("input")
+                                .value_name("PATH")
+                                .num_args(1)
+                                .required(true)
+                                .help_heading(options_heading)
+                                .help(t(locale, "gtc.arg.release_cache.input.help").into_owned()),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("install")
                 .help_template(help_template)
                 .subcommand_help_heading(commands_heading)
@@ -134,7 +194,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .long("channel")
                         .value_name("CHANNEL")
                         .num_args(1)
-                        .conflicts_with("release")
                         .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.install.channel.help").into_owned()),
                 )
@@ -143,7 +202,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .long("release")
                         .value_name("RELEASE")
                         .num_args(1)
-                        .conflicts_with("channel")
                         .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.install.release.help").into_owned()),
                 )
@@ -169,6 +227,34 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .action(ArgAction::SetTrue)
                         .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.install.dry_run.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("install-binaries-only")
+                        .long("install-binaries-only")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.binaries_only.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("install-packs-only")
+                        .long("install-packs-only")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.packs_only.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("install-components-only")
+                        .long("install-components-only")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.components_only.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("install-tenant-only")
+                        .long("install-tenant-only")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t(locale, "gtc.arg.install.tenant_only.help").into_owned()),
                 ),
         )
         .subcommand(

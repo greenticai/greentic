@@ -31,30 +31,42 @@ pub(super) fn run_install(
     debug: bool,
     locale: &str,
 ) -> i32 {
-    println!("{}", t(locale, "gtc.install.public_mode"));
-
-    let preflight_status = ensure_install_prereqs(debug, locale);
-    if preflight_status != 0 {
-        return preflight_status;
+    let phases = InstallPhases::from_matches(sub_matches);
+    if phases.binaries || phases.packs || phases.components {
+        println!("{}", t(locale, "gtc.install.public_mode"));
     }
 
-    let options = match ToolchainInstallOptions::from_matches(sub_matches, default_channel) {
-        Ok(options) => options,
-        Err(err) => {
-            eprintln!("{err}");
-            return 2;
+    if phases.binaries {
+        let preflight_status = ensure_install_prereqs(debug, locale);
+        if preflight_status != 0 {
+            return preflight_status;
         }
-    };
-    let dry_run = options.dry_run;
-    let toolchain_status = run_toolchain_install(options, debug, locale);
-    if toolchain_status != 0 {
-        return toolchain_status;
+    }
+
+    let dry_run = sub_matches.get_flag("dry-run");
+    if phases.binaries || phases.packs || phases.components {
+        let options = match ToolchainInstallOptions::from_matches(sub_matches, default_channel) {
+            Ok(options) => options,
+            Err(err) => {
+                eprintln!("{err}");
+                return 2;
+            }
+        };
+        let toolchain_status = run_toolchain_install(options, debug, locale);
+        if toolchain_status != 0 {
+            return toolchain_status;
+        }
+        if dry_run {
+            return 0;
+        }
     }
     if dry_run {
         return 0;
     }
 
-    if let Err(err) = ensure_deployer_dist_pack(debug, locale) {
+    if phases.binaries
+        && let Err(err) = ensure_deployer_dist_pack(debug, locale)
+    {
         eprintln!(
             "{}: {err}",
             tf(
@@ -72,8 +84,16 @@ pub(super) fn run_install(
         .filter(|v| !v.is_empty());
 
     let Some(tenant) = tenant else {
+        if phases.tenant && phases.is_selector_limited() {
+            eprintln!("--install-tenant-only requires --tenant <TENANT>");
+            return 2;
+        }
         return 0;
     };
+
+    if !phases.tenant {
+        return 0;
+    }
 
     println!(
         "{}",
@@ -120,10 +140,51 @@ pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
             source: ToolchainSource::Channel("stable".to_string()),
             force: true,
             dry_run: false,
+            phases: super::toolchain::ToolchainInstallPhases::all(),
         },
         debug,
         locale,
     )
+}
+
+#[derive(Debug, Clone, Copy)]
+struct InstallPhases {
+    binaries: bool,
+    packs: bool,
+    components: bool,
+    tenant: bool,
+    selector_limited: bool,
+}
+
+impl InstallPhases {
+    fn from_matches(matches: &ArgMatches) -> Self {
+        let binaries = matches.get_flag("install-binaries-only");
+        let packs = matches.get_flag("install-packs-only");
+        let components = matches.get_flag("install-components-only");
+        let tenant = matches.get_flag("install-tenant-only");
+        let selector_limited = binaries || packs || components || tenant;
+        if selector_limited {
+            Self {
+                binaries,
+                packs,
+                components,
+                tenant,
+                selector_limited,
+            }
+        } else {
+            Self {
+                binaries: true,
+                packs: true,
+                components: true,
+                tenant: true,
+                selector_limited,
+            }
+        }
+    }
+
+    fn is_selector_limited(self) -> bool {
+        self.selector_limited
+    }
 }
 
 pub(crate) fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
