@@ -10,6 +10,7 @@
     "files": [
       "src/bin/gtc.rs",
       "src/bin/gtc/cli.rs",
+      "src/bin/gtc/docs_cmd.rs",
       "build.rs"
     ]
   },

@@ -737,6 +737,45 @@ pub(crate) fn installed_toolchain_label() -> String {
     }
 }
 
+pub(crate) fn latest_release_context_warning(
+    expected_channel: &str,
+    install_command: &str,
+    debug: bool,
+    locale: &str,
+) -> GtcResult<Option<String>> {
+    let Some(installed) = read_installed_toolchain()? else {
+        return Ok(Some(format!(
+            "Greentic toolchain release context is not installed for channel '{expected_channel}'. Run `{install_command} install` to install the latest {expected_channel} release."
+        )));
+    };
+
+    let installed_channel = installed.channel.as_deref().unwrap_or("unknown");
+    if installed_channel != expected_channel {
+        return Ok(Some(format!(
+            "Greentic toolchain release context is on channel '{installed_channel}', but this launcher expects '{expected_channel}'. Run `{install_command} install` to install the latest {expected_channel} release."
+        )));
+    }
+
+    let source = ToolchainSource::Channel(expected_channel.to_string());
+    let latest = resolve_toolchain_manifest(&source, debug, locale)?;
+    let installed_matches_latest = match (
+        installed.resolved_digest.as_deref(),
+        latest.digest.as_deref(),
+    ) {
+        (Some(installed_digest), Some(latest_digest)) => installed_digest == latest_digest,
+        _ => installed.version == latest.manifest.version,
+    };
+
+    if installed_matches_latest {
+        return Ok(None);
+    }
+
+    Ok(Some(format!(
+        "Greentic toolchain release context is {} ({installed_channel}), but the latest {expected_channel} release is {}. Run `{install_command} install` to upgrade.",
+        installed.version, latest.manifest.version
+    )))
+}
+
 pub(crate) fn write_installed_toolchain(state: &InstalledToolchain) -> GtcResult<()> {
     let path = installed_toolchain_path()?;
     if let Some(parent) = path.parent() {

@@ -759,3 +759,236 @@ fn render_admin_http_body(body: &str, output: &str) -> GtcResult<String> {
         _ => Ok(body.to_string()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        AdminAuth, AdminRegistryDocument, build_remote_admin_client,
+        capture_admin_deployer_command, ensure_admin_cert_dir_contents, ensure_admin_certs_ready,
+        load_admin_registry, render_admin_http_body, resolve_remote_admin_context,
+        run_admin_deployer_command, save_admin_registry,
+    };
+    use crate::tests::env_test_lock;
+    use clap::{Arg, Command};
+    use std::env;
+    use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn admin_registry_roundtrips_and_rejects_invalid_json() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let missing = load_admin_registry(root.path()).expect("missing registry");
+        assert!(missing.admins.is_empty());
+
+        let registry = AdminRegistryDocument {
+            admins: vec![super::AdminRegistryEntry {
+                name: Some("Alice".to_string()),
+                client_cn: "alice-admin".to_string(),
+                public_key: "ssh-ed25519 AAAA".to_string(),
+                added_at_epoch_s: 42,
+            }],
+        };
+        save_admin_registry(root.path(), &registry).expect("save");
+        assert_eq!(load_admin_registry(root.path()).expect("load"), registry);
+
+        let path = super::admin_registry_path(root.path());
+        fs::write(&path, "{not json").expect("write invalid");
+        let err = load_admin_registry(root.path()).unwrap_err();
+        assert!(err.contains("failed to parse admin registry"));
+    }
+
+    #[test]
+    fn admin_cert_dir_validation_reports_missing_required_file() {
+        let root = tempfile::tempdir().expect("tempdir");
+        fs::write(root.path().join("ca.crt"), "ca").expect("write ca");
+        let err = ensure_admin_cert_dir_contents(root.path()).unwrap_err();
+        assert!(err.contains("required file missing"));
+        assert!(err.contains("server.crt"));
+    }
+
+    #[test]
+    fn admin_http_body_renderer_validates_json_outputs() {
+        assert_eq!(
+            render_admin_http_body("plain", "text").expect("text"),
+            "plain"
+        );
+        let rendered = render_admin_http_body(r#"{"ok":true}"#, "json").expect("json");
+        assert!(rendered.contains("\"ok\": true"));
+        let rendered = render_admin_http_body(r#"{"ok":true}"#, "yaml").expect("yaml");
+        assert!(rendered.contains("ok: true"));
+        assert!(render_admin_http_body("not json", "json").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_admin_context_uses_deployer_access_and_token_contract() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(
+            &deployer,
+            r#"#!/bin/sh
+if [ "$2" = "admin-access" ]; then
+  printf '%s\n' '{"admin_public_endpoint":"https://admin.example.test"}'
+  exit 0
+fi
+if [ "$2" = "admin-token" ]; then
+  printf '%s\n' 'token-from-deployer'
+  exit 0
+fi
+echo "unexpected command: $*" >&2
+exit 1
+"#,
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+        let context = resolve_remote_admin_context(root.path(), "gcp", 9443).expect("context");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+
+        assert_eq!(context.base_url, "https://admin.example.test");
+        match context.auth {
+            AdminAuth::Bearer(token) => assert_eq!(token, "token-from-deployer"),
+            AdminAuth::Mtls { .. } => panic!("expected bearer auth"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn remote_admin_context_uses_aws_certs_contract_and_builds_mtls_client() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let cert_dir = ensure_admin_certs_ready(root.path(), None).expect("certs");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(
+            &deployer,
+            format!(
+                r#"#!/bin/sh
+if [ "$2" = "admin-certs" ]; then
+  printf '%s\n' '{{"ca_cert_path":"{}","client_cert_path":"{}","client_key_path":"{}"}}'
+  exit 0
+fi
+echo "unexpected command: $*" >&2
+exit 1
+"#,
+                cert_dir.join("ca.crt").display(),
+                cert_dir.join("client.crt").display(),
+                cert_dir.join("client.key").display()
+            ),
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+        let context = resolve_remote_admin_context(root.path(), "aws", 9443).expect("context");
+        build_remote_admin_client(&context).expect("mtls client");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+
+        assert_eq!(context.base_url, "https://127.0.0.1:9443/admin/v1");
+        match context.auth {
+            AdminAuth::Mtls { ca_cert_path, .. } => {
+                assert_eq!(ca_cert_path, cert_dir.join("ca.crt"));
+            }
+            AdminAuth::Bearer(_) => panic!("expected mtls auth"),
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admin_deployer_capture_surfaces_stderr_contract_failures() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(&deployer, "#!/bin/sh\necho 'contract failed' >&2\nexit 7\n")
+            .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+        let err =
+            capture_admin_deployer_command(root.path(), "gcp", "admin-access", "json").unwrap_err();
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+        assert!(err.contains("contract failed"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn admin_deployer_command_forwards_target_bundle_and_output() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = root.path().join("bundle");
+        fs::create_dir_all(&bundle).expect("bundle");
+        let log = root.path().join("deployer.log");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(
+            &deployer,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nexit 0\n",
+                log.display()
+            ),
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+        let matches = Command::new("access")
+            .arg(Arg::new("bundle-ref").required(true))
+            .arg(Arg::new("target").long("target").num_args(1))
+            .arg(Arg::new("output").long("output").num_args(1))
+            .get_matches_from([
+                "access",
+                bundle.to_str().expect("utf8"),
+                "--target",
+                "azure",
+                "--output",
+                "json",
+            ]);
+        let status = run_admin_deployer_command(&matches, "admin-access");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+        assert_eq!(status, 0);
+        let logged = fs::read_to_string(log).expect("read log");
+        assert!(logged.contains("azure admin-access --bundle-dir"));
+        assert!(logged.contains("--output json"));
+    }
+}

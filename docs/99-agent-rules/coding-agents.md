@@ -19,6 +19,31 @@ repository.
 - Validate doc examples where possible.
 - When changing behavior, update the relevant canonical docs in the same PR.
 
+## Install And Artifact Channel Rules
+
+See [`docs/02-cli/gtc-install.md`](../02-cli/gtc-install.md) for the canonical
+install entrypoint and release-cache behavior.
+
+- Treat `gtc install` as the default stable install path. It installs the latest
+  stable toolchain and, when the release manifest contains them, caches stable
+  release packs and components as well as binaries.
+- Use `gtc install --release <version> --channel <channel>` when a specific
+  release must be installed. Supported channels are `stable`, `dev`, and `rnd`
+  (`rnd` means research and development).
+- Remember the launcher-to-channel mapping: `gtc` uses `stable`, `gtc-dev` uses
+  `dev`, and `gtc-rnd` uses `rnd`.
+- `gtc wizard` and `gtc setup` warn when the installed release context is not
+  current for the launcher's channel. Use `--strict-release-context` for
+  automation that must fail on mismatch, or `--ignore-release-context` when the
+  caller intentionally wants to skip the check.
+- When adding an existing OCI-hosted pack or component to docs, bundles, or
+  examples, prefer the channel tag that matches the intended release lane. For
+  production-ready repo-local guidance, use `oci://ghcr.io/...:stable`.
+- Do not use `oci://ghcr.io/...:latest` for pack or component references in
+  canonical guidance unless the point is explicitly to test an unverified moving
+  target. `latest` can resolve to artifacts that have not gone through the stable
+  release path.
+
 ## Verification Rules
 
 - Check repo-local canonical docs before consulting other repos.

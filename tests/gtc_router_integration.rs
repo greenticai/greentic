@@ -256,6 +256,82 @@ fn wizard_passthrough_routes_to_greentic_dev_without_args() {
 }
 
 #[test]
+fn wizard_warns_when_release_context_is_not_latest_and_runs() {
+    let sandbox = TestSandbox::new("wizard_warns_when_release_context_is_not_latest_and_runs");
+    let log_file = sandbox.path().join("wizard.log");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let state_dir = sandbox.path().join("toolchain-state");
+    write_installed_toolchain_state(&state_dir, "1.0.4", "stable", "sha256:old");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        state_dir.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["wizard"], extra);
+    assert_eq!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("warning: Greentic toolchain release context is 1.0.4 (stable)"));
+    assert!(stderr.contains("latest stable release is 1.0.16"));
+    assert!(stderr.contains("Run `gtc install` to upgrade."));
+    let logged = fs::read_to_string(log_file).expect("read wizard log");
+    assert!(logged.contains("wizard"));
+}
+
+#[test]
+fn wizard_strict_release_context_errors_on_mismatch() {
+    let sandbox = TestSandbox::new("wizard_strict_release_context_errors_on_mismatch");
+    let log_file = sandbox.path().join("wizard.log");
+    let manifest_path = write_release_toolchain_manifest(sandbox.path());
+    let state_dir = sandbox.path().join("toolchain-state");
+    write_installed_toolchain_state(&state_dir, "1.0.4", "stable", "sha256:old");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_MANIFEST_PATH".to_string(),
+        manifest_path.display().to_string(),
+    );
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        state_dir.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["wizard", "--strict-release-context"], extra);
+    assert_eq!(output.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("latest stable release is 1.0.16"));
+    assert!(!log_file.exists(), "wizard should not run in strict mode");
+}
+
+#[test]
+fn setup_ignore_release_context_skips_check_and_strips_flag() {
+    let sandbox = TestSandbox::new("setup_ignore_release_context_skips_check_and_strips_flag");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let output = sandbox.run_gtc_capture(
+        ["setup", "--dry-run", "--ignore-release-context"],
+        HashMap::new(),
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!stderr.contains("release context"), "{stderr}");
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    assert!(logged.contains("--dry-run"));
+    assert!(!logged.contains("--ignore-release-context"));
+}
+
+#[test]
 fn wizard_schema_passthrough_emits_dev_schema() {
     let sandbox = TestSandbox::new("wizard_schema_passthrough_emits_dev_schema");
     let schema = serde_json::json!({

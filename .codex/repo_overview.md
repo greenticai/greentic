@@ -30,6 +30,8 @@ The repo is no longer just a minimal pass-through router. It still delegates sub
 - Documents extension-handoff flags for `wizard`, `setup`, and `start`.
 - Allows `gtc install --release <version> --channel <stable|dev|rnd>` so a release can be installed with an explicit channel context.
 - `gtc install` supports combinable phase selectors: `--install-binaries-only`, `--install-packs-only`, `--install-components-only`, and `--install-tenant-only`.
+- Plain `gtc install` defaults to the stable channel and now represents the full stable install path: binaries plus release-manifest packs and components cached through the distributor cache.
+- `gtc wizard` and `gtc setup` check the installed release context before handoff, using the launcher's channel (`gtc` -> stable, `gtc-dev` -> dev, `gtc-rnd` -> rnd), with `--strict-release-context` to fail on mismatch and `--ignore-release-context` to skip the check.
 
 - **Path:** `src/bin/gtc/commands.rs`
 - **Role:** Main command dispatcher.
@@ -87,7 +89,8 @@ The repo is no longer just a minimal pass-through router. It still delegates sub
 - Includes a new validated-example layer via `docs/examples/` and `ci/validate_doc_examples.sh`, which currently validate launcher-style wizard answer examples against the generated wizard schema.
 - Includes a troubleshooting and maintenance layer via `docs/06-troubleshooting/common-authoring-and-runtime-issues.md`, plus an explicit documentation-maintenance policy in `docs/00-start-here.md` and stronger agent verification rules in `docs/99-agent-rules/coding-agents.md`.
 - Includes core-model and trust-boundary docs such as `docs/01-core-model/components-flows-packs-bundles.md`, `docs/01-core-model/extensions-overview.md`, `docs/05-examples/demo-map.md`, and `docs/05-examples/repo-compatibility-map.md`.
-- Includes new CLI docs such as `docs/02-cli/gtc-setup.md` and `docs/02-cli/gtc-start.md`, which explain the current setup/start ownership boundaries and local-versus-deployer behavior.
+- Includes CLI docs such as `docs/02-cli/gtc-install.md`, `docs/02-cli/gtc-setup.md`, and `docs/02-cli/gtc-start.md`, which explain install channels/cache behavior, setup ownership boundaries, and local-versus-deployer behavior.
+- Agent-facing docs now call out that stable pack/component references should use `oci://ghcr.io/...:stable` rather than `oci://ghcr.io/...:latest` unless an example is explicitly testing an unverified moving target.
 - Includes a new canonical wizard doc at `docs/02-cli/gtc-wizard.md`, plus authoring docs such as `docs/03-authoring/happy-path-build-an-app.md` and `docs/03-authoring/answers-json-patterns.md`.
 - Includes new flow-oriented guidance such as `docs/02-cli/greentic-flow.md` and `docs/03-authoring/flow-step-schema-mapping.md`, which frame schema-first flow authoring conservatively as operational guidance.
 - Includes new platform-capability guidance such as `docs/03-authoring/i18n-qa-distributor-client.md`, `docs/03-authoring/mcp-wasm-and-adapters.md`, and `docs/03-authoring/mcp-config-secrets-oauth.md`, which keep ownership boundaries explicit for i18n, QA/schema usage, distributor-client, MCP composition, config, secrets, and OAuth.

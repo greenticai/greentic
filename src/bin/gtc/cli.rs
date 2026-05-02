@@ -10,6 +10,8 @@ pub(super) fn build_cli(locale: &str) -> Command {
     let commands_heading = leak_str(t(locale, "gtc.help.commands.heading").into_owned());
     let help_template = leak_str(build_help_template(locale));
 
+    // This is clap::Command metadata, not process execution; the localized name is never invoked.
+    // foxguard: ignore[rs/no-command-injection]
     Command::new(leak_str(t(locale, "gtc.app.name").into_owned()))
         .version(env!("CARGO_PKG_VERSION"))
         .propagate_version(true)
@@ -951,6 +953,8 @@ pub(super) fn build_cli(locale: &str) -> Command {
                             "Write a normalized multi-extension launcher handoff JSON document.",
                         ),
                 )
+                .arg(release_context_strict_arg(options_heading))
+                .arg(release_context_ignore_arg(options_heading))
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -970,6 +974,8 @@ pub(super) fn build_cli(locale: &str) -> Command {
                             "Path to a normalized extension setup handoff JSON document.",
                         ),
                 )
+                .arg(release_context_strict_arg(options_heading))
+                .arg(release_context_ignore_arg(options_heading))
                 .arg(cmd_args),
         )
         .subcommand(
@@ -987,6 +993,24 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .help(t(locale, "gtc.help.subcommand.arg.command.help").into_owned()),
                 ),
         )
+}
+
+fn release_context_strict_arg(options_heading: &'static str) -> Arg {
+    Arg::new("strict-release-context")
+        .long("strict-release-context")
+        .action(ArgAction::SetTrue)
+        .conflicts_with("ignore-release-context")
+        .help_heading(options_heading)
+        .help("Fail when the installed toolchain release context does not match the latest release for this launcher's channel.")
+}
+
+fn release_context_ignore_arg(options_heading: &'static str) -> Arg {
+    Arg::new("ignore-release-context")
+        .long("ignore-release-context")
+        .action(ArgAction::SetTrue)
+        .conflicts_with("strict-release-context")
+        .help_heading(options_heading)
+        .help("Skip the toolchain release context check before running this command.")
 }
 
 fn build_help_template(locale: &str) -> String {

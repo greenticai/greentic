@@ -90,6 +90,8 @@ Start with these repo-local docs:
   Canonical start entrypoint, target selection, and local-vs-deployer behavior.
 - [`docs/02-cli/gtc-wizard.md`](./02-cli/gtc-wizard.md)
   Canonical wizard entrypoint, routing behavior, and current limitations.
+- [`docs/02-cli/gtc-install.md`](./02-cli/gtc-install.md)
+  Canonical install entrypoint, release channels, and stable OCI reference guidance.
 - [`docs/02-cli/greentic-flow.md`](./02-cli/greentic-flow.md)
   Repo-local guidance for using `greentic-flow component-schema` before wiring steps.
 - [`docs/03-authoring/happy-path-build-an-app.md`](./03-authoring/happy-path-build-an-app.md)

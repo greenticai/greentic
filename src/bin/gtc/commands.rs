@@ -24,11 +24,12 @@ use crate::router::{
     collect_tail, detect_locale, locale_from_args, parse_raw_passthrough, passthrough_help_request,
     route_passthrough_subcommand,
 };
-use crate::toolchain::installed_toolchain_label;
+use crate::toolchain::{installed_toolchain_label, latest_release_context_warning};
 
 pub(super) fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
     let default_install_channel = default_install_channel_for_invocation(raw_args.first());
+    let invocation = raw_args.first().cloned();
     let cli_locale = locale_from_args(&raw_args);
     let locale = detect_locale(&raw_args, i18n.default_locale());
     let raw_passthrough = parse_raw_passthrough(&raw_args);
@@ -106,6 +107,34 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         Some(("stop", sub_matches)) => run_stop(sub_matches, debug, &locale),
         Some((name @ ("dev" | "op" | "wizard" | "setup"), sub_matches)) => {
             let tail = collect_tail(sub_matches);
+            let tail = if matches!(name, "wizard" | "setup") {
+                let release_context =
+                    match release_context_flags(sub_matches, &tail, default_install_channel) {
+                        Ok(release_context) => release_context,
+                        Err(err) => {
+                            eprintln!("{err}");
+                            return 2;
+                        }
+                    };
+                if !release_context.ignore
+                    && let Some(status) = check_release_context(
+                        release_context.channel,
+                        invocation.as_deref(),
+                        debug,
+                        &locale,
+                    )
+                {
+                    if release_context.strict {
+                        eprintln!("error: {status}");
+                        return 1;
+                    } else {
+                        eprintln!("warning: {status}");
+                    }
+                }
+                release_context.tail
+            } else {
+                tail
+            };
             if name == "wizard" && sub_matches.get_many::<String>("extensions").is_some() {
                 return run_extension_wizard(sub_matches, &tail, debug, &locale);
             }
@@ -141,9 +170,74 @@ pub(super) fn default_install_channel_for_invocation(invocation: Option<&String>
     };
     if file_name.ends_with("-dev") {
         "dev"
+    } else if file_name.ends_with("-rnd") {
+        "rnd"
     } else {
         "stable"
     }
+}
+
+struct ReleaseContextFlags {
+    channel: &'static str,
+    strict: bool,
+    ignore: bool,
+    tail: Vec<String>,
+}
+
+fn release_context_flags(
+    matches: &ArgMatches,
+    tail: &[String],
+    default_channel: &'static str,
+) -> Result<ReleaseContextFlags, String> {
+    let mut strict = matches.get_flag("strict-release-context");
+    let mut ignore = matches.get_flag("ignore-release-context");
+    let mut forwarded = Vec::with_capacity(tail.len());
+
+    for arg in tail {
+        match arg.as_str() {
+            "--strict-release-context" => strict = true,
+            "--ignore-release-context" => ignore = true,
+            _ => forwarded.push(arg.clone()),
+        }
+    }
+
+    if strict && ignore {
+        return Err(
+            "--strict-release-context cannot be used with --ignore-release-context".to_string(),
+        );
+    }
+
+    Ok(ReleaseContextFlags {
+        channel: default_channel,
+        strict,
+        ignore,
+        tail: forwarded,
+    })
+}
+
+fn check_release_context(
+    channel: &str,
+    invocation: Option<&str>,
+    debug: bool,
+    locale: &str,
+) -> Option<String> {
+    let install_command = install_command_for_invocation(invocation);
+    match latest_release_context_warning(channel, &install_command, debug, locale) {
+        Ok(Some(warning)) => Some(warning),
+        Ok(None) => None,
+        Err(err) => Some(format!(
+            "failed to verify Greentic toolchain release context for channel '{channel}': {err}. Run `{install_command} install` to refresh the local release context."
+        )),
+    }
+}
+
+fn install_command_for_invocation(invocation: Option<&str>) -> String {
+    invocation
+        .and_then(|value| Path::new(value).file_stem())
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or("gtc")
+        .to_string()
 }
 
 fn print_version() {
