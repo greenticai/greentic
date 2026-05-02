@@ -63,7 +63,6 @@ pub(super) fn run_install(
                 &[("kind", "asset"), ("name", "deployer dist packs")]
             )
         );
-        return 1;
     }
 
     let tenant = sub_matches
