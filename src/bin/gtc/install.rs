@@ -54,17 +54,6 @@ pub(super) fn run_install(
         return 0;
     }
 
-    if let Err(err) = ensure_deployer_dist_pack(debug, locale) {
-        eprintln!(
-            "{}: {err}",
-            tf(
-                locale,
-                "gtc.install.item_fail",
-                &[("kind", "asset"), ("name", "deployer dist packs")]
-            )
-        );
-    }
-
     let tenant = sub_matches
         .get_one::<String>("tenant")
         .map(|v| v.trim().to_string())
