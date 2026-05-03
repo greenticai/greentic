@@ -235,9 +235,9 @@ mod tests {
         resolve_deploy_app_pack_path, resolve_target_provider_pack_from_metadata,
     };
     use crate::deploy::StartTarget;
+    use crate::tests::env_test_lock;
     #[cfg(unix)]
     use crate::tests::fake_deployer_contract;
-    use crate::tests::env_test_lock;
     use std::fs;
     use std::path::Path;
 
