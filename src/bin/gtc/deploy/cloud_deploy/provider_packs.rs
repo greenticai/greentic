@@ -235,10 +235,13 @@ mod tests {
         resolve_deploy_app_pack_path, resolve_target_provider_pack_from_metadata,
     };
     use crate::deploy::StartTarget;
-    use crate::tests::{env_test_lock, fake_deployer_contract};
+    #[cfg(unix)]
+    use crate::tests::fake_deployer_contract;
+    use crate::tests::env_test_lock;
     use std::fs;
     use std::path::Path;
 
+    #[cfg(unix)]
     #[test]
     fn canonical_target_provider_pack_filename_matches_cloud_targets() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
