@@ -1,0 +1,44 @@
+scan:
+  ignore_rules:
+    - path: tests/
+      rules:
+        - rs/no-command-injection
+        - rs/no-path-traversal
+        - rs/no-unwrap-in-lib
+        - rs/unsafe-block
+    - path: benches/
+      rules:
+        - rs/no-command-injection
+        - rs/no-path-traversal
+        - rs/no-unwrap-in-lib
+        - rs/unsafe-block
+    - path: docs/
+      rules:
+        - rs/no-command-injection
+        - rs/no-path-traversal
+        - rs/no-unwrap-in-lib
+        - rs/unsafe-block
+    - path: examples/
+      rules:
+        - rs/no-command-injection
+        - rs/no-path-traversal
+        - rs/no-unwrap-in-lib
+        - rs/unsafe-block
+    - path: fixtures/
+      rules:
+        - rs/no-command-injection
+        - rs/no-path-traversal
+        - rs/no-unwrap-in-lib
+        - rs/unsafe-block
+    - path: testdata/
+      rules:
+        - rs/no-command-injection
+        - rs/no-path-traversal
+        - rs/no-unwrap-in-lib
+        - rs/unsafe-block
+    - path: generated/
+      rules:
+        - rs/no-command-injection
+        - rs/no-path-traversal
+        - rs/no-unwrap-in-lib
+        - rs/unsafe-block

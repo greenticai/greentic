@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use directories::BaseDirs;
+use greentic_distributor_client::{CachePolicy, DistClient, DistOptions, ResolvePolicy};
 use gtc::error::{GtcError, GtcResult};
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, WWW_AUTHENTICATE};
@@ -13,6 +14,7 @@ use sha2::{Digest, Sha256};
 
 use super::i18n_support::{t, tf};
 use super::install::{run_cargo, run_cargo_capture};
+use super::process::run_binary_capture;
 
 const TOOLCHAIN_MANIFEST_SCHEMA: &str = "greentic.toolchain-manifest.v1";
 const INSTALLED_TOOLCHAIN_SCHEMA: &str = "greentic.installed-toolchain.v1";
@@ -27,6 +29,10 @@ pub(crate) struct ToolchainManifest {
     pub channel: Option<String>,
     pub created_at: Option<String>,
     pub packages: Vec<ToolchainPackage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub extension_packs: Option<Vec<ToolchainArtifactRef>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub components: Option<Vec<ToolchainArtifactRef>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -34,6 +40,12 @@ pub(crate) struct ToolchainPackage {
     #[serde(rename = "crate")]
     pub crate_name: String,
     pub bins: Vec<String>,
+    pub version: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct ToolchainArtifactRef {
+    pub id: String,
     pub version: String,
 }
 
@@ -62,13 +74,35 @@ pub(crate) struct ToolchainInstallOptions {
     pub source: ToolchainSource,
     pub force: bool,
     pub dry_run: bool,
+    pub phases: ToolchainInstallPhases,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ToolchainSource {
     Channel(String),
-    Release(String),
+    Release { release: String, channel: String },
     LocalManifest(PathBuf),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ToolchainInstallPhases {
+    pub binaries: bool,
+    pub packs: bool,
+    pub components: bool,
+}
+
+impl ToolchainInstallPhases {
+    pub(crate) fn all() -> Self {
+        Self {
+            binaries: true,
+            packs: true,
+            components: true,
+        }
+    }
+
+    pub(crate) fn any_artifacts(self) -> bool {
+        self.packs || self.components
+    }
 }
 
 impl ToolchainInstallOptions {
@@ -80,7 +114,15 @@ impl ToolchainInstallOptions {
             .map(|value| value.trim())
             .filter(|value| !value.is_empty())
         {
-            ToolchainSource::Release(release.to_string())
+            let channel = matches
+                .get_one::<String>("channel")
+                .map(|value| value.trim())
+                .filter(|value| !value.is_empty())
+                .unwrap_or(default_channel);
+            ToolchainSource::Release {
+                release: release.to_string(),
+                channel: channel.to_string(),
+            }
         } else {
             let channel = matches
                 .get_one::<String>("channel")
@@ -90,10 +132,24 @@ impl ToolchainInstallOptions {
             ToolchainSource::Channel(channel.to_string())
         };
 
+        let selected_binaries = matches.get_flag("install-binaries-only");
+        let selected_packs = matches.get_flag("install-packs-only");
+        let selected_components = matches.get_flag("install-components-only");
+        let phases = if selected_binaries || selected_packs || selected_components {
+            ToolchainInstallPhases {
+                binaries: selected_binaries,
+                packs: selected_packs,
+                components: selected_components,
+            }
+        } else {
+            ToolchainInstallPhases::all()
+        };
+
         Ok(Self {
             source,
             force: matches.get_flag("force"),
             dry_run: matches.get_flag("dry-run"),
+            phases,
         })
     }
 }
@@ -125,6 +181,8 @@ pub(crate) fn run_toolchain_install(
 
     if !options.force
         && !options.dry_run
+        && options.phases.binaries
+        && !has_selected_release_artifacts(&resolved.manifest, options.phases)
         && let Ok(Some(installed)) = read_installed_toolchain()
         && installed.resolved_digest == resolved.digest
         && resolved.digest.is_some()
@@ -135,34 +193,75 @@ pub(crate) fn run_toolchain_install(
 
     if options.dry_run {
         println!("{}", t(locale, "gtc.install.toolchain.dry_run"));
-        for package in &resolved.manifest.packages {
-            let version = match resolve_toolchain_package_version(package, debug, locale) {
-                Ok(version) => version,
-                Err(err) => {
-                    eprintln!("{err}");
-                    return 1;
+        if options.phases.binaries {
+            for package in &resolved.manifest.packages {
+                let version = match resolve_toolchain_package_version(package, debug, locale) {
+                    Ok(version) => version,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return 1;
+                    }
+                };
+                for bin in &package.bins {
+                    let args = toolchain_binstall_args_for_version(package, bin, &version);
+                    println!("cargo {}", args.join(" "));
                 }
-            };
-            for bin in &package.bins {
-                let args = toolchain_binstall_args_for_version(package, bin, &version);
-                println!("cargo {}", args.join(" "));
+            }
+        }
+        if options.phases.packs {
+            for item in resolved.manifest.extension_packs.iter().flatten() {
+                println!("prefetch pack {}:{}", item.id, item.version);
+            }
+        }
+        if options.phases.components {
+            for item in resolved.manifest.components.iter().flatten() {
+                println!("prefetch component {}:{}", item.id, item.version);
             }
         }
         return 0;
     }
 
-    let install_status = install_toolchain_manifest(&resolved, debug, locale);
-    if install_status != 0 {
-        return install_status;
+    if options.phases.binaries {
+        let install_status = install_toolchain_manifest(&resolved, options.force, debug, locale);
+        if install_status != 0 {
+            return install_status;
+        }
     }
 
-    let state = installed_state_from_resolved(&resolved);
-    if let Err(err) = write_installed_toolchain(&state) {
-        eprintln!(
-            "{}: {err}",
-            t(locale, "gtc.install.toolchain.state_write_failed")
-        );
-        return 1;
+    let release_context = match release_context_from_resolved(&options.source, &resolved.manifest) {
+        Ok(ctx) => ctx,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    if options.phases.any_artifacts()
+        && let Some(ctx) = release_context
+    {
+        if let Err(err) = prefetch_release_artifacts_and_write_index(
+            &resolved.manifest,
+            &ctx,
+            options.phases,
+            options.force,
+        ) {
+            eprintln!("failed to prefetch release artifacts: {err}");
+            return 1;
+        }
+        if let Err(err) = write_current_release_context(&ctx) {
+            eprintln!("failed to write current release context: {err}");
+            return 1;
+        }
+    }
+
+    if options.phases.binaries {
+        let state = installed_state_from_resolved(&resolved);
+        if let Err(err) = write_installed_toolchain(&state) {
+            eprintln!(
+                "{}: {err}",
+                t(locale, "gtc.install.toolchain.state_write_failed")
+            );
+            return 1;
+        }
     }
 
     0
@@ -170,11 +269,12 @@ pub(crate) fn run_toolchain_install(
 
 pub(crate) fn install_toolchain_manifest(
     resolved: &ResolvedManifest,
+    force: bool,
     debug: bool,
     locale: &str,
 ) -> i32 {
     for package in &resolved.manifest.packages {
-        let status = install_toolchain_package(package, debug, locale);
+        let status = install_toolchain_package(package, force, debug, locale);
         if status != 0 {
             return status;
         }
@@ -184,6 +284,7 @@ pub(crate) fn install_toolchain_manifest(
 
 pub(crate) fn install_toolchain_package(
     package: &ToolchainPackage,
+    force: bool,
     debug: bool,
     locale: &str,
 ) -> i32 {
@@ -195,6 +296,10 @@ pub(crate) fn install_toolchain_package(
         }
     };
     for bin in &package.bins {
+        if !force && installed_binary_version_matches(bin, &version, debug, locale) {
+            println!("Installed {bin} binary already matches {version}; skipping.");
+            continue;
+        }
         println!(
             "{}",
             tf(
@@ -235,6 +340,31 @@ pub(crate) fn install_toolchain_package(
         );
     }
     0
+}
+
+fn installed_binary_version_matches(bin: &str, version: &str, debug: bool, locale: &str) -> bool {
+    if is_latest_version(version) {
+        return false;
+    }
+    let args = vec!["--version".to_string()];
+    let Ok(output) = run_binary_capture(bin, &args, debug, locale) else {
+        return false;
+    };
+    version_output_matches(&output, version)
+}
+
+fn version_output_matches(output: &str, expected: &str) -> bool {
+    output
+        .split_whitespace()
+        .map(|token| {
+            token.trim_matches(|ch: char| {
+                matches!(
+                    ch,
+                    ',' | ';' | ':' | '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\''
+                )
+            })
+        })
+        .any(|token| token == expected || token.strip_prefix('v') == Some(expected))
 }
 
 #[cfg(test)]
@@ -320,7 +450,7 @@ pub(crate) fn resolve_toolchain_manifest(
         let mut resolved = resolve_local_manifest(Path::new(&path))?;
         resolved.source_kind = match source {
             ToolchainSource::Channel(_) => "channel".to_string(),
-            ToolchainSource::Release(_) => "release".to_string(),
+            ToolchainSource::Release { .. } => "release".to_string(),
             ToolchainSource::LocalManifest(_) => "local".to_string(),
         };
         if let Some(reference) = toolchain_source_ref(source) {
@@ -331,13 +461,13 @@ pub(crate) fn resolve_toolchain_manifest(
 
     match source {
         ToolchainSource::LocalManifest(path) => resolve_local_manifest(path),
-        ToolchainSource::Channel(_) | ToolchainSource::Release(_) => {
+        ToolchainSource::Channel(_) | ToolchainSource::Release { .. } => {
             let reference = toolchain_source_ref(source)
                 .ok_or_else(|| GtcError::message("local manifests do not have GHCR refs"))?;
             let mut resolved = resolve_ghcr_manifest(&reference, debug, locale)?;
             resolved.source_kind = match source {
                 ToolchainSource::Channel(_) => "channel".to_string(),
-                ToolchainSource::Release(_) => "release".to_string(),
+                ToolchainSource::Release { .. } => "release".to_string(),
                 ToolchainSource::LocalManifest(_) => "local".to_string(),
             };
             Ok(resolved)
@@ -442,7 +572,9 @@ pub(crate) fn resolve_ghcr_manifest(
 pub(crate) fn toolchain_source_ref(source: &ToolchainSource) -> Option<String> {
     match source {
         ToolchainSource::Channel(channel) => Some(format!("{DEFAULT_GHCR_PREFIX}:{channel}")),
-        ToolchainSource::Release(release) => Some(format!("{DEFAULT_GHCR_PREFIX}:{release}")),
+        ToolchainSource::Release { release, .. } => {
+            Some(format!("{DEFAULT_GHCR_PREFIX}:{release}"))
+        }
         ToolchainSource::LocalManifest(_) => None,
     }
 }
@@ -498,6 +630,36 @@ pub(crate) fn validate_toolchain_manifest(manifest: &ToolchainManifest) -> GtcRe
             }
         }
     }
+    validate_toolchain_artifact_refs("extension_packs", manifest.extension_packs.as_deref())?;
+    validate_toolchain_artifact_refs("components", manifest.components.as_deref())?;
+    Ok(())
+}
+
+fn validate_toolchain_artifact_refs(
+    section: &str,
+    refs: Option<&[ToolchainArtifactRef]>,
+) -> GtcResult<()> {
+    let Some(refs) = refs else {
+        return Ok(());
+    };
+    let mut seen = HashSet::new();
+    for item in refs {
+        if item.id.trim().is_empty() {
+            return Err(GtcError::message(format!("{section} contains an empty id")));
+        }
+        if item.version.trim().is_empty() {
+            return Err(GtcError::message(format!(
+                "{section} entry '{}' is missing version",
+                item.id
+            )));
+        }
+        if !seen.insert(item.id.clone()) {
+            return Err(GtcError::message(format!(
+                "{section} contains duplicate id '{}'",
+                item.id
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -516,6 +678,19 @@ pub(crate) fn installed_toolchain_path() -> GtcResult<PathBuf> {
         .join(".greentic")
         .join("toolchain")
         .join("installed.json"))
+}
+
+pub(crate) fn current_release_context_path() -> GtcResult<PathBuf> {
+    if let Some(root) = env::var_os("GTC_RELEASE_STATE_DIR") {
+        return Ok(PathBuf::from(root).join("current.json"));
+    }
+    let base =
+        BaseDirs::new().ok_or_else(|| GtcError::message("failed to resolve home directory"))?;
+    Ok(base
+        .home_dir()
+        .join(".greentic")
+        .join("releases")
+        .join("current.json"))
 }
 
 pub(crate) fn read_installed_toolchain() -> GtcResult<Option<InstalledToolchain>> {
@@ -562,6 +737,45 @@ pub(crate) fn installed_toolchain_label() -> String {
     }
 }
 
+pub(crate) fn latest_release_context_warning(
+    expected_channel: &str,
+    install_command: &str,
+    debug: bool,
+    locale: &str,
+) -> GtcResult<Option<String>> {
+    let Some(installed) = read_installed_toolchain()? else {
+        return Ok(Some(format!(
+            "Greentic toolchain release context is not installed for channel '{expected_channel}'. Run `{install_command} install` to install the latest {expected_channel} release."
+        )));
+    };
+
+    let installed_channel = installed.channel.as_deref().unwrap_or("unknown");
+    if installed_channel != expected_channel {
+        return Ok(Some(format!(
+            "Greentic toolchain release context is on channel '{installed_channel}', but this launcher expects '{expected_channel}'. Run `{install_command} install` to install the latest {expected_channel} release."
+        )));
+    }
+
+    let source = ToolchainSource::Channel(expected_channel.to_string());
+    let latest = resolve_toolchain_manifest(&source, debug, locale)?;
+    let installed_matches_latest = match (
+        installed.resolved_digest.as_deref(),
+        latest.digest.as_deref(),
+    ) {
+        (Some(installed_digest), Some(latest_digest)) => installed_digest == latest_digest,
+        _ => installed.version == latest.manifest.version,
+    };
+
+    if installed_matches_latest {
+        return Ok(None);
+    }
+
+    Ok(Some(format!(
+        "Greentic toolchain release context is {} ({installed_channel}), but the latest {expected_channel} release is {}. Run `{install_command} install` to upgrade.",
+        installed.version, latest.manifest.version
+    )))
+}
+
 pub(crate) fn write_installed_toolchain(state: &InstalledToolchain) -> GtcResult<()> {
     let path = installed_toolchain_path()?;
     if let Some(parent) = path.parent() {
@@ -593,6 +807,419 @@ pub(crate) fn installed_state_from_resolved(resolved: &ResolvedManifest) -> Inst
         installed_at: installed_at_now(),
         packages: resolved.manifest.packages.clone(),
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct CurrentReleaseContext {
+    release: String,
+    channel: ReleaseChannel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ReleaseChannel {
+    Stable,
+    Dev,
+    Rnd,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ReleaseArtifactKind {
+    Pack,
+    Component,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ReleaseResolutionContext {
+    release: String,
+    channel: ReleaseChannel,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ReleaseIndex {
+    schema: String,
+    release: String,
+    channel: ReleaseChannel,
+    refs: BTreeMap<String, ReleaseIndexEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+struct ReleaseIndexEntry {
+    version: String,
+    digest: String,
+    canonical_ref: String,
+}
+
+fn write_current_release_context(ctx: &ReleaseResolutionContext) -> GtcResult<()> {
+    let current = CurrentReleaseContext {
+        release: ctx.release.clone(),
+        channel: ctx.channel.clone(),
+    };
+    write_json_atomic(&current_release_context_path()?, &current)
+}
+
+fn release_context_from_resolved(
+    source: &ToolchainSource,
+    manifest: &ToolchainManifest,
+) -> GtcResult<Option<ReleaseResolutionContext>> {
+    match source {
+        ToolchainSource::Release { release, channel } => Ok(Some(ReleaseResolutionContext {
+            release: release.clone(),
+            channel: parse_release_channel(channel).ok_or_else(|| {
+                GtcError::message(format!(
+                    "release channel '{channel}' is not supported; use stable, dev, or rnd"
+                ))
+            })?,
+        })),
+        ToolchainSource::Channel(_) | ToolchainSource::LocalManifest(_) => {
+            let Some(channel) = manifest.channel.as_deref() else {
+                return Ok(None);
+            };
+            Ok(Some(ReleaseResolutionContext {
+                release: manifest.version.clone(),
+                channel: parse_release_channel(channel).ok_or_else(|| {
+                    GtcError::message(format!(
+                        "release channel '{channel}' is not supported; use stable, dev, or rnd"
+                    ))
+                })?,
+            }))
+        }
+    }
+}
+
+fn parse_release_channel(channel: &str) -> Option<ReleaseChannel> {
+    match channel {
+        "stable" => Some(ReleaseChannel::Stable),
+        "dev" => Some(ReleaseChannel::Dev),
+        "rnd" => Some(ReleaseChannel::Rnd),
+        _ => None,
+    }
+}
+
+fn release_channel_name(channel: &ReleaseChannel) -> &'static str {
+    match channel {
+        ReleaseChannel::Stable => "stable",
+        ReleaseChannel::Dev => "dev",
+        ReleaseChannel::Rnd => "rnd",
+    }
+}
+
+fn prefetch_release_artifacts_and_write_index(
+    manifest: &ToolchainManifest,
+    ctx: &ReleaseResolutionContext,
+    phases: ToolchainInstallPhases,
+    force: bool,
+) -> GtcResult<()> {
+    let refs = release_artifact_refs(manifest, phases);
+    if refs.is_empty() {
+        return Ok(());
+    }
+
+    let options = DistOptions::default();
+    let cache_root = options.cache_dir.clone();
+    let client = DistClient::new(options);
+    let existing_index = read_release_index_if_exists(&release_index_path(&cache_root, ctx)?)?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| GtcError::message(format!("failed to create runtime: {err}")))?;
+    let mut index_refs = BTreeMap::new();
+
+    for release_ref in refs {
+        let kind_label = release_artifact_kind_label(release_ref.kind);
+        let item = release_ref.item;
+        let repo = artifact_repo(&item.id)?;
+        let mutable_ref = format!("{}:{}", repo, release_channel_name(&ctx.channel));
+        let version_ref = format!("{repo}:{}", item.version);
+        if !force
+            && let Some(entry) = cached_release_index_entry(
+                &client,
+                existing_index.as_ref(),
+                &mutable_ref,
+                &item.version,
+            )
+        {
+            println!(
+                "Cached {kind_label} {}:{} already matches {}; skipping.",
+                item.id, item.version, entry.digest
+            );
+            index_refs.insert(mutable_ref, entry);
+            continue;
+        }
+        println!(
+            "Prefetching {kind_label} {}:{} ({version_ref})",
+            item.id, item.version
+        );
+        let resolved = if let Some(prefetch_ref) = mock_prefetch_source_ref(&version_ref)? {
+            let source = client.parse_source(&prefetch_ref).map_err(|err| {
+                GtcError::message(format!("failed to parse {prefetch_ref}: {err}"))
+            })?;
+            let descriptor = runtime
+                .block_on(client.resolve(source, ResolvePolicy))
+                .map_err(|err| {
+                    GtcError::message(format!("failed to resolve {version_ref}: {err}"))
+                })?;
+            runtime
+                .block_on(client.fetch(&descriptor, CachePolicy))
+                .map_err(|err| GtcError::message(format!("failed to fetch {version_ref}: {err}")))?
+        } else {
+            let source = client.parse_source(&version_ref).map_err(|err| {
+                GtcError::message(format!("failed to parse {version_ref}: {err}"))
+            })?;
+            let descriptor = runtime
+                .block_on(client.resolve(source, ResolvePolicy))
+                .map_err(|err| {
+                    GtcError::message(format!("failed to resolve {version_ref}: {err}"))
+                })?;
+            runtime
+                .block_on(client.fetch(&descriptor, CachePolicy))
+                .map_err(|err| GtcError::message(format!("failed to fetch {version_ref}: {err}")))?
+        };
+        let entry = client
+            .stat_cache(&resolved.descriptor.digest)
+            .map_err(|err| {
+                GtcError::message(format!(
+                    "failed to verify cached artifact {}: {err}",
+                    resolved.descriptor.digest
+                ))
+            })?;
+        let blob_path = cache_blob_path(&cache_root, &entry.digest)?;
+        let entry_path = cache_entry_path(&cache_root, &entry.digest)?;
+        if !blob_path.is_file() {
+            return Err(GtcError::message(format!(
+                "cached artifact blob missing for {} at {}",
+                entry.digest,
+                blob_path.display()
+            )));
+        }
+        if !entry_path.is_file() {
+            return Err(GtcError::message(format!(
+                "cached artifact entry missing for {} at {}",
+                entry.digest,
+                entry_path.display()
+            )));
+        }
+        let digest = entry.digest.clone();
+        println!(
+            "Prefetched {kind_label} {}:{} -> {digest}",
+            item.id, item.version
+        );
+        index_refs.insert(
+            mutable_ref,
+            ReleaseIndexEntry {
+                version: item.version.clone(),
+                digest: digest.clone(),
+                canonical_ref: format!("oci://{repo}@{digest}"),
+            },
+        );
+    }
+
+    let index = ReleaseIndex {
+        schema: "greentic.release-index.v1".to_string(),
+        release: ctx.release.clone(),
+        channel: ctx.channel.clone(),
+        refs: index_refs,
+    };
+    write_json_atomic(&release_index_path(&cache_root, ctx)?, &index)
+}
+
+fn read_release_index_if_exists(path: &Path) -> GtcResult<Option<ReleaseIndex>> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => {
+            return Err(GtcError::message(format!(
+                "failed to read release index {}: {err}",
+                path.display()
+            )));
+        }
+    };
+    serde_json::from_slice(&bytes).map(Some).map_err(|err| {
+        GtcError::json(
+            format!("failed to parse release index {}", path.display()),
+            err,
+        )
+    })
+}
+
+fn cached_release_index_entry(
+    client: &DistClient,
+    index: Option<&ReleaseIndex>,
+    mutable_ref: &str,
+    version: &str,
+) -> Option<ReleaseIndexEntry> {
+    let entry = index?.refs.get(mutable_ref)?;
+    if entry.version != version {
+        return None;
+    }
+    if canonical_ref_digest(&entry.canonical_ref).as_deref() != Some(entry.digest.as_str()) {
+        return None;
+    }
+    client.open_cached(&entry.digest).ok()?;
+    Some(entry.clone())
+}
+
+fn canonical_ref_digest(canonical_ref: &str) -> Option<String> {
+    let (_, digest) = canonical_ref.rsplit_once('@')?;
+    Some(if digest.starts_with("sha256:") {
+        digest.to_string()
+    } else {
+        format!("sha256:{digest}")
+    })
+}
+
+fn release_artifact_refs(
+    manifest: &ToolchainManifest,
+    phases: ToolchainInstallPhases,
+) -> Vec<ReleaseArtifactRef> {
+    let mut refs = Vec::new();
+    if phases.packs {
+        refs.extend(
+            manifest
+                .extension_packs
+                .iter()
+                .flat_map(|items| items.iter())
+                .cloned()
+                .map(|item| ReleaseArtifactRef {
+                    kind: ReleaseArtifactKind::Pack,
+                    item,
+                }),
+        );
+    }
+    if phases.components {
+        refs.extend(
+            manifest
+                .components
+                .iter()
+                .flat_map(|items| items.iter())
+                .cloned()
+                .map(|item| ReleaseArtifactRef {
+                    kind: ReleaseArtifactKind::Component,
+                    item,
+                }),
+        );
+    }
+    refs
+}
+
+struct ReleaseArtifactRef {
+    kind: ReleaseArtifactKind,
+    item: ToolchainArtifactRef,
+}
+
+fn release_artifact_kind_label(kind: ReleaseArtifactKind) -> &'static str {
+    match kind {
+        ReleaseArtifactKind::Pack => "pack",
+        ReleaseArtifactKind::Component => "component",
+    }
+}
+
+fn has_selected_release_artifacts(
+    manifest: &ToolchainManifest,
+    phases: ToolchainInstallPhases,
+) -> bool {
+    (phases.packs
+        && manifest
+            .extension_packs
+            .as_deref()
+            .is_some_and(|items| !items.is_empty()))
+        || (phases.components
+            && manifest
+                .components
+                .as_deref()
+                .is_some_and(|items| !items.is_empty()))
+}
+
+fn artifact_repo(id: &str) -> GtcResult<String> {
+    let trimmed = id.trim().trim_start_matches('/');
+    if trimmed.is_empty()
+        || trimmed.contains("..")
+        || trimmed.split('/').any(|segment| segment.is_empty())
+    {
+        return Err(GtcError::message(format!("invalid artifact id '{id}'")));
+    }
+    Ok(format!("ghcr.io/greenticai/{trimmed}"))
+}
+
+fn mock_prefetch_source_ref(version_ref: &str) -> GtcResult<Option<String>> {
+    let Some(root) = env::var_os("GTC_RELEASE_ARTIFACT_MOCK_ROOT") else {
+        return Ok(None);
+    };
+    let root = PathBuf::from(root);
+    let index_path = root.join("index.json");
+    let raw = fs::read_to_string(&index_path).map_err(|err| {
+        GtcError::message(format!("failed to read {}: {err}", index_path.display()))
+    })?;
+    let index: BTreeMap<String, String> = serde_json::from_str(&raw)
+        .map_err(|err| GtcError::json(format!("failed to parse {}", index_path.display()), err))?;
+    let rel = index.get(version_ref).ok_or_else(|| {
+        GtcError::message(format!(
+            "mock release artifact index missing mapping for {version_ref}"
+        ))
+    })?;
+    Ok(Some(root.join(rel).display().to_string()))
+}
+
+fn release_index_path(cache_root: &Path, ctx: &ReleaseResolutionContext) -> GtcResult<PathBuf> {
+    if ctx.release.trim().is_empty()
+        || Path::new(&ctx.release).components().count() != 1
+        || ctx.release.contains(std::path::MAIN_SEPARATOR)
+    {
+        return Err(GtcError::message(
+            "release context release must be a single path segment",
+        ));
+    }
+    Ok(cache_root
+        .join("release-index")
+        .join("v1")
+        .join(release_channel_name(&ctx.channel))
+        .join(format!("{}.json", ctx.release)))
+}
+
+fn cache_blob_path(cache_root: &Path, digest: &str) -> GtcResult<PathBuf> {
+    Ok(cache_artifact_dir(cache_root, digest)?.join("blob"))
+}
+
+fn cache_entry_path(cache_root: &Path, digest: &str) -> GtcResult<PathBuf> {
+    Ok(cache_artifact_dir(cache_root, digest)?.join("entry.json"))
+}
+
+fn cache_artifact_dir(cache_root: &Path, digest: &str) -> GtcResult<PathBuf> {
+    let hex = digest
+        .strip_prefix("sha256:")
+        .ok_or_else(|| GtcError::message(format!("unsupported artifact digest '{digest}'")))?;
+    if hex.len() != 64 || !hex.chars().all(|ch| ch.is_ascii_hexdigit()) {
+        return Err(GtcError::message(format!(
+            "invalid artifact digest '{digest}'"
+        )));
+    }
+    let (prefix, rest) = hex.split_at(2);
+    Ok(cache_root
+        .join("artifacts")
+        .join("sha256")
+        .join(prefix)
+        .join(rest))
+}
+
+fn write_json_atomic<T: Serialize>(path: &Path, value: &T) -> GtcResult<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            GtcError::message(format!("failed to create {}: {err}", parent.display()))
+        })?;
+    }
+    let bytes = serde_json::to_vec_pretty(value)
+        .map_err(|err| GtcError::json(format!("failed to encode {}", path.display()), err))?;
+    let tmp = path.with_extension(format!("tmp.{}", std::process::id()));
+    fs::write(&tmp, bytes)
+        .map_err(|err| GtcError::message(format!("failed to write {}: {err}", tmp.display())))?;
+    fs::rename(&tmp, path).map_err(|err| {
+        let _ = fs::remove_file(&tmp);
+        GtcError::message(format!(
+            "failed to replace {} with {}: {err}",
+            path.display(),
+            tmp.display()
+        ))
+    })
 }
 
 fn send_ghcr_get(
@@ -798,6 +1425,8 @@ mod tests {
                     version: "0.5.10".to_string(),
                 },
             ],
+            extension_packs: None,
+            components: None,
         }
     }
 
@@ -865,7 +1494,11 @@ mod tests {
     #[test]
     fn toolchain_source_maps_release_to_ghcr_ref() {
         assert_eq!(
-            toolchain_source_ref(&ToolchainSource::Release("1.0.5".to_string())).as_deref(),
+            toolchain_source_ref(&ToolchainSource::Release {
+                release: "1.0.5".to_string(),
+                channel: "stable".to_string(),
+            })
+            .as_deref(),
             Some("ghcr.io/greenticai/greentic-versions/gtc:1.0.5")
         );
     }

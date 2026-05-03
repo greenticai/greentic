@@ -214,7 +214,8 @@ fn truncate_identifier(value: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        deployment_name, sanitize_identifier, stop_request_to_start_request, truncate_identifier,
+        deployment_name, read_single_vm_status, run_single_vm_apply, run_single_vm_destroy,
+        sanitize_identifier, stop_request_to_start_request, truncate_identifier,
     };
     #[cfg(unix)]
     use super::{load_or_prepare_single_vm_artifact, write_single_vm_spec};
@@ -235,6 +236,8 @@ mod tests {
     use std::env;
     #[cfg(unix)]
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
     use std::path::PathBuf;
 
     #[test]
@@ -338,6 +341,58 @@ mod tests {
             env::remove_var("XDG_STATE_HOME");
         }
         assert_eq!(reused, artifact);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn single_vm_commands_validate_deployer_status_contract() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let deployer = root.path().join("greentic-deployer");
+        let log = root.path().join("deployer.log");
+        fs::write(
+            &deployer,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$*" >> '{}'
+if [ "$1" = "single-vm" ] && [ "$2" = "status" ]; then
+  printf '%s\n' '{{"state":"running","instances":1}}'
+  exit 0
+fi
+exit 0
+"#,
+                log.display()
+            ),
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+
+        let spec = root.path().join("single-vm.yaml");
+        fs::write(&spec, "spec").expect("write spec");
+        let status = read_single_vm_status(&spec, false, "en")
+            .expect("status")
+            .expect("some status");
+        assert_eq!(status["state"], "running");
+        assert_eq!(status["instances"], 1);
+        run_single_vm_apply(&spec, false, "en").expect("apply");
+        run_single_vm_destroy(&spec, false, "en").expect("destroy");
+
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+        let logged = fs::read_to_string(log).expect("read log");
+        assert!(logged.contains("single-vm status --spec"));
+        assert!(logged.contains("single-vm apply --spec"));
+        assert!(logged.contains("single-vm destroy --spec"));
     }
 
     #[cfg(unix)]
