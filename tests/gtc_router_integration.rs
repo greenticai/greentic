@@ -786,7 +786,6 @@ fn install_public_mode_installs_manifest_toolchain() {
 
     sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
-    sandbox.write_contract_deployer_tool("greentic-deployer");
     sandbox.write_cargo_binstall_tool(&cargo_log_file, None);
     sandbox.write_install_prereq_tools();
     fs::create_dir_all(&cargo_home).expect("cargo_home");
@@ -870,6 +869,14 @@ fn install_release_prefetches_artifacts_and_writes_release_index() {
     extra.insert(
         "GREENTIC_CACHE_DIR".to_string(),
         cache_dir.display().to_string(),
+    );
+    extra.insert(
+        "GREENTIC_DEPLOYER_BIN".to_string(),
+        sandbox
+            .path()
+            .join("missing-greentic-deployer")
+            .display()
+            .to_string(),
     );
 
     let output = sandbox.run_gtc_capture(
