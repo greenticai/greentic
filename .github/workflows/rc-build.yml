@@ -1,0 +1,54 @@
+name: RC Build
+
+# Builds the gtc binary as a release candidate for the stable-e2e-gate.
+# Dispatched by the stable-rc-build.yml orchestrator (in greenticai/.github)
+# against a release/v{X.Y.Z} branch created by weekly-stable-prepare.yml.
+#
+# Output: a GitHub pre-release tagged v{X.Y.Z}-rc.{run_id} with 6-target
+# binaries attached. Consumed by the E2E gate, which downloads via
+# `gh release download` rather than cargo binstall.
+#
+# Note: the embedded deployer pack (assets/deployer/terraform.gtpack) is NOT
+# bundled into RC builds. The gate's V1 scope (install + wizard + 5 demos)
+# does not exercise terraform plan generation. If V2 demos require it,
+# add a prepare-deployer-assets job here that mirrors release.yml:45-73
+# and pass the artifact via the reusable's extra-files input.
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: "Release branch to build from (e.g. release/v0.4.59)"
+        required: true
+        type: string
+      tag:
+        description: "RC tag to create (e.g. v0.4.59-rc.{run_id})"
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Release branch to build from (e.g. release/v0.4.59)"
+        required: true
+        type: string
+      tag:
+        description: "RC tag to create (e.g. v0.4.59-rc.{run_id})"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: greenticai/.github/.github/workflows/release-binaries-rc.yml@main
+    with:
+      package: gtc
+      binary: gtc
+      ref: ${{ inputs.ref }}
+      tag: ${{ inputs.tag }}
+    secrets: inherit
