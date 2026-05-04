@@ -236,12 +236,16 @@ mod tests {
     };
     use crate::deploy::StartTarget;
     use crate::tests::env_test_lock;
+    #[cfg(unix)]
+    use crate::tests::fake_deployer_contract;
     use std::fs;
     use std::path::Path;
 
+    #[cfg(unix)]
     #[test]
     fn canonical_target_provider_pack_filename_matches_cloud_targets() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _deployer = fake_deployer_contract(None);
         assert_eq!(
             canonical_target_provider_pack_filename(StartTarget::Aws).expect("aws filename"),
             Some("terraform.gtpack".to_string())

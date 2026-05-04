@@ -37,6 +37,16 @@ then forwards the remaining wizard arguments.
 That means `gtc` owns the entrypoint and routing, but the deeper wizard schema
 and generation behavior are downstream.
 
+Before handoff, `gtc wizard` checks whether the installed release context is
+current for this launcher's channel (`gtc` -> `stable`, `gtc-dev` -> `dev`,
+`gtc-rnd` -> `rnd`). A mismatch prints a warning and explains that the user
+should run the matching install command, such as `gtc install`,
+`gtc-dev install`, or `gtc-rnd install`.
+
+Use `--strict-release-context` to turn that warning into an error. Use
+`--ignore-release-context` to skip the check. Both flags are stripped before the
+wizard request is forwarded downstream.
+
 ## Extension-Launcher Mode
 
 If you pass extension flags such as `--extensions`, `gtc` switches to a local

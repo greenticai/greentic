@@ -146,6 +146,14 @@
               },
               "type": "array"
             },
+            "cloud_deployer_target": {
+              "enum": [
+                "aws",
+                "azure",
+                "gcp"
+              ],
+              "type": "string"
+            },
             "export_intent": {
               "type": "boolean"
             },

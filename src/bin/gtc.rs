@@ -20,6 +20,8 @@ mod install;
 mod process;
 #[path = "gtc/prompt.rs"]
 mod prompt;
+#[path = "gtc/release_cache.rs"]
+mod release_cache;
 #[path = "gtc/router.rs"]
 mod router;
 #[path = "gtc/toolchain.rs"]

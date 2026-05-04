@@ -364,6 +364,22 @@ fn default_install_channel_uses_dev_for_dev_suffixed_invocation() {
 }
 
 #[test]
+fn default_install_channel_uses_rnd_for_rnd_suffixed_invocation() {
+    assert_eq!(
+        default_install_channel_for_invocation(Some(&"gtc-rnd".to_string())),
+        "rnd"
+    );
+    assert_eq!(
+        default_install_channel_for_invocation(Some(&"target/debug/gtc-rnd".to_string())),
+        "rnd"
+    );
+    assert_eq!(
+        default_install_channel_for_invocation(Some(&"gtc-rnd.exe".to_string())),
+        "rnd"
+    );
+}
+
+#[test]
 fn resolve_companion_binary_falls_back_to_cargo_home_bin() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     let temp = tempfile::tempdir().expect("tempdir");

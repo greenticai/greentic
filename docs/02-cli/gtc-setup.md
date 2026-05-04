@@ -10,6 +10,16 @@ In the current implementation, `gtc` owns the command surface and routing, but
 the underlying setup work is handed off to `greentic-setup` unless you are using
 the explicit extension handoff path.
 
+Before handoff, `gtc setup` checks whether the installed release context is
+current for this launcher's channel (`gtc` -> `stable`, `gtc-dev` -> `dev`,
+`gtc-rnd` -> `rnd`). A mismatch prints a warning and explains that the user
+should run the matching install command, such as `gtc install`,
+`gtc-dev install`, or `gtc-rnd install`.
+
+Use `--strict-release-context` to turn that warning into an error. Use
+`--ignore-release-context` to skip the check. Both flags are owned by `gtc` and
+are stripped before setup arguments are forwarded to `greentic-setup`.
+
 ## What This Command Is
 
 Use `gtc setup` when you need to prepare a bundle for execution.

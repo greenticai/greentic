@@ -763,257 +763,232 @@ fn render_admin_http_body(body: &str, output: &str) -> GtcResult<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdminRegistryDocument, AdminRegistryEntry, RemoteAdminContext, admin_registry_path,
-        build_remote_admin_client, ensure_admin_certs_ready, load_admin_registry,
-        remove_admin_registry_entry, render_admin_http_body, resolve_admin_cert_dir,
-        save_admin_registry, upsert_admin_registry_entry,
+        AdminAuth, AdminRegistryDocument, build_remote_admin_client,
+        capture_admin_deployer_command, ensure_admin_cert_dir_contents, ensure_admin_certs_ready,
+        load_admin_registry, render_admin_http_body, resolve_remote_admin_context,
+        run_admin_deployer_command, save_admin_registry,
     };
+    use crate::tests::env_test_lock;
+    use clap::{Arg, Command};
+    use std::env;
     use std::fs;
-    use std::path::PathBuf;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
-    fn load_admin_registry_returns_empty_when_file_is_missing() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let registry = load_admin_registry(dir.path()).expect("registry");
-        assert!(registry.admins.is_empty());
-    }
+    fn admin_registry_roundtrips_and_rejects_invalid_json() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let missing = load_admin_registry(root.path()).expect("missing registry");
+        assert!(missing.admins.is_empty());
 
-    #[test]
-    fn save_and_load_admin_registry_round_trip() {
-        let dir = tempfile::tempdir().expect("tempdir");
         let registry = AdminRegistryDocument {
-            admins: vec![AdminRegistryEntry {
-                name: Some("alice".to_string()),
-                client_cn: "CN=alice".to_string(),
+            admins: vec![super::AdminRegistryEntry {
+                name: Some("Alice".to_string()),
+                client_cn: "alice-admin".to_string(),
                 public_key: "ssh-ed25519 AAAA".to_string(),
-                added_at_epoch_s: 7,
+                added_at_epoch_s: 42,
             }],
         };
+        save_admin_registry(root.path(), &registry).expect("save");
+        assert_eq!(load_admin_registry(root.path()).expect("load"), registry);
 
-        save_admin_registry(dir.path(), &registry).expect("save");
-        let loaded = load_admin_registry(dir.path()).expect("load");
-        assert_eq!(loaded.admins, registry.admins);
+        let path = super::admin_registry_path(root.path());
+        fs::write(&path, "{not json").expect("write invalid");
+        let err = load_admin_registry(root.path()).unwrap_err();
+        assert!(err.contains("failed to parse admin registry"));
+    }
+
+    #[test]
+    fn admin_cert_dir_validation_reports_missing_required_file() {
+        let root = tempfile::tempdir().expect("tempdir");
+        fs::write(root.path().join("ca.crt"), "ca").expect("write ca");
+        let err = ensure_admin_cert_dir_contents(root.path()).unwrap_err();
+        assert!(err.contains("required file missing"));
+        assert!(err.contains("server.crt"));
+    }
+
+    #[test]
+    fn admin_http_body_renderer_validates_json_outputs() {
         assert_eq!(
-            admin_registry_path(dir.path()),
-            dir.path()
-                .join(".greentic")
-                .join("admin")
-                .join("admins.json")
+            render_admin_http_body("plain", "text").expect("text"),
+            "plain"
         );
+        let rendered = render_admin_http_body(r#"{"ok":true}"#, "json").expect("json");
+        assert!(rendered.contains("\"ok\": true"));
+        let rendered = render_admin_http_body(r#"{"ok":true}"#, "yaml").expect("yaml");
+        assert!(rendered.contains("ok: true"));
+        assert!(render_admin_http_body("not json", "json").is_err());
     }
 
+    #[cfg(unix)]
     #[test]
-    fn upsert_updates_existing_entry_and_sorts_new_entries() {
-        let mut registry = AdminRegistryDocument {
-            admins: vec![AdminRegistryEntry {
-                name: Some("zeta".to_string()),
-                client_cn: "CN=zeta".to_string(),
-                public_key: "old".to_string(),
-                added_at_epoch_s: 1,
-            }],
-        };
+    fn remote_admin_context_uses_deployer_access_and_token_contract() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(
+            &deployer,
+            r#"#!/bin/sh
+if [ "$2" = "admin-access" ]; then
+  printf '%s\n' '{"admin_public_endpoint":"https://admin.example.test"}'
+  exit 0
+fi
+if [ "$2" = "admin-token" ]; then
+  printf '%s\n' 'token-from-deployer'
+  exit 0
+fi
+echo "unexpected command: $*" >&2
+exit 1
+"#,
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
 
-        upsert_admin_registry_entry(
-            &mut registry,
-            Some("alpha".to_string()),
-            "CN=alpha".to_string(),
-            "alpha-key".to_string(),
-        );
-        upsert_admin_registry_entry(
-            &mut registry,
-            Some("zeta-renamed".to_string()),
-            "CN=zeta".to_string(),
-            "new".to_string(),
-        );
-
-        assert_eq!(
-            registry
-                .admins
-                .iter()
-                .map(|entry| entry.client_cn.as_str())
-                .collect::<Vec<_>>(),
-            vec!["CN=alpha", "CN=zeta"]
-        );
-        let updated = registry
-            .admins
-            .iter()
-            .find(|entry| entry.client_cn == "CN=zeta")
-            .expect("updated");
-        assert_eq!(updated.name.as_deref(), Some("zeta-renamed"));
-        assert_eq!(updated.public_key, "new");
-    }
-
-    #[test]
-    fn remove_admin_registry_entry_can_match_by_name() {
-        let mut registry = AdminRegistryDocument {
-            admins: vec![
-                AdminRegistryEntry {
-                    name: Some("alice".to_string()),
-                    client_cn: "CN=alice".to_string(),
-                    public_key: "a".to_string(),
-                    added_at_epoch_s: 1,
-                },
-                AdminRegistryEntry {
-                    name: Some("bob".to_string()),
-                    client_cn: "CN=bob".to_string(),
-                    public_key: "b".to_string(),
-                    added_at_epoch_s: 2,
-                },
-            ],
-        };
-
-        assert!(remove_admin_registry_entry(
-            &mut registry,
-            None,
-            Some("alice")
-        ));
-        assert_eq!(registry.admins.len(), 1);
-        assert_eq!(registry.admins[0].client_cn, "CN=bob");
-    }
-
-    #[test]
-    fn remove_admin_registry_entry_can_match_by_client_cn_and_report_no_match() {
-        let mut registry = AdminRegistryDocument {
-            admins: vec![AdminRegistryEntry {
-                name: Some("alice".to_string()),
-                client_cn: "CN=alice".to_string(),
-                public_key: "a".to_string(),
-                added_at_epoch_s: 1,
-            }],
-        };
-
-        assert!(!remove_admin_registry_entry(
-            &mut registry,
-            Some("CN=missing"),
-            None
-        ));
-        assert!(remove_admin_registry_entry(
-            &mut registry,
-            Some("CN=alice"),
-            None
-        ));
-        assert!(registry.admins.is_empty());
-    }
-
-    #[test]
-    fn resolve_admin_cert_dir_prefers_bundle_local_admin_certs() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let certs = dir.path().join(".greentic").join("admin").join("certs");
-        fs::create_dir_all(&certs).expect("mkdir");
-        for name in ["ca.crt", "server.crt", "server.key"] {
-            fs::write(certs.join(name), name).expect("write cert");
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+        let context = resolve_remote_admin_context(root.path(), "gcp", 9443).expect("context");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
         }
 
-        assert_eq!(resolve_admin_cert_dir(dir.path()), certs);
+        assert_eq!(context.base_url, "https://admin.example.test");
+        match context.auth {
+            AdminAuth::Bearer(token) => assert_eq!(token, "token-from-deployer"),
+            AdminAuth::Mtls { .. } => panic!("expected bearer auth"),
+        }
     }
 
+    #[cfg(unix)]
     #[test]
-    fn resolve_admin_cert_dir_uses_bundle_certs_dir_when_admin_certs_missing() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let certs = dir.path().join("certs");
-        fs::create_dir_all(&certs).expect("mkdir");
-        for name in ["ca.crt", "server.crt", "server.key"] {
-            fs::write(certs.join(name), name).expect("write cert");
+    fn remote_admin_context_uses_aws_certs_contract_and_builds_mtls_client() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let cert_dir = ensure_admin_certs_ready(root.path(), None).expect("certs");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(
+            &deployer,
+            format!(
+                r#"#!/bin/sh
+if [ "$2" = "admin-certs" ]; then
+  printf '%s\n' '{{"ca_cert_path":"{}","client_cert_path":"{}","client_key_path":"{}"}}'
+  exit 0
+fi
+echo "unexpected command: $*" >&2
+exit 1
+"#,
+                cert_dir.join("ca.crt").display(),
+                cert_dir.join("client.crt").display(),
+                cert_dir.join("client.key").display()
+            ),
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+        let context = resolve_remote_admin_context(root.path(), "aws", 9443).expect("context");
+        build_remote_admin_client(&context).expect("mtls client");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
         }
 
-        assert_eq!(resolve_admin_cert_dir(dir.path()), certs);
-    }
-
-    #[test]
-    fn resolve_admin_cert_dir_falls_back_to_default_when_bundle_has_no_certs() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        assert_eq!(
-            resolve_admin_cert_dir(dir.path()),
-            PathBuf::from("/etc/greentic/admin")
-        );
-    }
-
-    #[test]
-    fn ensure_admin_certs_ready_rejects_explicit_dir_with_missing_files() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let certs = dir.path().join("certs");
-        fs::create_dir_all(&certs).expect("mkdir");
-        fs::write(certs.join("ca.crt"), "ca").expect("write ca");
-
-        let err = ensure_admin_certs_ready(dir.path(), Some(&certs)).expect_err("missing files");
-        assert!(err.to_string().contains("required file missing"));
-    }
-
-    #[test]
-    fn load_admin_registry_reports_invalid_json() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = admin_registry_path(dir.path());
-        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
-        fs::write(&path, "{not json").expect("write");
-
-        let err = load_admin_registry(dir.path()).expect_err("invalid json");
-        assert!(err.to_string().contains("failed to parse admin registry"));
-    }
-
-    #[test]
-    fn ensure_admin_certs_ready_accepts_explicit_dir_with_required_files() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let certs = dir.path().join("certs");
-        fs::create_dir_all(&certs).expect("mkdir");
-        for name in ["ca.crt", "server.crt", "server.key"] {
-            fs::write(certs.join(name), name).expect("write cert");
+        assert_eq!(context.base_url, "https://127.0.0.1:9443/admin/v1");
+        match context.auth {
+            AdminAuth::Mtls { ca_cert_path, .. } => {
+                assert_eq!(ca_cert_path, cert_dir.join("ca.crt"));
+            }
+            AdminAuth::Bearer(_) => panic!("expected mtls auth"),
         }
-
-        let resolved = ensure_admin_certs_ready(dir.path(), Some(&certs)).expect("certs");
-        assert_eq!(resolved, certs);
     }
 
+    #[cfg(unix)]
     #[test]
-    fn ensure_admin_certs_ready_uses_existing_bundle_local_certs() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let certs = dir.path().join(".greentic").join("admin").join("certs");
-        fs::create_dir_all(&certs).expect("mkdir");
-        for name in ["ca.crt", "server.crt", "server.key"] {
-            fs::write(certs.join(name), name).expect("write cert");
+    fn admin_deployer_capture_surfaces_stderr_contract_failures() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(&deployer, "#!/bin/sh\necho 'contract failed' >&2\nexit 7\n")
+            .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
         }
-
-        let resolved = ensure_admin_certs_ready(dir.path(), None).expect("certs");
-        assert_eq!(resolved, certs);
+        let err =
+            capture_admin_deployer_command(root.path(), "gcp", "admin-access", "json").unwrap_err();
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+        assert!(err.contains("contract failed"));
     }
 
+    #[cfg(unix)]
     #[test]
-    fn build_remote_admin_client_supports_bearer_auth() {
-        let context = RemoteAdminContext {
-            base_url: "https://example.test/admin/v1".to_string(),
-            auth: super::AdminAuth::Bearer("token".to_string()),
-        };
-        build_remote_admin_client(&context).expect("client");
-    }
+    fn admin_deployer_command_forwards_target_bundle_and_output() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = root.path().join("bundle");
+        fs::create_dir_all(&bundle).expect("bundle");
+        let log = root.path().join("deployer.log");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(
+            &deployer,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nexit 0\n",
+                log.display()
+            ),
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
 
-    #[test]
-    fn build_remote_admin_client_supports_generated_mtls_material() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let certs = ensure_admin_certs_ready(dir.path(), None).expect("certs");
-        let context = RemoteAdminContext {
-            base_url: "https://127.0.0.1:8443/admin/v1".to_string(),
-            auth: super::AdminAuth::Mtls {
-                ca_cert_path: certs.join("ca.crt"),
-                client_cert_path: certs.join("client.crt"),
-                client_key_path: certs.join("client.key"),
-            },
-        };
-        build_remote_admin_client(&context).expect("client");
-    }
-
-    #[test]
-    fn render_admin_http_body_formats_json_and_yaml() {
-        let json = render_admin_http_body(r#"{"status":"ok"}"#, "json").expect("json");
-        let yaml = render_admin_http_body(r#"{"status":"ok"}"#, "yaml").expect("yaml");
-        let text = render_admin_http_body("plain-text", "text").expect("text");
-
-        assert!(json.contains("\"status\": \"ok\""));
-        assert!(yaml.contains("status: ok"));
-        assert_eq!(text, "plain-text");
-    }
-
-    #[test]
-    fn render_admin_http_body_rejects_invalid_json_output_modes() {
-        assert!(render_admin_http_body("{bad", "json").is_err());
-        assert!(render_admin_http_body("{bad", "yaml").is_err());
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+        let matches = Command::new("access")
+            .arg(Arg::new("bundle-ref").required(true))
+            .arg(Arg::new("target").long("target").num_args(1))
+            .arg(Arg::new("output").long("output").num_args(1))
+            .get_matches_from([
+                "access",
+                bundle.to_str().expect("utf8"),
+                "--target",
+                "azure",
+                "--output",
+                "json",
+            ]);
+        let status = run_admin_deployer_command(&matches, "admin-access");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+        assert_eq!(status, 0);
+        let logged = fs::read_to_string(log).expect("read log");
+        assert!(logged.contains("azure admin-access --bundle-dir"));
+        assert!(logged.contains("--output json"));
     }
 }
