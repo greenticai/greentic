@@ -141,6 +141,11 @@ are assembling a runnable bundle.
 
 This is the default pattern for stable pack composition.
 
+For stable extension-pack references, use the stable OCI channel tag, for
+example `oci://ghcr.io/...:stable`. Avoid `oci://ghcr.io/...:latest` in
+canonical guidance because it can resolve to a pack that has not completed the
+stable release path.
+
 ### Extension Launcher And Handoff Pattern
 
 Use the extension launcher flow when you need `gtc` to route through an

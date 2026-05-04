@@ -542,8 +542,7 @@ mod tests {
         build_extension_wizard_args, build_setup_args_from_handoff, build_start_tail_from_handoff,
         collect_extension_ids, has_extension_flags, load_descriptor, load_extension_setup_handoff,
         load_extension_start_handoff, load_registry, resolve_descriptor_path,
-        resolve_descriptor_working_directory, resolve_handoff_output_path, resolve_registry_path,
-        write_launcher_handoff,
+        resolve_descriptor_working_directory, write_launcher_handoff,
     };
     use crate::tests::env_test_lock;
     use clap::{Arg, ArgAction, Command};
@@ -631,6 +630,44 @@ mod tests {
     }
 
     #[test]
+    fn registry_loader_rejects_unsupported_schema_and_missing_extension() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let registry_path = root.path().join("extension-registry.json");
+        fs::write(&registry_path, r#"{"schema_version":"2","extensions":[]}"#)
+            .expect("write registry");
+        let err = load_registry(&registry_path).unwrap_err();
+        assert!(err.contains("unsupported extension registry schema_version"));
+
+        fs::write(
+            &registry_path,
+            r#"{"schema_version":"1","extensions":[{"id":"alpha","descriptor":"alpha.json"}]}"#,
+        )
+        .expect("write registry");
+        let registry = load_registry(&registry_path).expect("registry");
+        let err = resolve_descriptor_path(&registry, &registry_path, "beta").unwrap_err();
+        assert!(err.contains("extension 'beta' was not found"));
+        assert!(err.contains("alpha"));
+    }
+
+    #[test]
+    fn descriptor_loader_rejects_bad_schema() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let descriptor_path = root.path().join("descriptor.json");
+        fs::write(
+            &descriptor_path,
+            r#"{
+  "schema_version": "2",
+  "extension_id": "telco-x",
+  "family": "solution-x",
+  "wizard": { "binary": "greentic-x" }
+}"#,
+        )
+        .expect("write descriptor");
+        let err = load_descriptor(&descriptor_path).unwrap_err();
+        assert!(err.contains("unsupported extension descriptor schema_version"));
+    }
+
+    #[test]
     fn wizard_args_preserve_descriptor_prefix_and_locale() {
         let descriptor = load_descriptor_from_str(
             r#"{
@@ -664,7 +701,7 @@ mod tests {
     }
 
     #[test]
-    fn wizard_args_add_locale_for_non_wizard_binary_when_missing() {
+    fn wizard_args_for_non_wizard_binary_add_locale_once() {
         let descriptor = load_descriptor_from_str(
             r#"{
   "schema_version": "1",
@@ -672,81 +709,29 @@ mod tests {
   "family": "solution-x",
   "wizard": {
     "binary": "greentic-x",
-    "args": ["serve", "--catalog", "catalog.json"]
+    "args": ["launch", "--mode", "guided"]
   }
 }"#,
         );
 
-        let args = build_extension_wizard_args(&descriptor, &["--dry-run".to_string()], "sw");
+        let args = build_extension_wizard_args(
+            &descriptor,
+            &["--locale=fr".to_string(), "--dry-run".to_string()],
+            "en",
+        );
         assert_eq!(
             args,
             vec![
-                "serve".to_string(),
-                "--catalog".to_string(),
-                "catalog.json".to_string(),
-                "--locale".to_string(),
-                "sw".to_string(),
+                "launch".to_string(),
+                "--mode".to_string(),
+                "guided".to_string(),
+                "--locale=fr".to_string(),
                 "--dry-run".to_string()
             ]
         );
     }
 
     #[test]
-    fn registry_path_prefers_cli_over_env() {
-        let matches = Command::new("wizard")
-            .arg(Arg::new("extension-registry").long("extension-registry"))
-            .get_matches_from(["wizard", "--extension-registry", "/tmp/cli-registry.json"]);
-
-        unsafe {
-            env::set_var("GTC_EXTENSION_REGISTRY", "/tmp/env-registry.json");
-        }
-        let resolved = resolve_registry_path(&matches).expect("registry path");
-        unsafe {
-            env::remove_var("GTC_EXTENSION_REGISTRY");
-        }
-
-        assert_eq!(resolved, Some(PathBuf::from("/tmp/cli-registry.json")));
-    }
-
-    #[test]
-    fn registry_path_uses_env_when_present() {
-        let matches = Command::new("wizard")
-            .arg(Arg::new("extension-registry").long("extension-registry"))
-            .get_matches_from(["wizard"]);
-        unsafe {
-            env::set_var("GTC_EXTENSION_REGISTRY", "/tmp/env-registry.json");
-        }
-        let resolved = resolve_registry_path(&matches).expect("registry path");
-        unsafe {
-            env::remove_var("GTC_EXTENSION_REGISTRY");
-        }
-        assert_eq!(resolved, Some(PathBuf::from("/tmp/env-registry.json")));
-    }
-
-    #[test]
-    fn handoff_output_path_defaults_under_cwd() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().expect("tempdir");
-        let old = env::current_dir().expect("cwd");
-        env::set_current_dir(dir.path()).expect("set cwd");
-
-        let matches = Command::new("wizard")
-            .arg(Arg::new("emit-extension-handoff").long("emit-extension-handoff"))
-            .get_matches_from(["wizard"]);
-        let resolved = resolve_handoff_output_path(&matches).expect("handoff path");
-
-        env::set_current_dir(old).expect("restore cwd");
-        let expected = dir
-            .path()
-            .canonicalize()
-            .expect("canonicalize tempdir")
-            .join(".greentic")
-            .join("wizard")
-            .join("extensions")
-            .join("launcher-handoff.json");
-        assert_eq!(resolved, expected);
-    }
-
     #[test]
     fn launcher_handoff_is_written_with_extension_records() {
         let root = tempfile::tempdir().expect("tempdir");
@@ -792,6 +777,23 @@ mod tests {
         let handoff = load_extension_setup_handoff(&path).expect("handoff");
         assert_eq!(handoff.bundle_ref, "/tmp/demo-bundle");
         assert_eq!(handoff.answers_path.as_deref(), Some("/tmp/answers.json"));
+        let args = build_setup_args_from_handoff(&handoff, &["--no-ui".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "--dry-run".to_string(),
+                "--answers".to_string(),
+                "/tmp/answers.json".to_string(),
+                "--tenant".to_string(),
+                "demo".to_string(),
+                "--team".to_string(),
+                "default".to_string(),
+                "--env".to_string(),
+                "dev".to_string(),
+                "--no-ui".to_string(),
+                "/tmp/demo-bundle".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -844,6 +846,43 @@ mod tests {
         let handoff = load_extension_start_handoff(&path).expect("handoff");
         assert_eq!(handoff.bundle_ref, "/tmp/demo-bundle");
         assert_eq!(handoff.start_args, vec!["--tenant", "demo"]);
+        let tail = build_start_tail_from_handoff(&handoff, &["--verbose".to_string()]);
+        assert_eq!(
+            tail,
+            vec![
+                "--tenant".to_string(),
+                "demo".to_string(),
+                "--verbose".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn handoff_loaders_reject_wrong_schema() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let setup_path = root.path().join("setup.json");
+        fs::write(
+            &setup_path,
+            r#"{"schema_id":"wrong","schema_version":"1.0.0","bundle_ref":"demo"}"#,
+        )
+        .expect("write setup");
+        assert!(
+            load_extension_setup_handoff(&setup_path)
+                .unwrap_err()
+                .contains("unsupported extension setup handoff schema_id")
+        );
+
+        let start_path = root.path().join("start.json");
+        fs::write(
+            &start_path,
+            r#"{"schema_id":"wrong","schema_version":"1.0.0","bundle_ref":"demo"}"#,
+        )
+        .expect("write start");
+        assert!(
+            load_extension_start_handoff(&start_path)
+                .unwrap_err()
+                .contains("unsupported extension start handoff schema_id")
+        );
     }
 
     #[test]

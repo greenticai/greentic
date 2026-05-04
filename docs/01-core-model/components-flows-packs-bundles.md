@@ -83,6 +83,11 @@ A bundle can:
 - carry the configuration needed for setup and start flows
 - represent the unit that `gtc setup` and `gtc start` act on
 
+When a bundle or example includes existing OCI-hosted packs or components, use
+the intended release channel tag. For stable guidance, prefer
+`oci://ghcr.io/...:stable` rather than `oci://ghcr.io/...:latest`; `latest` may
+point at artifacts that have not gone through the stable release path.
+
 ## Application Packs vs Extension Packs
 
 Use this distinction consistently:
