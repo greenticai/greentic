@@ -51,4 +51,5 @@ jobs:
       binary: gtc
       ref: ${{ inputs.ref }}
       tag: ${{ inputs.tag }}
+      windows-archive-format: zip
     secrets: inherit
