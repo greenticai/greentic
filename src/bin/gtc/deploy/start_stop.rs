@@ -668,6 +668,7 @@ mod tests {
             tenant: Some("demo".to_string()),
             team: Some("ops".to_string()),
             no_nats: false,
+            no_browser: true,
             nats: NatsModeArg::External,
             nats_url: Some("nats://demo".to_string()),
             config: Some(PathBuf::from("/tmp/config.yaml")),
@@ -701,6 +702,7 @@ mod tests {
         assert!(args.contains(&"on".to_string()));
         assert!(args.contains(&"--verbose".to_string()));
         assert!(args.contains(&"--admin".to_string()));
+        assert!(args.contains(&"--no-browser".to_string()));
         assert!(args.contains(&"ops,local".to_string()));
         assert!(args.contains(&"gateway,nats".to_string()));
     }

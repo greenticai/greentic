@@ -627,6 +627,7 @@ mod tests {
             tenant: Some("demo".to_string()),
             team: Some("ops".to_string()),
             no_nats: false,
+            no_browser: false,
             nats: NatsModeArg::Off,
             nats_url: None,
             config: None,
