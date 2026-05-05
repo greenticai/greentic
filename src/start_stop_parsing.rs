@@ -38,6 +38,7 @@ pub struct StartRequest {
     pub tenant: Option<String>,
     pub team: Option<String>,
     pub no_nats: bool,
+    pub no_browser: bool,
     pub nats: NatsModeArg,
     pub nats_url: Option<String>,
     pub config: Option<PathBuf>,
@@ -87,6 +88,9 @@ impl StartRequest {
         }
         if self.no_nats {
             args.push("--no-nats".to_string());
+        }
+        if self.no_browser {
+            args.push("--no-browser".to_string());
         }
         args.push("--nats".to_string());
         args.push(self.nats.as_cli_value().to_string());
@@ -184,6 +188,7 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
         tenant: None,
         team: None,
         no_nats: false,
+        no_browser: false,
         nats: NatsModeArg::Off,
         nats_url: None,
         config: None,
@@ -216,6 +221,7 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
                 request.team = Some(required_value(tail, idx, "--team")?);
             }
             "--no-nats" => request.no_nats = true,
+            "--no-browser" => request.no_browser = true,
             "--nats" => {
                 idx += 1;
                 request.nats = parse_nats_mode(&required_value(tail, idx, "--nats")?)?;
@@ -305,6 +311,8 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
                     request.tenant = Some(value.to_string());
                 } else if let Some(value) = other.strip_prefix("--team=") {
                     request.team = Some(value.to_string());
+                } else if other == "--no-browser" {
+                    request.no_browser = true;
                 } else if let Some(value) = other.strip_prefix("--nats=") {
                     request.nats = parse_nats_mode(value)?;
                 } else if let Some(value) = other.strip_prefix("--nats-url=") {
