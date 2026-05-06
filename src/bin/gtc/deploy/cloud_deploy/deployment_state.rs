@@ -25,9 +25,11 @@ use super::{
 use crate::process::{
     run_binary_checked, run_binary_checked_with_target, run_binary_checked_with_target_and_env,
 };
+use crate::prompt::{can_prompt_interactively, prompt_value_with_default};
 use crate::{DEPLOYER_BIN, SETUP_BIN};
 
 const AUTO_PUBLISHED_BUNDLE_LAYER_MEDIA_TYPE: &str = "application/octet-stream";
+const DEFAULT_AWS_BUNDLE_PUBLISH_BASE: &str = "oci://ghcr.io/greenticai/bundles/runtime";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct StartDeploymentState {
@@ -220,6 +222,33 @@ fn resolve_deploy_bundle_publish_base() -> Option<String> {
     GtcConfig::from_env().deploy_bundle_publish_base()
 }
 
+fn default_bundle_publish_base_for_target(target: StartTarget) -> Option<&'static str> {
+    match target {
+        StartTarget::Aws => Some(DEFAULT_AWS_BUNDLE_PUBLISH_BASE),
+        StartTarget::Gcp | StartTarget::Azure | StartTarget::Runtime | StartTarget::SingleVm => {
+            None
+        }
+    }
+}
+
+fn resolve_bundle_publish_base_for_target(target: StartTarget) -> GtcResult<Option<String>> {
+    if let Some(value) = resolve_deploy_bundle_publish_base() {
+        return Ok(Some(value));
+    }
+    let Some(default_value) = default_bundle_publish_base_for_target(target) else {
+        return Ok(None);
+    };
+    if can_prompt_interactively() {
+        let prompt = format!(
+            "OCI bundle publish base for {} deploy (press Enter to keep default)",
+            target.as_str()
+        );
+        let value = prompt_value_with_default(&prompt, Some(default_value))?;
+        return Ok(Some(value));
+    }
+    Ok(Some(default_value.to_string()))
+}
+
 fn matches_remote_bundle_ref(value: &str) -> bool {
     value.starts_with("http://")
         || value.starts_with("https://")
@@ -252,12 +281,13 @@ fn build_auto_published_bundle_ref(
 
 fn maybe_auto_publish_cloud_bundle_artifact(
     bundle_artifact: &Path,
+    target: StartTarget,
     deployment_key: &str,
     bundle_digest: &str,
     debug: bool,
     locale: &str,
 ) -> GtcResult<Option<String>> {
-    let Some(publish_base) = resolve_deploy_bundle_publish_base() else {
+    let Some(publish_base) = resolve_bundle_publish_base_for_target(target)? else {
         return Ok(None);
     };
     let remote_ref = build_auto_published_bundle_ref(&publish_base, deployment_key, bundle_digest);
@@ -305,6 +335,7 @@ fn resolve_deploy_bundle_source(
     bundle_artifact: &Path,
     bundle_digest: &str,
     cli_options: &StartCliOptions,
+    target: StartTarget,
     debug: bool,
     locale: &str,
 ) -> GtcResult<(Option<String>, String)> {
@@ -320,6 +351,7 @@ fn resolve_deploy_bundle_source(
     }
     if let Some(published_ref) = maybe_auto_publish_cloud_bundle_artifact(
         bundle_artifact,
+        target,
         &resolved.deployment_key,
         bundle_digest,
         debug,
@@ -415,6 +447,7 @@ fn run_multi_target_deployer_apply(
         &bundle_artifact,
         &bundle_digest,
         cli_options,
+        target,
         debug,
         locale,
     )?;
@@ -586,9 +619,9 @@ fn remove_deployment_state_file(deployment_key: &str, target: StartTarget) -> Gt
 mod tests {
     use super::{
         StartDeploymentState, auto_publish_bundle_tag_from_digest, build_auto_published_bundle_ref,
-        deployment_state_path, load_deployment_state, prepare_deployable_bundle_artifact,
-        remove_deployment_state_file, resolve_remote_deploy_bundle_source_override,
-        save_deployment_state,
+        default_bundle_publish_base_for_target, deployment_state_path, load_deployment_state,
+        prepare_deployable_bundle_artifact, remove_deployment_state_file,
+        resolve_remote_deploy_bundle_source_override, save_deployment_state,
     };
     #[cfg(unix)]
     use super::{
@@ -642,6 +675,14 @@ mod tests {
                 "sha256:abc123"
             ),
             "oci://ghcr.io/greenticai/bundles/runtime/demo-bundle:sha256-abc123"
+        );
+        assert_eq!(
+            default_bundle_publish_base_for_target(StartTarget::Aws),
+            Some("oci://ghcr.io/greenticai/bundles/runtime")
+        );
+        assert_eq!(
+            default_bundle_publish_base_for_target(StartTarget::Gcp),
+            None
         );
     }
 
@@ -1056,6 +1097,121 @@ mod tests {
         assert!(oras_logged.contains("push --disable-path-validation"));
         assert!(oras_logged.contains("ghcr.io/greenticai/bundles/runtime/demo:sha256-"));
         assert!(oras_logged.contains("application/octet-stream"));
+
+        let deployer_logged = fs::read_to_string(deployer_log).expect("read");
+        assert!(
+            deployer_logged
+                .contains("--bundle-source oci://ghcr.io/greenticai/bundles/runtime/demo:sha256-")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn multi_target_deployer_apply_uses_default_aws_publish_base_when_no_env_is_set() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bundle_dir = dir.path().join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("mkdir");
+        let app_pack = dir.path().join("app.gtpack");
+        let provider_pack = dir.path().join("terraform.gtpack");
+        fs::write(&app_pack, b"app").expect("write");
+        fs::write(&provider_pack, b"provider").expect("write");
+
+        let artifact = dir.path().join("bundle.gtbundle");
+        fs::write(&artifact, b"bundle").expect("write");
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("mkdir");
+        let terraform = bin_dir.join("terraform");
+        fs::write(&terraform, "#!/bin/sh\nexit 0\n").expect("write");
+        fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        let oras_log = dir.path().join("oras-default.log");
+        let oras = bin_dir.join("oras");
+        fs::write(
+            &oras,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                oras_log.display()
+            ),
+        )
+        .expect("write");
+        fs::set_permissions(&oras, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        let deployer_log = dir.path().join("deployer-default.log");
+        let _deployer = fake_deployer_contract(Some(&deployer_log));
+
+        let request = StartRequest {
+            bundle: Some(bundle_dir.display().to_string()),
+            tenant: Some("demo".to_string()),
+            team: Some("ops".to_string()),
+            no_nats: false,
+            no_browser: false,
+            nats: NatsModeArg::Off,
+            nats_url: None,
+            config: None,
+            cloudflared: CloudflaredModeArg::Off,
+            cloudflared_binary: None,
+            ngrok: NgrokModeArg::Off,
+            ngrok_binary: None,
+            runner_binary: None,
+            restart: Vec::new(),
+            log_dir: None,
+            verbose: false,
+            quiet: false,
+            admin: false,
+            admin_port: 8443,
+            admin_certs_dir: None,
+            admin_allowed_clients: Vec::new(),
+            tunnel_explicit: true,
+        };
+        let cli_options = StartCliOptions {
+            start_args: Vec::new(),
+            explicit_target: Some(StartTarget::Aws),
+            environment: None,
+            provider_pack: Some(provider_pack),
+            app_pack: Some(app_pack),
+            deploy_bundle_source: None,
+        };
+        let resolved = StartBundleResolution {
+            bundle_dir: bundle_dir.clone(),
+            deployment_key: "demo".to_string(),
+            deploy_artifact: Some(artifact),
+            _hold: None,
+        };
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", &bin_dir);
+            env::remove_var("GREENTIC_DEPLOY_BUNDLE_PUBLISH_BASE");
+            env::set_var("AWS_ACCESS_KEY_ID", "key");
+            env::set_var("AWS_SECRET_ACCESS_KEY", "secret");
+            env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "s3");
+        }
+
+        run_multi_target_deployer_apply(
+            "./bundle",
+            &resolved,
+            &request,
+            &cli_options,
+            StartTarget::Aws,
+            false,
+            "en",
+        )
+        .expect("apply");
+
+        unsafe {
+            match original_path {
+                Some(path) => env::set_var("PATH", path),
+                None => env::remove_var("PATH"),
+            }
+            env::remove_var("AWS_ACCESS_KEY_ID");
+            env::remove_var("AWS_SECRET_ACCESS_KEY");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
+        }
+
+        let oras_logged = fs::read_to_string(oras_log).expect("read");
+        assert!(oras_logged.contains("ghcr.io/greenticai/bundles/runtime/demo:sha256-"));
 
         let deployer_logged = fs::read_to_string(deployer_log).expect("read");
         assert!(
