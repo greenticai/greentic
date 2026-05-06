@@ -330,11 +330,16 @@ fn maybe_auto_publish_aws_bundle_artifact(
     let publish_base = resolve_aws_bundle_publish_base()?;
     let object_uri =
         build_auto_published_bundle_s3_object_uri(&publish_base, deployment_key, bundle_digest)?;
+    let (bucket, key) = parse_s3_uri(&object_uri)?;
     let upload_args = vec![
-        "s3".to_string(),
-        "cp".to_string(),
+        "s3api".to_string(),
+        "put-object".to_string(),
+        "--bucket".to_string(),
+        bucket,
+        "--key".to_string(),
+        key,
+        "--body".to_string(),
         bundle_artifact.display().to_string(),
-        object_uri.clone(),
     ];
     if debug {
         eprintln!(
@@ -1180,11 +1185,10 @@ mod tests {
         }
 
         let aws_logged = fs::read_to_string(aws_log).expect("read");
-        assert!(aws_logged.contains("s3 cp"));
-        assert!(aws_logged.contains("bundle.gtbundle"));
-        assert!(
-            aws_logged.contains("s3://state-bucket/greentic/aws/demo/dev/bundles/demo-sha256-")
-        );
+        assert!(aws_logged.contains("s3api put-object"));
+        assert!(aws_logged.contains("--bucket state-bucket"));
+        assert!(aws_logged.contains("--key greentic/aws/demo/dev/bundles/demo-sha256-"));
+        assert!(aws_logged.contains("--body"));
         assert!(aws_logged.contains("s3 presign"));
 
         let deployer_logged = fs::read_to_string(deployer_log).expect("read");
