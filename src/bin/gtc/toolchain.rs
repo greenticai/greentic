@@ -1581,6 +1581,21 @@ mod tests {
                     .long("dry-run")
                     .action(ArgAction::SetTrue),
             )
+            .arg(
+                Arg::new("install-binaries-only")
+                    .long("install-binaries-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-packs-only")
+                    .long("install-packs-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-components-only")
+                    .long("install-components-only")
+                    .action(ArgAction::SetTrue),
+            )
             .get_matches_from(["toolchain"]);
 
         let options = ToolchainInstallOptions::from_matches(&matches, "stable").expect("options");
@@ -1602,6 +1617,21 @@ mod tests {
             .arg(
                 Arg::new("dry-run")
                     .long("dry-run")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-binaries-only")
+                    .long("install-binaries-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-packs-only")
+                    .long("install-packs-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-components-only")
+                    .long("install-components-only")
                     .action(ArgAction::SetTrue),
             )
             .get_matches_from([
