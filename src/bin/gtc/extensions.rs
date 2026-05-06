@@ -544,9 +544,7 @@ mod tests {
         load_extension_start_handoff, load_registry, resolve_descriptor_path,
         resolve_descriptor_working_directory, write_launcher_handoff,
     };
-    use crate::tests::env_test_lock;
     use clap::{Arg, ArgAction, Command};
-    use std::env;
     use std::fs;
     use std::path::PathBuf;
 
@@ -731,7 +729,6 @@ mod tests {
         );
     }
 
-    #[test]
     #[test]
     fn launcher_handoff_is_written_with_extension_records() {
         let root = tempfile::tempdir().expect("tempdir");
