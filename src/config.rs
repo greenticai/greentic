@@ -42,6 +42,10 @@ impl GtcConfig {
         self.non_empty_var("GREENTIC_DEPLOY_BUNDLE_SOURCE")
     }
 
+    pub fn deploy_bundle_publish_base(&self) -> Option<String> {
+        self.non_empty_var("GREENTIC_DEPLOY_BUNDLE_PUBLISH_BASE")
+    }
+
     pub fn repo_registry_base(&self) -> Option<String> {
         self.non_empty_var("GREENTIC_REPO_REGISTRY_BASE")
     }

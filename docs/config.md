@@ -21,6 +21,9 @@ recognizes directly through `GtcConfig`.
 
 - `GREENTIC_DEPLOY_BUNDLE_SOURCE`
   Default remote bundle source used by deploy flows when `--deploy-bundle-source` is omitted.
+- `GREENTIC_DEPLOY_BUNDLE_PUBLISH_BASE`
+  OCI base used when `gtc` needs to auto-publish a locally built `.gtbundle` for cloud deploy.
+  For AWS interactive runs, `gtc` offers `oci://ghcr.io/greenticai/bundles/runtime` as the default and lets you keep or change it.
 - `GREENTIC_REPO_REGISTRY_BASE`
   Base URL used to resolve `repo://...` bundle references.
 - `GREENTIC_STORE_REGISTRY_BASE`
