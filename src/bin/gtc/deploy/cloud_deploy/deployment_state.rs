@@ -31,6 +31,17 @@ use crate::{DEPLOYER_BIN, SETUP_BIN};
 const AUTO_PUBLISHED_BUNDLE_LAYER_MEDIA_TYPE: &str = "application/octet-stream";
 const DEFAULT_AWS_BUNDLE_PUBLISH_BASE: &str = "oci://ghcr.io/greenticai/bundles/runtime";
 
+struct DeployBundleSourceResolution<'a> {
+    bundle_ref: &'a str,
+    resolved: &'a StartBundleResolution,
+    bundle_artifact: &'a Path,
+    bundle_digest: &'a str,
+    cli_options: &'a StartCliOptions,
+    target: StartTarget,
+    debug: bool,
+    locale: &'a str,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct StartDeploymentState {
     target: String,
@@ -330,36 +341,30 @@ fn maybe_auto_publish_cloud_bundle_artifact(
 }
 
 fn resolve_deploy_bundle_source(
-    bundle_ref: &str,
-    resolved: &StartBundleResolution,
-    bundle_artifact: &Path,
-    bundle_digest: &str,
-    cli_options: &StartCliOptions,
-    target: StartTarget,
-    debug: bool,
-    locale: &str,
+    ctx: DeployBundleSourceResolution<'_>,
 ) -> GtcResult<(Option<String>, String)> {
-    let remote_override = cli_options
+    let remote_override = ctx
+        .cli_options
         .deploy_bundle_source
         .clone()
         .or_else(resolve_remote_deploy_bundle_source_override);
     if let Some(override_ref) = remote_override.clone() {
         return Ok((remote_override, override_ref));
     }
-    if matches_remote_bundle_ref(bundle_ref) {
-        return Ok((None, bundle_ref.trim().to_string()));
+    if matches_remote_bundle_ref(ctx.bundle_ref) {
+        return Ok((None, ctx.bundle_ref.trim().to_string()));
     }
     if let Some(published_ref) = maybe_auto_publish_cloud_bundle_artifact(
-        bundle_artifact,
-        target,
-        &resolved.deployment_key,
-        bundle_digest,
-        debug,
-        locale,
+        ctx.bundle_artifact,
+        ctx.target,
+        &ctx.resolved.deployment_key,
+        ctx.bundle_digest,
+        ctx.debug,
+        ctx.locale,
     )? {
         return Ok((None, published_ref));
     }
-    Ok((None, bundle_artifact.display().to_string()))
+    Ok((None, ctx.bundle_artifact.display().to_string()))
 }
 
 fn deployment_artifacts_root() -> GtcResult<PathBuf> {
@@ -441,16 +446,17 @@ fn run_multi_target_deployer_apply(
 ) -> GtcResult<()> {
     let bundle_artifact = prepare_deployable_bundle_artifact(resolved, debug, locale)?;
     let bundle_digest = perf_targets::sha256_file(&bundle_artifact).map_err(GtcError::message)?;
-    let (remote_override, deploy_bundle_source) = resolve_deploy_bundle_source(
-        bundle_ref,
-        resolved,
-        &bundle_artifact,
-        &bundle_digest,
-        cli_options,
-        target,
-        debug,
-        locale,
-    )?;
+    let (remote_override, deploy_bundle_source) =
+        resolve_deploy_bundle_source(DeployBundleSourceResolution {
+            bundle_ref,
+            resolved,
+            bundle_artifact: &bundle_artifact,
+            bundle_digest: &bundle_digest,
+            cli_options,
+            target,
+            debug,
+            locale,
+        })?;
     let child_env = validate_cloud_deploy_inputs(
         target,
         Some(deploy_bundle_source.as_str()),
