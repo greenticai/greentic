@@ -413,8 +413,11 @@ mod tests {
         assert!(candidates.contains(&"terraform.gtpack".to_string()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_target_provider_pack_from_bundle_layout_uses_bundled_cloud_pack() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _deployer = fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let deployer_dir = dir.path().join("providers").join("deployer");
         fs::create_dir_all(&deployer_dir).expect("mkdir");
@@ -427,8 +430,11 @@ mod tests {
         assert_eq!(resolved.as_deref(), Some(pack.as_path()));
     }
 
+    #[cfg(unix)]
     #[test]
     fn resolve_target_provider_pack_prefers_bundled_cloud_pack_when_metadata_omits_path() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let _deployer = fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let greentic = dir.path().join(".greentic");
         fs::create_dir_all(&greentic).expect("mkdir");
