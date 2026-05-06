@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::{Command as ProcessCommand, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::BaseDirs;
@@ -25,6 +26,8 @@ use crate::process::{
     run_binary_checked, run_binary_checked_with_target, run_binary_checked_with_target_and_env,
 };
 use crate::{DEPLOYER_BIN, SETUP_BIN};
+
+const AUTO_PUBLISHED_BUNDLE_LAYER_MEDIA_TYPE: &str = "application/octet-stream";
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct StartDeploymentState {
@@ -213,6 +216,120 @@ fn resolve_remote_deploy_bundle_source_override() -> Option<String> {
     GtcConfig::from_env().deploy_bundle_source_override()
 }
 
+fn resolve_deploy_bundle_publish_base() -> Option<String> {
+    GtcConfig::from_env().deploy_bundle_publish_base()
+}
+
+fn matches_remote_bundle_ref(value: &str) -> bool {
+    value.starts_with("http://")
+        || value.starts_with("https://")
+        || value.starts_with("oci://")
+        || value.starts_with("repo://")
+        || value.starts_with("store://")
+}
+
+fn auto_publish_bundle_tag_from_digest(bundle_digest: &str) -> String {
+    let digest = bundle_digest
+        .strip_prefix("sha256:")
+        .unwrap_or(bundle_digest);
+    format!("sha256-{digest}")
+}
+
+fn build_auto_published_bundle_ref(
+    publish_base: &str,
+    deployment_key: &str,
+    bundle_digest: &str,
+) -> String {
+    let normalized_base = publish_base
+        .trim()
+        .trim_start_matches("oci://")
+        .trim_end_matches('/');
+    format!(
+        "oci://{normalized_base}/{deployment_key}:{}",
+        auto_publish_bundle_tag_from_digest(bundle_digest)
+    )
+}
+
+fn maybe_auto_publish_cloud_bundle_artifact(
+    bundle_artifact: &Path,
+    deployment_key: &str,
+    bundle_digest: &str,
+    debug: bool,
+    locale: &str,
+) -> GtcResult<Option<String>> {
+    let Some(publish_base) = resolve_deploy_bundle_publish_base() else {
+        return Ok(None);
+    };
+    let remote_ref = build_auto_published_bundle_ref(&publish_base, deployment_key, bundle_digest);
+    let mut process = ProcessCommand::new("oras");
+    let args = vec![
+        "push".to_string(),
+        "--disable-path-validation".to_string(),
+        remote_ref.trim_start_matches("oci://").to_string(),
+        format!(
+            "{}:{}",
+            bundle_artifact.display(),
+            AUTO_PUBLISHED_BUNDLE_LAYER_MEDIA_TYPE
+        ),
+    ];
+    if debug {
+        eprintln!("gtc: auto-publishing deploy bundle via oras {:?}", args);
+    }
+    process
+        .args(&args)
+        .env("GREENTIC_LOCALE", locale)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit());
+    let status = process.status().map_err(|err| {
+        if err.kind() == std::io::ErrorKind::NotFound {
+            GtcError::message(
+                "automatic cloud bundle publication requires `oras` on PATH; install oras or pass --deploy-bundle-source / GREENTIC_DEPLOY_BUNDLE_SOURCE".to_string(),
+            )
+        } else {
+            GtcError::io("failed to execute oras for automatic cloud bundle publication", err)
+        }
+    })?;
+    if !status.success() {
+        return Err(GtcError::message(format!(
+            "automatic cloud bundle publication failed via oras with status {}",
+            status.code().unwrap_or(1)
+        )));
+    }
+    Ok(Some(remote_ref))
+}
+
+fn resolve_deploy_bundle_source(
+    bundle_ref: &str,
+    resolved: &StartBundleResolution,
+    bundle_artifact: &Path,
+    bundle_digest: &str,
+    cli_options: &StartCliOptions,
+    debug: bool,
+    locale: &str,
+) -> GtcResult<(Option<String>, String)> {
+    let remote_override = cli_options
+        .deploy_bundle_source
+        .clone()
+        .or_else(resolve_remote_deploy_bundle_source_override);
+    if let Some(override_ref) = remote_override.clone() {
+        return Ok((remote_override, override_ref));
+    }
+    if matches_remote_bundle_ref(bundle_ref) {
+        return Ok((None, bundle_ref.trim().to_string()));
+    }
+    if let Some(published_ref) = maybe_auto_publish_cloud_bundle_artifact(
+        bundle_artifact,
+        &resolved.deployment_key,
+        bundle_digest,
+        debug,
+        locale,
+    )? {
+        return Ok((None, published_ref));
+    }
+    Ok((None, bundle_artifact.display().to_string()))
+}
+
 fn deployment_artifacts_root() -> GtcResult<PathBuf> {
     let base = BaseDirs::new().ok_or_else(|| {
         GtcError::message("failed to resolve base directories for deployment artifacts")
@@ -282,7 +399,7 @@ fn save_deployment_state(path: &Path, state: &StartDeploymentState) -> GtcResult
 }
 
 fn run_multi_target_deployer_apply(
-    _bundle_ref: &str,
+    bundle_ref: &str,
     resolved: &StartBundleResolution,
     request: &StartRequest,
     cli_options: &StartCliOptions,
@@ -292,19 +409,21 @@ fn run_multi_target_deployer_apply(
 ) -> GtcResult<()> {
     let bundle_artifact = prepare_deployable_bundle_artifact(resolved, debug, locale)?;
     let bundle_digest = perf_targets::sha256_file(&bundle_artifact).map_err(GtcError::message)?;
-    let remote_override = cli_options
-        .deploy_bundle_source
-        .clone()
-        .or_else(resolve_remote_deploy_bundle_source_override);
+    let (remote_override, deploy_bundle_source) = resolve_deploy_bundle_source(
+        bundle_ref,
+        resolved,
+        &bundle_artifact,
+        &bundle_digest,
+        cli_options,
+        debug,
+        locale,
+    )?;
     let child_env = validate_cloud_deploy_inputs(
         target,
-        remote_override.as_deref(),
+        Some(deploy_bundle_source.as_str()),
         &resolved.bundle_dir,
         locale,
     )?;
-    let deploy_bundle_source = remote_override
-        .clone()
-        .unwrap_or_else(|| bundle_artifact.display().to_string());
     let app_pack =
         resolve_deploy_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
     let provider_pack = resolve_target_provider_pack(
@@ -317,7 +436,7 @@ fn run_multi_target_deployer_apply(
     println!("Deployment artifact: {}", bundle_artifact.display());
     println!("Deployment bundle source: {deploy_bundle_source}");
     println!("Deployment bundle digest: {bundle_digest}");
-    if remote_override.is_none() {
+    if remote_override.is_none() && deploy_bundle_source == bundle_artifact.display().to_string() {
         println!(
             "Note: no GREENTIC_DEPLOY_BUNDLE_SOURCE override set; cloud deploy will use the local artifact path above."
         );
@@ -466,9 +585,10 @@ fn remove_deployment_state_file(deployment_key: &str, target: StartTarget) -> Gt
 #[cfg(test)]
 mod tests {
     use super::{
-        StartDeploymentState, deployment_state_path, load_deployment_state,
-        prepare_deployable_bundle_artifact, remove_deployment_state_file,
-        resolve_remote_deploy_bundle_source_override, save_deployment_state,
+        StartDeploymentState, auto_publish_bundle_tag_from_digest, build_auto_published_bundle_ref,
+        deployment_state_path, load_deployment_state, prepare_deployable_bundle_artifact,
+        remove_deployment_state_file, resolve_remote_deploy_bundle_source_override,
+        save_deployment_state,
     };
     #[cfg(unix)]
     use super::{
@@ -505,6 +625,24 @@ mod tests {
             env::remove_var("GREENTIC_DEPLOY_BUNDLE_SOURCE");
         }
         assert_eq!(value.as_deref(), Some("https://example.com/demo"));
+    }
+
+    #[test]
+    fn auto_published_bundle_ref_is_stable_and_oci_prefixed() {
+        assert_eq!(
+            auto_publish_bundle_tag_from_digest(
+                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+            ),
+            "sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        );
+        assert_eq!(
+            build_auto_published_bundle_ref(
+                "oci://ghcr.io/greenticai/bundles/runtime/",
+                "demo-bundle",
+                "sha256:abc123"
+            ),
+            "oci://ghcr.io/greenticai/bundles/runtime/demo-bundle:sha256-abc123"
+        );
     }
 
     #[cfg(unix)]
@@ -696,6 +834,234 @@ mod tests {
         assert!(logged.contains("apply --tenant demo"));
         assert!(logged.contains("--bundle-source https://example.com/demo.gtbundle"));
         assert!(logged.contains("--environment prod"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn multi_target_deployer_apply_reuses_remote_bundle_ref_without_override() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bundle_dir = dir.path().join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("mkdir");
+        let app_pack = dir.path().join("app.gtpack");
+        let provider_pack = dir.path().join("terraform.gtpack");
+        fs::write(&app_pack, b"app").expect("write");
+        fs::write(&provider_pack, b"provider").expect("write");
+
+        let artifact = dir.path().join("bundle.gtbundle");
+        fs::write(&artifact, b"bundle").expect("write");
+
+        let terraform_dir = dir.path().join("terraform-bin");
+        fs::create_dir_all(&terraform_dir).expect("mkdir");
+        let terraform = terraform_dir.join("terraform");
+        fs::write(&terraform, "#!/bin/sh\nexit 0\n").expect("write");
+        fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        let log = dir.path().join("deployer.log");
+        let _deployer = fake_deployer_contract(Some(&log));
+
+        let request = StartRequest {
+            bundle: Some(bundle_dir.display().to_string()),
+            tenant: Some("demo".to_string()),
+            team: Some("ops".to_string()),
+            no_nats: false,
+            no_browser: false,
+            nats: NatsModeArg::Off,
+            nats_url: None,
+            config: None,
+            cloudflared: CloudflaredModeArg::Off,
+            cloudflared_binary: None,
+            ngrok: NgrokModeArg::Off,
+            ngrok_binary: None,
+            runner_binary: None,
+            restart: Vec::new(),
+            log_dir: None,
+            verbose: false,
+            quiet: false,
+            admin: false,
+            admin_port: 8443,
+            admin_certs_dir: None,
+            admin_allowed_clients: Vec::new(),
+            tunnel_explicit: true,
+        };
+        let cli_options = StartCliOptions {
+            start_args: Vec::new(),
+            explicit_target: Some(StartTarget::Azure),
+            environment: None,
+            provider_pack: Some(provider_pack),
+            app_pack: Some(app_pack),
+            deploy_bundle_source: None,
+        };
+        let resolved = StartBundleResolution {
+            bundle_dir: bundle_dir.clone(),
+            deployment_key: "demo".to_string(),
+            deploy_artifact: Some(artifact),
+            _hold: None,
+        };
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", &terraform_dir);
+            env::set_var("ARM_CLIENT_ID", "client");
+            env::set_var("ARM_TENANT_ID", "tenant");
+            env::set_var("ARM_SUBSCRIPTION_ID", "sub");
+            env::set_var("ARM_USE_OIDC", "true");
+            env::set_var(
+                "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
+                "azurerm",
+            );
+        }
+
+        run_multi_target_deployer_apply(
+            "oci://ghcr.io/greenticai/bundles/cloud-demo:stable",
+            &resolved,
+            &request,
+            &cli_options,
+            StartTarget::Azure,
+            false,
+            "en",
+        )
+        .expect("apply");
+
+        unsafe {
+            match original_path {
+                Some(path) => env::set_var("PATH", path),
+                None => env::remove_var("PATH"),
+            }
+            env::remove_var("ARM_CLIENT_ID");
+            env::remove_var("ARM_TENANT_ID");
+            env::remove_var("ARM_SUBSCRIPTION_ID");
+            env::remove_var("ARM_USE_OIDC");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
+        }
+
+        let logged = fs::read_to_string(log).expect("read");
+        assert!(
+            logged.contains("--bundle-source oci://ghcr.io/greenticai/bundles/cloud-demo:stable")
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn multi_target_deployer_apply_auto_publishes_local_bundle_when_publish_base_is_configured() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let bundle_dir = dir.path().join("bundle");
+        fs::create_dir_all(&bundle_dir).expect("mkdir");
+        let app_pack = dir.path().join("app.gtpack");
+        let provider_pack = dir.path().join("terraform.gtpack");
+        fs::write(&app_pack, b"app").expect("write");
+        fs::write(&provider_pack, b"provider").expect("write");
+
+        let artifact = dir.path().join("bundle.gtbundle");
+        fs::write(&artifact, b"bundle").expect("write");
+
+        let bin_dir = dir.path().join("bin");
+        fs::create_dir_all(&bin_dir).expect("mkdir");
+        let terraform = bin_dir.join("terraform");
+        fs::write(&terraform, "#!/bin/sh\nexit 0\n").expect("write");
+        fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        let oras_log = dir.path().join("oras.log");
+        let oras = bin_dir.join("oras");
+        fs::write(
+            &oras,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+                oras_log.display()
+            ),
+        )
+        .expect("write");
+        fs::set_permissions(&oras, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        let deployer_log = dir.path().join("deployer.log");
+        let _deployer = fake_deployer_contract(Some(&deployer_log));
+
+        let request = StartRequest {
+            bundle: Some(bundle_dir.display().to_string()),
+            tenant: Some("demo".to_string()),
+            team: Some("ops".to_string()),
+            no_nats: false,
+            no_browser: false,
+            nats: NatsModeArg::Off,
+            nats_url: None,
+            config: None,
+            cloudflared: CloudflaredModeArg::Off,
+            cloudflared_binary: None,
+            ngrok: NgrokModeArg::Off,
+            ngrok_binary: None,
+            runner_binary: None,
+            restart: Vec::new(),
+            log_dir: None,
+            verbose: false,
+            quiet: false,
+            admin: false,
+            admin_port: 8443,
+            admin_certs_dir: None,
+            admin_allowed_clients: Vec::new(),
+            tunnel_explicit: true,
+        };
+        let cli_options = StartCliOptions {
+            start_args: Vec::new(),
+            explicit_target: Some(StartTarget::Gcp),
+            environment: None,
+            provider_pack: Some(provider_pack),
+            app_pack: Some(app_pack),
+            deploy_bundle_source: None,
+        };
+        let resolved = StartBundleResolution {
+            bundle_dir: bundle_dir.clone(),
+            deployment_key: "demo".to_string(),
+            deploy_artifact: Some(artifact),
+            _hold: None,
+        };
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", &bin_dir);
+            env::set_var(
+                "GREENTIC_DEPLOY_BUNDLE_PUBLISH_BASE",
+                "oci://ghcr.io/greenticai/bundles/runtime",
+            );
+            env::set_var("CLOUDSDK_AUTH_ACCESS_TOKEN", "token");
+            env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "gcs");
+            env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID", "project");
+            env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION", "europe-west1");
+        }
+
+        run_multi_target_deployer_apply(
+            "./bundle",
+            &resolved,
+            &request,
+            &cli_options,
+            StartTarget::Gcp,
+            false,
+            "en",
+        )
+        .expect("apply");
+
+        unsafe {
+            match original_path {
+                Some(path) => env::set_var("PATH", path),
+                None => env::remove_var("PATH"),
+            }
+            env::remove_var("GREENTIC_DEPLOY_BUNDLE_PUBLISH_BASE");
+            env::remove_var("CLOUDSDK_AUTH_ACCESS_TOKEN");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_PROJECT_ID");
+            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_GCP_REGION");
+        }
+
+        let oras_logged = fs::read_to_string(oras_log).expect("read");
+        assert!(oras_logged.contains("push --disable-path-validation"));
+        assert!(oras_logged.contains("ghcr.io/greenticai/bundles/runtime/demo:sha256-"));
+        assert!(oras_logged.contains("application/octet-stream"));
+
+        let deployer_logged = fs::read_to_string(deployer_log).expect("read");
+        assert!(
+            deployer_logged
+                .contains("--bundle-source oci://ghcr.io/greenticai/bundles/runtime/demo:sha256-")
+        );
     }
 
     #[cfg(unix)]
