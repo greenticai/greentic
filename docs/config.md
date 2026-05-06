@@ -21,13 +21,19 @@ recognizes directly through `GtcConfig`.
 
 - `GREENTIC_DEPLOY_BUNDLE_SOURCE`
   Default remote bundle source used by deploy flows when `--deploy-bundle-source` is omitted.
-- `GREENTIC_DEPLOY_BUNDLE_PUBLISH_BASE`
-  OCI base used when `gtc` needs to auto-publish a locally built `.gtbundle` for cloud deploy.
-  For AWS interactive runs, `gtc` offers `oci://ghcr.io/greenticai/bundles/runtime` as the default and lets you keep or change it.
 - `GREENTIC_REPO_REGISTRY_BASE`
   Base URL used to resolve `repo://...` bundle references.
 - `GREENTIC_STORE_REGISTRY_BASE`
   Base URL used to resolve `store://...` bundle references.
+
+## AWS cloud deploy publication
+
+- `GREENTIC_TERRAFORM_BACKEND_BUCKET`
+  When AWS deploy needs to publish a locally built `.gtbundle`, `gtc` uses this bucket as the default S3 destination for the bundle upload.
+- `GREENTIC_TERRAFORM_BACKEND_KEY`
+  When set, `gtc` derives the default AWS bundle upload prefix from this Terraform backend key and appends `/bundles`.
+- `GREENTIC_TERRAFORM_BACKEND_REGION`
+  Used indirectly by the deployer Terraform backend and can also inform the AWS CLI region for the same deploy session.
 
 ## Terraform operator defaults
 
