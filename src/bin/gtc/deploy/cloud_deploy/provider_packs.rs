@@ -32,7 +32,7 @@ pub(crate) fn resolve_target_provider_pack(
     if let Some(path) = resolve_target_provider_pack_from_metadata(bundle_dir, target)? {
         return Ok(path);
     }
-    if let Some(path) = resolve_target_provider_pack_from_bundle_layout(bundle_dir, target)? {
+    if let Some(path) = resolve_target_provider_pack_from_bundle_layout(bundle_dir, target) {
         return Ok(path);
     }
     if let Some(path) = resolve_canonical_target_provider_pack(target) {
@@ -69,27 +69,24 @@ pub(crate) fn resolve_canonical_target_provider_pack_from(
 fn resolve_target_provider_pack_from_bundle_layout(
     bundle_dir: &Path,
     target: StartTarget,
-) -> GtcResult<Option<PathBuf>> {
+) -> Option<PathBuf> {
     let deployer_dir = bundle_dir.join("providers").join("deployer");
     if !deployer_dir.is_dir() {
-        return Ok(None);
+        return None;
     }
 
-    for candidate_name in bundle_layout_provider_pack_candidates(target)? {
+    for candidate_name in bundle_layout_provider_pack_candidates(target) {
         let candidate = deployer_dir.join(candidate_name);
         if candidate.is_file() {
-            return Ok(Some(candidate));
+            return Some(candidate);
         }
     }
 
-    Ok(None)
+    None
 }
 
-fn bundle_layout_provider_pack_candidates(target: StartTarget) -> GtcResult<Vec<String>> {
+fn bundle_layout_provider_pack_candidates(target: StartTarget) -> Vec<String> {
     let mut candidates = Vec::new();
-    if let Some(canonical) = canonical_target_provider_pack_filename(target)? {
-        candidates.push(canonical);
-    }
 
     match target {
         StartTarget::Aws => {
@@ -111,7 +108,7 @@ fn bundle_layout_provider_pack_candidates(target: StartTarget) -> GtcResult<Vec<
     }
 
     candidates.dedup();
-    Ok(candidates)
+    candidates
 }
 
 fn canonical_target_provider_pack_filename(target: StartTarget) -> GtcResult<Option<String>> {
@@ -406,18 +403,14 @@ mod tests {
 
     #[test]
     fn bundle_layout_provider_pack_candidates_include_new_and_legacy_aws_names() {
-        let candidates =
-            bundle_layout_provider_pack_candidates(StartTarget::Aws).expect("candidate names");
+        let candidates = bundle_layout_provider_pack_candidates(StartTarget::Aws);
         assert!(candidates.contains(&"greentic.deploy.aws.gtpack".to_string()));
         assert!(candidates.contains(&"aws.gtpack".to_string()));
         assert!(candidates.contains(&"terraform.gtpack".to_string()));
     }
 
-    #[cfg(unix)]
     #[test]
     fn resolve_target_provider_pack_from_bundle_layout_uses_bundled_cloud_pack() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let _deployer = fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let deployer_dir = dir.path().join("providers").join("deployer");
         fs::create_dir_all(&deployer_dir).expect("mkdir");
@@ -425,16 +418,12 @@ mod tests {
         fs::write(&pack, b"fixture").expect("write pack");
 
         let resolved =
-            resolve_target_provider_pack_from_bundle_layout(dir.path(), StartTarget::Aws)
-                .expect("resolved");
+            resolve_target_provider_pack_from_bundle_layout(dir.path(), StartTarget::Aws);
         assert_eq!(resolved.as_deref(), Some(pack.as_path()));
     }
 
-    #[cfg(unix)]
     #[test]
     fn resolve_target_provider_pack_prefers_bundled_cloud_pack_when_metadata_omits_path() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let _deployer = fake_deployer_contract(None);
         let dir = tempfile::tempdir().expect("tempdir");
         let greentic = dir.path().join(".greentic");
         fs::create_dir_all(&greentic).expect("mkdir");
