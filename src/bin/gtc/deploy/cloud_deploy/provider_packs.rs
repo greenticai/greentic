@@ -417,7 +417,8 @@ mod tests {
         let pack = deployer_dir.join("greentic.deploy.aws.gtpack");
         fs::write(&pack, b"fixture").expect("write pack");
 
-        let resolved = resolve_target_provider_pack_from_bundle_layout(dir.path(), StartTarget::Aws);
+        let resolved =
+            resolve_target_provider_pack_from_bundle_layout(dir.path(), StartTarget::Aws);
         assert_eq!(resolved.as_deref(), Some(pack.as_path()));
     }
 
