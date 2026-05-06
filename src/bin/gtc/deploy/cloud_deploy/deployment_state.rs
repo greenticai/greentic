@@ -413,16 +413,16 @@ fn resolve_deploy_bundle_source(
     if matches_remote_bundle_ref(ctx.bundle_ref) {
         return Ok((None, ctx.bundle_ref.trim().to_string()));
     }
-    if ctx.target == StartTarget::Aws {
-        if let Some(published_ref) = maybe_auto_publish_aws_bundle_artifact(
+    if ctx.target == StartTarget::Aws
+        && let Some(published_ref) = maybe_auto_publish_aws_bundle_artifact(
             ctx.bundle_artifact,
             &ctx.resolved.deployment_key,
             ctx.bundle_digest,
             ctx.debug,
             ctx.locale,
-        )? {
-            return Ok((None, published_ref));
-        }
+        )?
+    {
+        return Ok((None, published_ref));
     }
     Ok((None, ctx.bundle_artifact.display().to_string()))
 }
