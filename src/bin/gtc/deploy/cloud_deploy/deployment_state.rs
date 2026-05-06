@@ -1277,8 +1277,7 @@ mod tests {
             false,
             "en",
         )
-        .err()
-        .expect("apply should fail without backend bucket");
+        .expect_err("apply should fail without backend bucket");
 
         unsafe {
             match original_path {
