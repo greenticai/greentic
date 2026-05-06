@@ -32,7 +32,7 @@ use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 use std::sync::mpsc;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 #[cfg(unix)]
 use tempfile::TempDir;
@@ -720,6 +720,12 @@ pub(crate) fn env_test_lock() -> &'static Mutex<()> {
 }
 
 #[cfg(unix)]
+fn deployer_bin_test_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(unix)]
 struct PathGuard {
     _temp_dir: tempfile::TempDir,
     original: Option<std::ffi::OsString>,
@@ -768,6 +774,7 @@ pub(crate) struct EnvVarGuard {
 
 #[cfg(unix)]
 pub(crate) struct FakeDeployerGuard {
+    _lock_guard: MutexGuard<'static, ()>,
     _temp_dir: tempfile::TempDir,
     _env_guard: EnvVarGuard,
 }
@@ -897,6 +904,9 @@ exit 0
 
 #[cfg(unix)]
 pub(crate) fn fake_deployer_contract(log_path: Option<&Path>) -> FakeDeployerGuard {
+    let lock_guard = deployer_bin_test_lock()
+        .lock()
+        .unwrap_or_else(|e| e.into_inner());
     let dir = tempdir().expect("tempdir");
     let script = dir.path().join("greentic-deployer");
     write_fake_deployer_contract_script(&script, log_path);
@@ -907,6 +917,7 @@ pub(crate) fn fake_deployer_contract(log_path: Option<&Path>) -> FakeDeployerGua
     }
 
     FakeDeployerGuard {
+        _lock_guard: lock_guard,
         _temp_dir: dir,
         _env_guard: EnvVarGuard {
             name: "GREENTIC_DEPLOYER_BIN",
