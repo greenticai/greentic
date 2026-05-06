@@ -66,9 +66,9 @@ gtc start ./cloud-deploy-demo-bundle
 ```
 
 Notes:
-- For AWS, `gtc start` now defaults the bundle publish base to `oci://ghcr.io/greenticai/bundles/runtime` when it needs to publish a locally built `.gtbundle` for cloud deploy.
-- In interactive runs, `gtc` will show that default and let you keep it or change it.
-- You can still override it explicitly with `GREENTIC_DEPLOY_BUNDLE_PUBLISH_BASE`.
+- For AWS, `gtc start` now auto-publishes a locally built `.gtbundle` to S3 and passes a presigned `https://` bundle URL into deploy.
+- If `GREENTIC_TERRAFORM_BACKEND_BUCKET` is already set, `gtc` reuses it as the default S3 publish location and lets you keep or change it interactively.
+- The AWS path now requires the `aws` CLI in `PATH`.
 
 Greentic is designed so the path from local proof-of-value to production deployment is short, explicit, and repeatable.
 
