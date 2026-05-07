@@ -923,8 +923,6 @@ mod tests {
             provider_pack: Some(provider_pack),
             app_pack: Some(app_pack),
             deploy_bundle_source: Some("https://example.com/demo.gtbundle".to_string()),
-            upload_bundle: None,
-            upload_bundle_presign_expires: None,
         };
         let resolved = StartBundleResolution {
             bundle_dir: bundle_dir.clone(),
