@@ -3,18 +3,14 @@ use clap::{Arg, ArgAction, Command};
 use crate::i18n_support::{leak_str, t, t_or};
 use crate::router::passthrough_args;
 
-fn upload_bundle_args(options_heading: &'static str) -> Vec<Arg> {
+fn upload_bundle_args(options_heading: &'static str, locale: &str) -> Vec<Arg> {
     vec![
         Arg::new("upload-bundle")
             .long("upload-bundle")
             .value_name("URL")
             .num_args(1)
             .help_heading(options_heading)
-            .help(
-                "Upload local bundle to cloud storage and use as --deploy-bundle-source. \
-                 Mutually exclusive with --deploy-bundle-source. \
-                 Schemes: s3://, gs://, https://*.blob.core.windows.net/",
-            )
+            .help(t(locale, "gtc.arg.upload_bundle.help").into_owned())
             .conflicts_with("deploy-bundle-source"),
         Arg::new("upload-bundle-presign-expires")
             .long("upload-bundle-presign-expires")
@@ -22,7 +18,7 @@ fn upload_bundle_args(options_heading: &'static str) -> Vec<Arg> {
             .num_args(1)
             .default_value("604800")
             .help_heading(options_heading)
-            .help("Presigned URL expiry in seconds (S3 hard-caps at 604800 = 7 days)"),
+            .help(t(locale, "gtc.arg.upload_bundle_presign_expires.help").into_owned()),
     ]
 }
 
@@ -894,7 +890,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.deploy_bundle_source.help").into_owned()),
                 )
-                .args(upload_bundle_args(options_heading))
+                .args(upload_bundle_args(options_heading, locale))
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -1008,21 +1004,19 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .subcommand_help_heading(commands_heading)
                 .disable_help_flag(true)
                 .disable_version_flag(true)
-                .about("Manage cloud deploys (refresh URLs, status, etc.)")
+                .about(t(locale, "gtc.cmd.deploy.about").into_owned())
                 .subcommand(
                     Command::new("refresh-bundle-url")
                         .help_template(help_template)
                         .disable_help_flag(true)
                         .disable_version_flag(true)
-                        .about(
-                            "Re-issue a fresh presigned URL for an already-uploaded bundle and re-apply terraform.",
-                        )
+                        .about(t(locale, "gtc.cmd.deploy_refresh_bundle_url.about").into_owned())
                         .arg(
                             Arg::new("bundle-ref")
                                 .value_name("BUNDLE_REF")
                                 .required(true)
                                 .help_heading(arguments_heading)
-                                .help("Bundle path/ref previously deployed via --upload-bundle"),
+                                .help(t(locale, "gtc.arg.deploy_refresh_bundle_ref.help").into_owned()),
                         )
                         .arg(
                             Arg::new("cloud")
@@ -1031,7 +1025,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .num_args(1)
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
-                                .help("Cloud provider (auto-detected from deploy state if omitted)"),
+                                .help(t(locale, "gtc.arg.deploy_refresh_cloud.help").into_owned()),
                         )
                         .arg(
                             Arg::new("environment")
@@ -1040,7 +1034,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .num_args(1)
                                 .default_value("dev")
                                 .help_heading(options_heading)
-                                .help("Environment name used during the original deploy"),
+                                .help(t(locale, "gtc.arg.deploy_refresh_environment.help").into_owned()),
                         )
                         .arg(
                             Arg::new("upload-bundle-presign-expires")
@@ -1049,7 +1043,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .num_args(1)
                                 .default_value("604800")
                                 .help_heading(options_heading)
-                                .help("Presigned URL expiry in seconds"),
+                                .help(t(locale, "gtc.arg.upload_bundle_presign_expires.help").into_owned()),
                         ),
                 ),
         )
