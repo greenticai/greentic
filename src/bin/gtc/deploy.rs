@@ -1,5 +1,7 @@
 #[path = "deploy/bundle_resolution.rs"]
 mod bundle_resolution;
+#[path = "deploy/bundle_upload_orchestrator.rs"]
+pub(crate) mod bundle_upload_orchestrator;
 #[path = "deploy/cloud_deploy.rs"]
 mod cloud_deploy;
 #[path = "deploy/start_stop.rs"]
