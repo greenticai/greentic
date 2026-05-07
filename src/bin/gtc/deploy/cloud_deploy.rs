@@ -314,6 +314,12 @@ fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> GtcResult<Chil
     if cloud_credentials_satisfied(&requirements) {
         return Ok(ChildProcessEnv::new());
     }
+    // For AWS, fall back to the SDK default credential chain by probing `aws sts
+    // get-caller-identity`. This covers ~/.aws/credentials default profile,
+    // instance-metadata, ECS task roles, etc. — none of which surface as env vars.
+    if target == StartTarget::Aws && aws_default_credential_chain_available() {
+        return Ok(ChildProcessEnv::new());
+    }
     let names: Vec<&str> = requirements
         .credential_requirements
         .iter()
@@ -338,6 +344,31 @@ fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> GtcResult<Chil
         Ok(env)
     } else {
         Err(missing_cloud_credentials_error(&names, &help))
+    }
+}
+
+/// Probe the AWS default credential chain by shelling out to `aws sts
+/// get-caller-identity`. Returns `true` when the call exits 0 and produces a
+/// non-empty account ID, meaning the SDK (and Terraform) will be able to resolve
+/// credentials on their own without explicit env vars.
+fn aws_default_credential_chain_available() -> bool {
+    match std::process::Command::new("aws")
+        .args(["sts", "get-caller-identity", "--output", "text", "--query", "Account"])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let account = String::from_utf8_lossy(&output.stdout);
+            let account = account.trim();
+            if account.is_empty() {
+                false
+            } else {
+                eprintln!(
+                    "gtc: AWS default credential chain resolved (account {account}); skipping explicit credential prompt."
+                );
+                true
+            }
+        }
+        _ => false,
     }
 }
 
