@@ -82,8 +82,11 @@ pub fn upload_bundle(
             String::from_utf8_lossy(&output.stderr)
         )));
     }
-    serde_json::from_slice::<UploadedBundle>(&output.stdout)
-        .map_err(|e| GtcError::message(format!("invalid JSON from greentic-deployer bundle-upload: {e}")))
+    serde_json::from_slice::<UploadedBundle>(&output.stdout).map_err(|e| {
+        GtcError::message(format!(
+            "invalid JSON from greentic-deployer bundle-upload: {e}"
+        ))
+    })
 }
 
 /// Spawn `greentic-deployer bundle-upload refresh-url --object-ref <ref> --presign-expires <secs>`
@@ -119,8 +122,12 @@ mod tests {
 
     #[test]
     fn detects_warmed_bundle_filename() {
-        assert!(is_warmed(Path::new("bundle-warmed-0.5.18-keyed-1113.gtbundle")));
-        assert!(is_warmed(Path::new("/some/path/bundle-warmed-foo.gtbundle")));
+        assert!(is_warmed(Path::new(
+            "bundle-warmed-0.5.18-keyed-1113.gtbundle"
+        )));
+        assert!(is_warmed(Path::new(
+            "/some/path/bundle-warmed-foo.gtbundle"
+        )));
     }
 
     #[test]

@@ -511,11 +511,8 @@ pub(crate) fn resolve_upload_bundle(
         bundle_upload_orchestrator::warmup_bundle(&gtbundle_path, &tmp)?
     };
 
-    let result = bundle_upload_orchestrator::upload_bundle(
-        upload_bundle,
-        &warmed_path,
-        presign_expires,
-    )?;
+    let result =
+        bundle_upload_orchestrator::upload_bundle(upload_bundle, &warmed_path, presign_expires)?;
 
     eprintln!("Uploaded bundle:");
     eprintln!("  digest:      {}", result.digest);

@@ -294,16 +294,15 @@ fn run_multi_target_deployer_apply(
 
     // If --upload-bundle is set, run warmup + deployer upload and synthesize
     // --deploy-bundle-source + --bundle-digest from the result.
-    let synthesized_source: Option<(String, String)> = if let Some(upload_target) =
-        cli_options.upload_bundle.as_deref()
-    {
-        let presign = cli_options.upload_bundle_presign_expires.unwrap_or(604800);
-        let (url, digest) =
-            super::resolve_upload_bundle(&resolved.bundle_dir, upload_target, presign)?;
-        Some((url, digest))
-    } else {
-        None
-    };
+    let synthesized_source: Option<(String, String)> =
+        if let Some(upload_target) = cli_options.upload_bundle.as_deref() {
+            let presign = cli_options.upload_bundle_presign_expires.unwrap_or(604800);
+            let (url, digest) =
+                super::resolve_upload_bundle(&resolved.bundle_dir, upload_target, presign)?;
+            Some((url, digest))
+        } else {
+            None
+        };
 
     let remote_override = synthesized_source
         .as_ref()

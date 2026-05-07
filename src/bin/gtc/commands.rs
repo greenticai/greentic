@@ -13,7 +13,9 @@ use crate::admin::{
     upsert_admin_registry_entry,
 };
 use crate::cli::build_cli;
-use crate::deploy::{RefreshArgs, resolve_local_mutable_bundle_dir, run_refresh, run_start, run_stop};
+use crate::deploy::{
+    RefreshArgs, resolve_local_mutable_bundle_dir, run_refresh, run_start, run_stop,
+};
 use crate::docs_cmd::run_docs;
 use crate::extensions::{run_extension_setup, run_extension_start, run_extension_wizard};
 use crate::i18n_support::i18n;

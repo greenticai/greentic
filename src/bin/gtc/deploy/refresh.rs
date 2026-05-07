@@ -35,17 +35,15 @@ fn run_refresh_inner(args: RefreshArgs) -> GtcResult<()> {
     let deploy_state =
         resolve_deploy_state(&args.bundle_ref, args.cloud.as_deref(), &args.environment)?;
     let tfvars_path = deploy_state.join("terraform").join("dev.tfvars");
-    let tfvars_text = fs::read_to_string(&tfvars_path).map_err(|e| {
-        GtcError::message(format!("read tfvars {}: {e}", tfvars_path.display()))
-    })?;
+    let tfvars_text = fs::read_to_string(&tfvars_path)
+        .map_err(|e| GtcError::message(format!("read tfvars {}: {e}", tfvars_path.display())))?;
 
-    let bundle_source =
-        extract_tfvars_value(&tfvars_text, "bundle_source").ok_or_else(|| {
-            GtcError::message(format!(
-                "bundle_source not found in {}",
-                tfvars_path.display()
-            ))
-        })?;
+    let bundle_source = extract_tfvars_value(&tfvars_text, "bundle_source").ok_or_else(|| {
+        GtcError::message(format!(
+            "bundle_source not found in {}",
+            tfvars_path.display()
+        ))
+    })?;
     let object_ref = derive_object_ref_from_url(&bundle_source).ok_or_else(|| {
         GtcError::message(format!(
             "could not derive object_ref from bundle_source URL: {bundle_source}"
@@ -88,8 +86,8 @@ fn resolve_deploy_state(
     cloud: Option<&str>,
     environment: &str,
 ) -> GtcResult<PathBuf> {
-    let base = BaseDirs::new()
-        .ok_or_else(|| GtcError::message("home dir not found".to_string()))?;
+    let base =
+        BaseDirs::new().ok_or_else(|| GtcError::message("home dir not found".to_string()))?;
     let deploy_root = base.home_dir().join(".greentic").join("deploy");
     let fingerprint = mangle_bundle_ref_to_fingerprint(bundle_ref);
 
@@ -98,7 +96,10 @@ fn resolve_deploy_state(
     } else {
         let mut out = Vec::new();
         for cloud_name in ["aws", "azure", "gcp"] {
-            let path = deploy_root.join(cloud_name).join(environment).join(&fingerprint);
+            let path = deploy_root
+                .join(cloud_name)
+                .join(environment)
+                .join(&fingerprint);
             if path.exists() {
                 out.push(path);
             }
@@ -178,7 +179,10 @@ fn derive_object_ref_from_url(url: &str) -> Option<String> {
     // Strip scheme: we only handle https://
     let after_scheme = url.strip_prefix("https://")?;
     // Strip query string and fragment: split on '?'
-    let without_query = after_scheme.split_once('?').map(|(h, _)| h).unwrap_or(after_scheme);
+    let without_query = after_scheme
+        .split_once('?')
+        .map(|(h, _)| h)
+        .unwrap_or(after_scheme);
     // Split host from path on first '/'
     let (host, path) = without_query.split_once('/')?;
     let path = path.trim_start_matches('/');

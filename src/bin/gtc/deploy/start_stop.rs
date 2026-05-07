@@ -334,10 +334,9 @@ pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOpti
             "--upload-bundle-presign-expires" => {
                 idx += 1;
                 let raw = required_value(tail, idx, "--upload-bundle-presign-expires")?;
-                upload_bundle_presign_expires = Some(
-                    raw.parse::<u64>()
-                        .map_err(|e| GtcError::message(format!("invalid --upload-bundle-presign-expires: {e}")))?,
-                );
+                upload_bundle_presign_expires = Some(raw.parse::<u64>().map_err(|e| {
+                    GtcError::message(format!("invalid --upload-bundle-presign-expires: {e}"))
+                })?);
             }
             _ => {
                 if let Some(value) = arg.strip_prefix("--target=") {
@@ -353,10 +352,9 @@ pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOpti
                 } else if let Some(value) = arg.strip_prefix("--upload-bundle=") {
                     upload_bundle = Some(value.to_string());
                 } else if let Some(value) = arg.strip_prefix("--upload-bundle-presign-expires=") {
-                    upload_bundle_presign_expires = Some(
-                        value.parse::<u64>()
-                            .map_err(|e| GtcError::message(format!("invalid --upload-bundle-presign-expires: {e}")))?,
-                    );
+                    upload_bundle_presign_expires = Some(value.parse::<u64>().map_err(|e| {
+                        GtcError::message(format!("invalid --upload-bundle-presign-expires: {e}"))
+                    })?);
                 } else {
                     start_args.push(arg.clone());
                 }
