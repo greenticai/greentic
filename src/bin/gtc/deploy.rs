@@ -67,6 +67,8 @@ pub(super) struct StartCliOptions {
     pub(super) provider_pack: Option<PathBuf>,
     pub(super) app_pack: Option<PathBuf>,
     pub(super) deploy_bundle_source: Option<String>,
+    pub(super) upload_bundle: Option<String>,
+    pub(super) upload_bundle_presign_expires: Option<u64>,
 }
 
 #[derive(Debug)]
