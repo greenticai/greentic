@@ -314,6 +314,12 @@ fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> GtcResult<Chil
     if cloud_credentials_satisfied(&requirements) {
         return Ok(ChildProcessEnv::new());
     }
+    // For AWS, fall back to the SDK default credential chain by probing `aws sts
+    // get-caller-identity`. This covers ~/.aws/credentials default profile,
+    // instance-metadata, ECS task roles, etc. — none of which surface as env vars.
+    if target == StartTarget::Aws && aws_default_credential_chain_available() {
+        return Ok(ChildProcessEnv::new());
+    }
     let names: Vec<&str> = requirements
         .credential_requirements
         .iter()
@@ -341,11 +347,48 @@ fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> GtcResult<Chil
     }
 }
 
+/// Probe the AWS default credential chain by shelling out to `aws sts
+/// get-caller-identity`. Returns `true` when the call exits 0 and produces a
+/// non-empty account ID, meaning the SDK (and Terraform) will be able to resolve
+/// credentials on their own without explicit env vars.
+fn aws_default_credential_chain_available() -> bool {
+    match std::process::Command::new("aws")
+        .args([
+            "sts",
+            "get-caller-identity",
+            "--output",
+            "text",
+            "--query",
+            "Account",
+        ])
+        .output()
+    {
+        Ok(output) if output.status.success() => {
+            let account = String::from_utf8_lossy(&output.stdout);
+            let account = account.trim();
+            if account.is_empty() {
+                false
+            } else {
+                eprintln!(
+                    "gtc: AWS default credential chain resolved (account {account}); skipping explicit credential prompt."
+                );
+                true
+            }
+        }
+        _ => false,
+    }
+}
+
 fn ensure_target_terraform_inputs(target: StartTarget, locale: &str) -> GtcResult<ChildProcessEnv> {
     let requirements = describe_cloud_target_requirements(target, locale)?;
     if requirements.variable_requirements.is_empty() {
         return Ok(ChildProcessEnv::new());
     }
+    // Inject well-known defaults for variables that have an obvious per-target
+    // value before running the missing-variables check. This avoids requiring
+    // the user to set e.g. GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND
+    // manually when the only sensible value is dictated by the chosen target.
+    inject_terraform_var_defaults(target);
     let missing = collect_missing_required_variables(&requirements);
     if missing.is_empty() {
         return Ok(ChildProcessEnv::new());
@@ -374,6 +417,35 @@ fn ensure_target_terraform_inputs(target: StartTarget, locale: &str) -> GtcResul
         env.set(requirement.name, value);
     }
     Ok(env)
+}
+
+/// Inject sensible per-target defaults for well-known Terraform variables that
+/// would otherwise require explicit user configuration. Only sets the variable
+/// when it is not already present in the environment.
+fn inject_terraform_var_defaults(target: StartTarget) {
+    // (env_var_name, default_value) keyed by StartTarget.
+    let defaults: &[(&str, &str)] = match target {
+        StartTarget::Aws => &[("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "s3")],
+        StartTarget::Gcp => &[("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "gcs")],
+        StartTarget::Azure => &[(
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
+            "azurerm",
+        )],
+        StartTarget::SingleVm | StartTarget::Runtime => &[],
+    };
+    for (var, value) in defaults {
+        if !env_var_present(var) {
+            eprintln!(
+                "gtc: defaulting {var}={value} (override with {var}=... to use a different backend)"
+            );
+            // SAFETY: set_var is deprecated in Rust 2024 edition for
+            // multi-threaded safety, but gtc's deploy path is single-threaded
+            // at this point and no other threads read this variable concurrently.
+            unsafe {
+                std::env::set_var(var, value);
+            }
+        }
+    }
 }
 
 fn collect_missing_required_variables(
@@ -483,6 +555,36 @@ fn binary_in_path(binary: &str) -> bool {
             std::env::split_paths(&path).any(|dir| resolve_binary_in_dir(&dir, binary).is_some())
         })
         .unwrap_or(false)
+}
+
+/// If `--upload-bundle` is set, run warmup + bundle rebuild + deployer upload subprocess
+/// and return the URL + digest to be injected into the standard deploy flow.
+/// Returns `(remote_url, digest)`.
+pub(crate) fn resolve_upload_bundle(
+    bundle_dir: &Path,
+    upload_bundle: &str,
+    presign_expires: u64,
+) -> GtcResult<(String, String)> {
+    use super::bundle_upload_orchestrator;
+
+    // Auto-warm + rebuild the bundle. Result is a freshly built .gtbundle in a temp dir
+    // with the warmed component cache embedded. The temp dir leaks intentionally on
+    // success — it's small (~tens of MB) and useful for debugging if the upload fails.
+    let warmed_path = bundle_upload_orchestrator::prepare_warmed_bundle(bundle_dir)?;
+
+    let result =
+        bundle_upload_orchestrator::upload_bundle(upload_bundle, &warmed_path, presign_expires)?;
+
+    eprintln!("Uploaded bundle:");
+    eprintln!("  digest:      {}", result.digest);
+    eprintln!("  url:         {}", result.url);
+    if let Some(exp) = result.expires_at.as_ref() {
+        eprintln!("  expires:     {exp}");
+    }
+    eprintln!("  object ref:  {}", result.object_ref);
+    eprintln!("To refresh URL without re-uploading: gtc deploy refresh-bundle-url <BUNDLE_REF>");
+
+    Ok((result.url, result.digest))
 }
 
 #[cfg(test)]

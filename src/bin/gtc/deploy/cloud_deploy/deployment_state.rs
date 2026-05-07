@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::BaseDirs;
@@ -25,21 +24,7 @@ use super::{
 use crate::process::{
     run_binary_checked, run_binary_checked_with_target, run_binary_checked_with_target_and_env,
 };
-use crate::prompt::{can_prompt_interactively, prompt_non_empty, prompt_value_with_default};
 use crate::{DEPLOYER_BIN, SETUP_BIN};
-
-const DEFAULT_AWS_PRESIGN_EXPIRY_SECONDS: &str = "604800";
-
-struct DeployBundleSourceResolution<'a> {
-    bundle_ref: &'a str,
-    resolved: &'a StartBundleResolution,
-    bundle_artifact: &'a Path,
-    bundle_digest: &'a str,
-    cli_options: &'a StartCliOptions,
-    target: StartTarget,
-    debug: bool,
-    locale: &'a str,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct StartDeploymentState {
@@ -228,205 +213,6 @@ fn resolve_remote_deploy_bundle_source_override() -> Option<String> {
     GtcConfig::from_env().deploy_bundle_source_override()
 }
 
-fn matches_remote_bundle_ref(value: &str) -> bool {
-    value.starts_with("http://")
-        || value.starts_with("https://")
-        || value.starts_with("oci://")
-        || value.starts_with("repo://")
-        || value.starts_with("store://")
-}
-
-fn auto_publish_bundle_tag_from_digest(bundle_digest: &str) -> String {
-    let digest = bundle_digest
-        .strip_prefix("sha256:")
-        .unwrap_or(bundle_digest);
-    format!("sha256-{digest}")
-}
-
-fn trim_s3_uri_prefix(value: &str) -> &str {
-    value
-        .trim()
-        .trim_start_matches("s3://")
-        .trim_start_matches('/')
-}
-
-fn parse_s3_uri(uri: &str) -> GtcResult<(String, String)> {
-    let trimmed = trim_s3_uri_prefix(uri);
-    let (bucket, key) = trimmed.split_once('/').ok_or_else(|| {
-        GtcError::message(format!(
-            "invalid S3 URI `{uri}`; expected s3://<bucket>/<key>"
-        ))
-    })?;
-    let bucket = bucket.trim();
-    let key = key.trim_matches('/');
-    if bucket.is_empty() || key.is_empty() {
-        return Err(GtcError::message(format!(
-            "invalid S3 URI `{uri}`; expected s3://<bucket>/<key>"
-        )));
-    }
-    Ok((bucket.to_string(), key.to_string()))
-}
-
-fn default_aws_bundle_publish_base() -> Option<String> {
-    let cfg = GtcConfig::from_env();
-    let bucket = cfg.non_empty_var("GREENTIC_TERRAFORM_BACKEND_BUCKET")?;
-    let prefix = cfg
-        .non_empty_var("GREENTIC_TERRAFORM_BACKEND_KEY")
-        .map(|key| {
-            key.trim_matches('/')
-                .strip_suffix("/terraform.tfstate")
-                .unwrap_or(key.trim_matches('/'))
-                .trim_matches('/')
-                .to_string()
-        })
-        .filter(|prefix| !prefix.is_empty())
-        .map(|prefix| format!("{prefix}/bundles"))
-        .unwrap_or_else(|| "greentic/aws/bundles".to_string());
-    Some(format!("s3://{bucket}/{prefix}"))
-}
-
-fn resolve_aws_bundle_publish_base() -> GtcResult<String> {
-    let default_value = default_aws_bundle_publish_base();
-    if can_prompt_interactively() {
-        if let Some(default_value) = default_value.as_deref() {
-            let prompt = "S3 bundle publish base for aws deploy (press Enter to keep default)";
-            return prompt_value_with_default(prompt, Some(default_value));
-        }
-        return prompt_non_empty(
-            "S3 bundle publish base for aws deploy (for example s3://my-bucket/greentic/aws/bundles):",
-        );
-    }
-    default_value.ok_or_else(|| {
-        GtcError::message(
-            "automatic aws cloud bundle publication needs an S3 destination; set GREENTIC_TERRAFORM_BACKEND_BUCKET or pass --deploy-bundle-source / GREENTIC_DEPLOY_BUNDLE_SOURCE".to_string(),
-        )
-    })
-}
-
-fn build_auto_published_bundle_s3_object_uri(
-    publish_base: &str,
-    deployment_key: &str,
-    bundle_digest: &str,
-) -> GtcResult<String> {
-    let (bucket, key_prefix) = parse_s3_uri(publish_base)?;
-    let object_name = format!(
-        "{deployment_key}-{}.gtbundle",
-        auto_publish_bundle_tag_from_digest(bundle_digest)
-    );
-    Ok(format!(
-        "s3://{bucket}/{}/{}",
-        key_prefix.trim_end_matches('/'),
-        object_name
-    ))
-}
-
-fn maybe_auto_publish_aws_bundle_artifact(
-    bundle_artifact: &Path,
-    deployment_key: &str,
-    bundle_digest: &str,
-    debug: bool,
-    locale: &str,
-) -> GtcResult<Option<String>> {
-    let publish_base = resolve_aws_bundle_publish_base()?;
-    let object_uri =
-        build_auto_published_bundle_s3_object_uri(&publish_base, deployment_key, bundle_digest)?;
-    let (bucket, key) = parse_s3_uri(&object_uri)?;
-    let upload_args = vec![
-        "s3api".to_string(),
-        "put-object".to_string(),
-        "--bucket".to_string(),
-        bucket,
-        "--key".to_string(),
-        key,
-        "--body".to_string(),
-        bundle_artifact.display().to_string(),
-    ];
-    if debug {
-        eprintln!(
-            "gtc: auto-publishing deploy bundle via aws {:?}",
-            upload_args
-        );
-    }
-    let upload_status = ProcessCommand::new("aws")
-        .args(&upload_args)
-        .env("GREENTIC_LOCALE", locale)
-        .status()
-        .map_err(|err| {
-        if err.kind() == std::io::ErrorKind::NotFound {
-            GtcError::message(
-                "automatic aws cloud bundle publication requires `aws` on PATH; install the AWS CLI or pass --deploy-bundle-source / GREENTIC_DEPLOY_BUNDLE_SOURCE".to_string(),
-            )
-        } else {
-            GtcError::io("failed to execute aws for automatic cloud bundle publication", err)
-        }
-    })?;
-    if !upload_status.success() {
-        return Err(GtcError::message(format!(
-            "automatic aws cloud bundle publication failed during S3 upload with status {}",
-            upload_status.code().unwrap_or(1)
-        )));
-    }
-    let presign_args = vec![
-        "s3".to_string(),
-        "presign".to_string(),
-        object_uri,
-        "--expires-in".to_string(),
-        DEFAULT_AWS_PRESIGN_EXPIRY_SECONDS.to_string(),
-    ];
-    if debug {
-        eprintln!(
-            "gtc: generating presigned deploy bundle url via aws {:?}",
-            presign_args
-        );
-    }
-    let output = ProcessCommand::new("aws")
-        .args(&presign_args)
-        .env("GREENTIC_LOCALE", locale)
-        .output()
-        .map_err(|err| GtcError::io("failed to execute aws for bundle presign", err))?;
-    if !output.status.success() {
-        return Err(GtcError::message(format!(
-            "automatic aws cloud bundle publication failed during S3 presign with status {}",
-            output.status.code().unwrap_or(1)
-        )));
-    }
-    let presigned_url = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    if !presigned_url.starts_with("https://") && !presigned_url.starts_with("http://") {
-        return Err(GtcError::message(format!(
-            "aws s3 presign returned an unexpected bundle URL: {presigned_url}"
-        )));
-    }
-    Ok(Some(presigned_url))
-}
-
-fn resolve_deploy_bundle_source(
-    ctx: DeployBundleSourceResolution<'_>,
-) -> GtcResult<(Option<String>, String)> {
-    let remote_override = ctx
-        .cli_options
-        .deploy_bundle_source
-        .clone()
-        .or_else(resolve_remote_deploy_bundle_source_override);
-    if let Some(override_ref) = remote_override.clone() {
-        return Ok((remote_override, override_ref));
-    }
-    if matches_remote_bundle_ref(ctx.bundle_ref) {
-        return Ok((None, ctx.bundle_ref.trim().to_string()));
-    }
-    if ctx.target == StartTarget::Aws
-        && let Some(published_ref) = maybe_auto_publish_aws_bundle_artifact(
-            ctx.bundle_artifact,
-            &ctx.resolved.deployment_key,
-            ctx.bundle_digest,
-            ctx.debug,
-            ctx.locale,
-        )?
-    {
-        return Ok((None, published_ref));
-    }
-    Ok((None, ctx.bundle_artifact.display().to_string()))
-}
-
 fn deployment_artifacts_root() -> GtcResult<PathBuf> {
     let base = BaseDirs::new().ok_or_else(|| {
         GtcError::message("failed to resolve base directories for deployment artifacts")
@@ -496,7 +282,7 @@ fn save_deployment_state(path: &Path, state: &StartDeploymentState) -> GtcResult
 }
 
 fn run_multi_target_deployer_apply(
-    bundle_ref: &str,
+    _bundle_ref: &str,
     resolved: &StartBundleResolution,
     request: &StartRequest,
     cli_options: &StartCliOptions,
@@ -504,25 +290,59 @@ fn run_multi_target_deployer_apply(
     debug: bool,
     locale: &str,
 ) -> GtcResult<()> {
-    let bundle_artifact = prepare_deployable_bundle_artifact(resolved, debug, locale)?;
-    let bundle_digest = perf_targets::sha256_file(&bundle_artifact).map_err(GtcError::message)?;
-    let (remote_override, deploy_bundle_source) =
-        resolve_deploy_bundle_source(DeployBundleSourceResolution {
-            bundle_ref,
-            resolved,
-            bundle_artifact: &bundle_artifact,
-            bundle_digest: &bundle_digest,
-            cli_options,
-            target,
-            debug,
-            locale,
-        })?;
+    // If --upload-bundle is set, run warmup + deployer upload and synthesize
+    // --deploy-bundle-source + --bundle-digest from the result. In this path
+    // prepare_warmed_bundle (inside resolve_upload_bundle) already builds the
+    // bundle, so we must NOT also call prepare_deployable_bundle_artifact which
+    // would run a redundant greentic-setup bundle build beforehand.
+    let synthesized_source: Option<(String, String)> =
+        if let Some(upload_target) = cli_options.upload_bundle.as_deref() {
+            let presign = cli_options.upload_bundle_presign_expires.unwrap_or(604800);
+            let (url, digest) =
+                super::resolve_upload_bundle(&resolved.bundle_dir, upload_target, presign)?;
+            Some((url, digest))
+        } else {
+            None
+        };
+
+    // Only build the portable .gtbundle artifact when we are NOT uploading a
+    // warmed bundle. When upload_bundle is set the warmed path returned by
+    // resolve_upload_bundle is the canonical artifact; there is no need to run
+    // the greentic-setup pre-build.
+    let bundle_artifact = if synthesized_source.is_some() {
+        // Use the bundle dir itself as a sentinel path; the actual artifact is
+        // the warmed bundle that was already uploaded. The path is only used
+        // for informational prints and digest computation when
+        // synthesized_source is None, so this branch is safe.
+        resolved.bundle_dir.clone()
+    } else {
+        prepare_deployable_bundle_artifact(resolved, debug, locale)?
+    };
+
+    let remote_override = synthesized_source
+        .as_ref()
+        .map(|(url, _)| url.clone())
+        .or_else(|| cli_options.deploy_bundle_source.clone())
+        .or_else(resolve_remote_deploy_bundle_source_override);
+
     let child_env = validate_cloud_deploy_inputs(
         target,
-        Some(deploy_bundle_source.as_str()),
+        remote_override.as_deref(),
         &resolved.bundle_dir,
         locale,
     )?;
+
+    let deploy_bundle_source = remote_override
+        .clone()
+        .unwrap_or_else(|| bundle_artifact.display().to_string());
+
+    // Use the synthesized digest when available (from upload); otherwise compute from artifact.
+    let bundle_digest = if let Some((_, digest)) = synthesized_source.as_ref() {
+        digest.clone()
+    } else {
+        perf_targets::sha256_file(&bundle_artifact).map_err(GtcError::message)?
+    };
+
     let app_pack =
         resolve_deploy_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
     let provider_pack = resolve_target_provider_pack(
@@ -535,7 +355,7 @@ fn run_multi_target_deployer_apply(
     println!("Deployment artifact: {}", bundle_artifact.display());
     println!("Deployment bundle source: {deploy_bundle_source}");
     println!("Deployment bundle digest: {bundle_digest}");
-    if remote_override.is_none() && deploy_bundle_source == bundle_artifact.display().to_string() {
+    if remote_override.is_none() {
         println!(
             "Note: no GREENTIC_DEPLOY_BUNDLE_SOURCE override set; cloud deploy will use the local artifact path above."
         );
@@ -684,9 +504,7 @@ fn remove_deployment_state_file(deployment_key: &str, target: StartTarget) -> Gt
 #[cfg(test)]
 mod tests {
     use super::{
-        StartDeploymentState, auto_publish_bundle_tag_from_digest,
-        build_auto_published_bundle_s3_object_uri, default_aws_bundle_publish_base,
-        deployment_state_path, load_deployment_state, parse_s3_uri,
+        StartDeploymentState, deployment_state_path, load_deployment_state,
         prepare_deployable_bundle_artifact, remove_deployment_state_file,
         resolve_remote_deploy_bundle_source_override, save_deployment_state,
     };
@@ -725,56 +543,6 @@ mod tests {
             env::remove_var("GREENTIC_DEPLOY_BUNDLE_SOURCE");
         }
         assert_eq!(value.as_deref(), Some("https://example.com/demo"));
-    }
-
-    #[test]
-    fn auto_published_bundle_s3_object_is_stable() {
-        assert_eq!(
-            auto_publish_bundle_tag_from_digest(
-                "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-            ),
-            "sha256-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        );
-        assert_eq!(
-            build_auto_published_bundle_s3_object_uri(
-                "s3://demo-bucket/greentic/aws/bundles/",
-                "demo-bundle",
-                "sha256:abc123"
-            )
-            .expect("s3 object"),
-            "s3://demo-bucket/greentic/aws/bundles/demo-bundle-sha256-abc123.gtbundle"
-        );
-        assert_eq!(
-            parse_s3_uri("s3://demo-bucket/greentic/aws/bundles").expect("parse"),
-            (
-                "demo-bucket".to_string(),
-                "greentic/aws/bundles".to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn default_aws_bundle_publish_base_uses_backend_bucket() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        assert_eq!(
-            {
-                unsafe {
-                    env::set_var("GREENTIC_TERRAFORM_BACKEND_BUCKET", "state-bucket");
-                    env::set_var(
-                        "GREENTIC_TERRAFORM_BACKEND_KEY",
-                        "greentic/aws/demo/dev/terraform.tfstate",
-                    );
-                }
-                let value = default_aws_bundle_publish_base();
-                unsafe {
-                    env::remove_var("GREENTIC_TERRAFORM_BACKEND_BUCKET");
-                    env::remove_var("GREENTIC_TERRAFORM_BACKEND_KEY");
-                }
-                value
-            },
-            Some("s3://state-bucket/greentic/aws/demo/dev/bundles".to_string())
-        );
-        assert_eq!(default_aws_bundle_publish_base(), None);
     }
 
     #[cfg(unix)]
@@ -897,7 +665,6 @@ mod tests {
             tenant: Some("demo".to_string()),
             team: Some("ops".to_string()),
             no_nats: false,
-            no_browser: false,
             nats: NatsModeArg::Off,
             nats_url: None,
             config: None,
@@ -910,6 +677,7 @@ mod tests {
             log_dir: None,
             verbose: false,
             quiet: false,
+            no_browser: false,
             admin: false,
             admin_port: 8443,
             admin_certs_dir: None,
@@ -923,6 +691,8 @@ mod tests {
             provider_pack: Some(provider_pack),
             app_pack: Some(app_pack),
             deploy_bundle_source: Some("https://example.com/demo.gtbundle".to_string()),
+            upload_bundle: None,
+            upload_bundle_presign_expires: None,
         };
         let resolved = StartBundleResolution {
             bundle_dir: bundle_dir.clone(),
@@ -966,330 +736,6 @@ mod tests {
         assert!(logged.contains("apply --tenant demo"));
         assert!(logged.contains("--bundle-source https://example.com/demo.gtbundle"));
         assert!(logged.contains("--environment prod"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn multi_target_deployer_apply_reuses_remote_bundle_ref_without_override() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().expect("tempdir");
-        let bundle_dir = dir.path().join("bundle");
-        fs::create_dir_all(&bundle_dir).expect("mkdir");
-        let app_pack = dir.path().join("app.gtpack");
-        let provider_pack = dir.path().join("terraform.gtpack");
-        fs::write(&app_pack, b"app").expect("write");
-        fs::write(&provider_pack, b"provider").expect("write");
-
-        let artifact = dir.path().join("bundle.gtbundle");
-        fs::write(&artifact, b"bundle").expect("write");
-
-        let terraform_dir = dir.path().join("terraform-bin");
-        fs::create_dir_all(&terraform_dir).expect("mkdir");
-        let terraform = terraform_dir.join("terraform");
-        fs::write(&terraform, "#!/bin/sh\nexit 0\n").expect("write");
-        fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755)).expect("chmod");
-
-        let log = dir.path().join("deployer.log");
-        let _deployer = fake_deployer_contract(Some(&log));
-
-        let request = StartRequest {
-            bundle: Some(bundle_dir.display().to_string()),
-            tenant: Some("demo".to_string()),
-            team: Some("ops".to_string()),
-            no_nats: false,
-            no_browser: false,
-            nats: NatsModeArg::Off,
-            nats_url: None,
-            config: None,
-            cloudflared: CloudflaredModeArg::Off,
-            cloudflared_binary: None,
-            ngrok: NgrokModeArg::Off,
-            ngrok_binary: None,
-            runner_binary: None,
-            restart: Vec::new(),
-            log_dir: None,
-            verbose: false,
-            quiet: false,
-            admin: false,
-            admin_port: 8443,
-            admin_certs_dir: None,
-            admin_allowed_clients: Vec::new(),
-            tunnel_explicit: true,
-        };
-        let cli_options = StartCliOptions {
-            start_args: Vec::new(),
-            explicit_target: Some(StartTarget::Azure),
-            environment: None,
-            provider_pack: Some(provider_pack),
-            app_pack: Some(app_pack),
-            deploy_bundle_source: None,
-        };
-        let resolved = StartBundleResolution {
-            bundle_dir: bundle_dir.clone(),
-            deployment_key: "demo".to_string(),
-            deploy_artifact: Some(artifact),
-            _hold: None,
-        };
-
-        let original_path = env::var_os("PATH");
-        unsafe {
-            env::set_var("PATH", &terraform_dir);
-            env::set_var("ARM_CLIENT_ID", "client");
-            env::set_var("ARM_TENANT_ID", "tenant");
-            env::set_var("ARM_SUBSCRIPTION_ID", "sub");
-            env::set_var("ARM_USE_OIDC", "true");
-            env::set_var(
-                "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
-                "azurerm",
-            );
-        }
-
-        run_multi_target_deployer_apply(
-            "oci://ghcr.io/greenticai/bundles/cloud-demo:stable",
-            &resolved,
-            &request,
-            &cli_options,
-            StartTarget::Azure,
-            false,
-            "en",
-        )
-        .expect("apply");
-
-        unsafe {
-            match original_path {
-                Some(path) => env::set_var("PATH", path),
-                None => env::remove_var("PATH"),
-            }
-            env::remove_var("ARM_CLIENT_ID");
-            env::remove_var("ARM_TENANT_ID");
-            env::remove_var("ARM_SUBSCRIPTION_ID");
-            env::remove_var("ARM_USE_OIDC");
-            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
-        }
-
-        let logged = fs::read_to_string(log).expect("read");
-        assert!(
-            logged.contains("--bundle-source oci://ghcr.io/greenticai/bundles/cloud-demo:stable")
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn multi_target_deployer_apply_auto_publishes_local_aws_bundle_to_s3() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().expect("tempdir");
-        let bundle_dir = dir.path().join("bundle");
-        fs::create_dir_all(&bundle_dir).expect("mkdir");
-        let app_pack = dir.path().join("app.gtpack");
-        let provider_pack = dir.path().join("terraform.gtpack");
-        fs::write(&app_pack, b"app").expect("write");
-        fs::write(&provider_pack, b"provider").expect("write");
-
-        let artifact = dir.path().join("bundle.gtbundle");
-        fs::write(&artifact, b"bundle").expect("write");
-
-        let bin_dir = dir.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("mkdir");
-        let terraform = bin_dir.join("terraform");
-        fs::write(&terraform, "#!/bin/sh\nexit 0\n").expect("write");
-        fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755)).expect("chmod");
-
-        let aws_log = dir.path().join("aws.log");
-        let aws = bin_dir.join("aws");
-        fs::write(
-            &aws,
-            format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"s3\" ] && [ \"$2\" = \"presign\" ]; then\n  printf '%s\\n' 'https://s3.example.test/presigned-demo.gtbundle'\nfi\nexit 0\n",
-                aws_log.display()
-            ),
-        )
-        .expect("write");
-        fs::set_permissions(&aws, fs::Permissions::from_mode(0o755)).expect("chmod");
-
-        let deployer_log = dir.path().join("deployer.log");
-        let _deployer = fake_deployer_contract(Some(&deployer_log));
-
-        let request = StartRequest {
-            bundle: Some(bundle_dir.display().to_string()),
-            tenant: Some("demo".to_string()),
-            team: Some("ops".to_string()),
-            no_nats: false,
-            no_browser: false,
-            nats: NatsModeArg::Off,
-            nats_url: None,
-            config: None,
-            cloudflared: CloudflaredModeArg::Off,
-            cloudflared_binary: None,
-            ngrok: NgrokModeArg::Off,
-            ngrok_binary: None,
-            runner_binary: None,
-            restart: Vec::new(),
-            log_dir: None,
-            verbose: false,
-            quiet: false,
-            admin: false,
-            admin_port: 8443,
-            admin_certs_dir: None,
-            admin_allowed_clients: Vec::new(),
-            tunnel_explicit: true,
-        };
-        let cli_options = StartCliOptions {
-            start_args: Vec::new(),
-            explicit_target: Some(StartTarget::Aws),
-            environment: None,
-            provider_pack: Some(provider_pack),
-            app_pack: Some(app_pack),
-            deploy_bundle_source: None,
-        };
-        let resolved = StartBundleResolution {
-            bundle_dir: bundle_dir.clone(),
-            deployment_key: "demo".to_string(),
-            deploy_artifact: Some(artifact),
-            _hold: None,
-        };
-
-        let original_path = env::var_os("PATH");
-        unsafe {
-            env::set_var("PATH", &bin_dir);
-            env::set_var("GREENTIC_TERRAFORM_BACKEND_BUCKET", "state-bucket");
-            env::set_var(
-                "GREENTIC_TERRAFORM_BACKEND_KEY",
-                "greentic/aws/demo/dev/terraform.tfstate",
-            );
-            env::set_var("AWS_ACCESS_KEY_ID", "key");
-            env::set_var("AWS_SECRET_ACCESS_KEY", "secret");
-            env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "s3");
-        }
-
-        run_multi_target_deployer_apply(
-            "./bundle",
-            &resolved,
-            &request,
-            &cli_options,
-            StartTarget::Aws,
-            false,
-            "en",
-        )
-        .expect("apply");
-
-        unsafe {
-            match original_path {
-                Some(path) => env::set_var("PATH", path),
-                None => env::remove_var("PATH"),
-            }
-            env::remove_var("GREENTIC_TERRAFORM_BACKEND_BUCKET");
-            env::remove_var("GREENTIC_TERRAFORM_BACKEND_KEY");
-            env::remove_var("AWS_ACCESS_KEY_ID");
-            env::remove_var("AWS_SECRET_ACCESS_KEY");
-            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
-        }
-
-        let aws_logged = fs::read_to_string(aws_log).expect("read");
-        assert!(aws_logged.contains("s3api put-object"));
-        assert!(aws_logged.contains("--bucket state-bucket"));
-        assert!(aws_logged.contains("--key greentic/aws/demo/dev/bundles/demo-sha256-"));
-        assert!(aws_logged.contains("--body"));
-        assert!(aws_logged.contains("s3 presign"));
-
-        let deployer_logged = fs::read_to_string(deployer_log).expect("read");
-        assert!(
-            deployer_logged
-                .contains("--bundle-source https://s3.example.test/presigned-demo.gtbundle")
-        );
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn multi_target_deployer_apply_requires_aws_bundle_destination_when_no_backend_bucket_exists() {
-        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-        let dir = tempfile::tempdir().expect("tempdir");
-        let bundle_dir = dir.path().join("bundle");
-        fs::create_dir_all(&bundle_dir).expect("mkdir");
-        let app_pack = dir.path().join("app.gtpack");
-        let provider_pack = dir.path().join("terraform.gtpack");
-        fs::write(&app_pack, b"app").expect("write");
-        fs::write(&provider_pack, b"provider").expect("write");
-
-        let artifact = dir.path().join("bundle.gtbundle");
-        fs::write(&artifact, b"bundle").expect("write");
-
-        let bin_dir = dir.path().join("bin");
-        fs::create_dir_all(&bin_dir).expect("mkdir");
-        let terraform = bin_dir.join("terraform");
-        fs::write(&terraform, "#!/bin/sh\nexit 0\n").expect("write");
-        fs::set_permissions(&terraform, fs::Permissions::from_mode(0o755)).expect("chmod");
-
-        let request = StartRequest {
-            bundle: Some(bundle_dir.display().to_string()),
-            tenant: Some("demo".to_string()),
-            team: Some("ops".to_string()),
-            no_nats: false,
-            no_browser: false,
-            nats: NatsModeArg::Off,
-            nats_url: None,
-            config: None,
-            cloudflared: CloudflaredModeArg::Off,
-            cloudflared_binary: None,
-            ngrok: NgrokModeArg::Off,
-            ngrok_binary: None,
-            runner_binary: None,
-            restart: Vec::new(),
-            log_dir: None,
-            verbose: false,
-            quiet: false,
-            admin: false,
-            admin_port: 8443,
-            admin_certs_dir: None,
-            admin_allowed_clients: Vec::new(),
-            tunnel_explicit: true,
-        };
-        let cli_options = StartCliOptions {
-            start_args: Vec::new(),
-            explicit_target: Some(StartTarget::Aws),
-            environment: None,
-            provider_pack: Some(provider_pack),
-            app_pack: Some(app_pack),
-            deploy_bundle_source: None,
-        };
-        let resolved = StartBundleResolution {
-            bundle_dir: bundle_dir.clone(),
-            deployment_key: "demo".to_string(),
-            deploy_artifact: Some(artifact),
-            _hold: None,
-        };
-
-        let original_path = env::var_os("PATH");
-        unsafe {
-            env::set_var("PATH", &bin_dir);
-            env::remove_var("GREENTIC_TERRAFORM_BACKEND_BUCKET");
-            env::remove_var("GREENTIC_TERRAFORM_BACKEND_KEY");
-            env::set_var("AWS_ACCESS_KEY_ID", "key");
-            env::set_var("AWS_SECRET_ACCESS_KEY", "secret");
-            env::set_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "s3");
-        }
-
-        let err = run_multi_target_deployer_apply(
-            "./bundle",
-            &resolved,
-            &request,
-            &cli_options,
-            StartTarget::Aws,
-            false,
-            "en",
-        )
-        .expect_err("apply should fail without backend bucket");
-
-        unsafe {
-            match original_path {
-                Some(path) => env::set_var("PATH", path),
-                None => env::remove_var("PATH"),
-            }
-            env::remove_var("AWS_ACCESS_KEY_ID");
-            env::remove_var("AWS_SECRET_ACCESS_KEY");
-            env::remove_var("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND");
-        }
-
-        assert!(err.contains("automatic aws cloud bundle publication needs an S3 destination"));
     }
 
     #[cfg(unix)]
