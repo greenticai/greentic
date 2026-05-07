@@ -979,6 +979,57 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .arg(cmd_args),
         )
         .subcommand(
+            Command::new("deploy")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about("Manage cloud deploys (refresh URLs, status, etc.)")
+                .subcommand(
+                    Command::new("refresh-bundle-url")
+                        .help_template(help_template)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about(
+                            "Re-issue a fresh presigned URL for an already-uploaded bundle and re-apply terraform.",
+                        )
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help("Bundle path/ref previously deployed via --upload-bundle"),
+                        )
+                        .arg(
+                            Arg::new("cloud")
+                                .long("cloud")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help("Cloud provider (auto-detected from deploy state if omitted)"),
+                        )
+                        .arg(
+                            Arg::new("environment")
+                                .long("environment")
+                                .value_name("ENV")
+                                .num_args(1)
+                                .default_value("dev")
+                                .help_heading(options_heading)
+                                .help("Environment name used during the original deploy"),
+                        )
+                        .arg(
+                            Arg::new("upload-bundle-presign-expires")
+                                .long("upload-bundle-presign-expires")
+                                .value_name("SECONDS")
+                                .num_args(1)
+                                .default_value("604800")
+                                .help_heading(options_heading)
+                                .help("Presigned URL expiry in seconds"),
+                        ),
+                ),
+        )
+        .subcommand(
             Command::new("help")
                 .help_template(help_template)
                 .subcommand_help_heading(commands_heading)
