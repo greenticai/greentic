@@ -32,6 +32,9 @@ pub(crate) fn resolve_target_provider_pack(
     if let Some(path) = resolve_target_provider_pack_from_metadata(bundle_dir, target)? {
         return Ok(path);
     }
+    if let Some(path) = resolve_target_provider_pack_from_bundle_layout(bundle_dir, target) {
+        return Ok(path);
+    }
     if let Some(path) = resolve_canonical_target_provider_pack(target) {
         return Ok(path);
     }
@@ -61,6 +64,51 @@ pub(crate) fn resolve_canonical_target_provider_pack_from(
         candidates.push(repo_dir.join("dist").join(filename));
     }
     candidates.into_iter().find(|candidate| candidate.is_file())
+}
+
+fn resolve_target_provider_pack_from_bundle_layout(
+    bundle_dir: &Path,
+    target: StartTarget,
+) -> Option<PathBuf> {
+    let deployer_dir = bundle_dir.join("providers").join("deployer");
+    if !deployer_dir.is_dir() {
+        return None;
+    }
+
+    for candidate_name in bundle_layout_provider_pack_candidates(target) {
+        let candidate = deployer_dir.join(candidate_name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+
+    None
+}
+
+fn bundle_layout_provider_pack_candidates(target: StartTarget) -> Vec<String> {
+    let mut candidates = Vec::new();
+
+    match target {
+        StartTarget::Aws => {
+            candidates.push("greentic.deploy.aws.gtpack".to_string());
+            candidates.push("aws.gtpack".to_string());
+            candidates.push("terraform.gtpack".to_string());
+        }
+        StartTarget::Gcp => {
+            candidates.push("greentic.deploy.gcp.gtpack".to_string());
+            candidates.push("gcp.gtpack".to_string());
+            candidates.push("terraform.gtpack".to_string());
+        }
+        StartTarget::Azure => {
+            candidates.push("greentic.deploy.azure.gtpack".to_string());
+            candidates.push("azure.gtpack".to_string());
+            candidates.push("terraform.gtpack".to_string());
+        }
+        StartTarget::SingleVm | StartTarget::Runtime => {}
+    }
+
+    candidates.dedup();
+    candidates
 }
 
 fn canonical_target_provider_pack_filename(target: StartTarget) -> GtcResult<Option<String>> {
@@ -230,9 +278,11 @@ fn resolve_app_pack_path_from_bundle_metadata(bundle_dir: &Path) -> GtcResult<Op
 #[cfg(test)]
 mod tests {
     use super::{
-        canonical_target_provider_pack_filename, load_deployment_targets_document,
-        resolve_app_pack_path_from_bundle_metadata, resolve_canonical_target_provider_pack_from,
-        resolve_deploy_app_pack_path, resolve_target_provider_pack_from_metadata,
+        bundle_layout_provider_pack_candidates, canonical_target_provider_pack_filename,
+        load_deployment_targets_document, resolve_app_pack_path_from_bundle_metadata,
+        resolve_canonical_target_provider_pack_from, resolve_deploy_app_pack_path,
+        resolve_target_provider_pack, resolve_target_provider_pack_from_bundle_layout,
+        resolve_target_provider_pack_from_metadata,
     };
     use crate::deploy::StartTarget;
     use crate::tests::env_test_lock;
@@ -349,6 +399,47 @@ mod tests {
 
         let resolved = resolve_canonical_target_provider_pack_from(Some(&exe), "terraform.gtpack");
         assert_eq!(resolved.as_deref(), Some(pack.as_path()));
+    }
+
+    #[test]
+    fn bundle_layout_provider_pack_candidates_include_new_and_legacy_aws_names() {
+        let candidates = bundle_layout_provider_pack_candidates(StartTarget::Aws);
+        assert!(candidates.contains(&"greentic.deploy.aws.gtpack".to_string()));
+        assert!(candidates.contains(&"aws.gtpack".to_string()));
+        assert!(candidates.contains(&"terraform.gtpack".to_string()));
+    }
+
+    #[test]
+    fn resolve_target_provider_pack_from_bundle_layout_uses_bundled_cloud_pack() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let deployer_dir = dir.path().join("providers").join("deployer");
+        fs::create_dir_all(&deployer_dir).expect("mkdir");
+        let pack = deployer_dir.join("greentic.deploy.aws.gtpack");
+        fs::write(&pack, b"fixture").expect("write pack");
+
+        let resolved =
+            resolve_target_provider_pack_from_bundle_layout(dir.path(), StartTarget::Aws);
+        assert_eq!(resolved.as_deref(), Some(pack.as_path()));
+    }
+
+    #[test]
+    fn resolve_target_provider_pack_prefers_bundled_cloud_pack_when_metadata_omits_path() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let greentic = dir.path().join(".greentic");
+        fs::create_dir_all(&greentic).expect("mkdir");
+        fs::write(
+            greentic.join("deployment-targets.json"),
+            r#"{"targets":[{"target":"aws"}]}"#,
+        )
+        .expect("write metadata");
+        let deployer_dir = dir.path().join("providers").join("deployer");
+        fs::create_dir_all(&deployer_dir).expect("mkdir");
+        let pack = deployer_dir.join("greentic.deploy.aws.gtpack");
+        fs::write(&pack, b"fixture").expect("write pack");
+
+        let resolved = resolve_target_provider_pack(dir.path(), StartTarget::Aws, None)
+            .expect("provider pack");
+        assert_eq!(resolved, pack);
     }
 
     #[test]

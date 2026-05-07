@@ -69,10 +69,9 @@ pub(crate) fn validate_cloud_deploy_inputs(
             child_env.extend(ensure_cloud_credentials(target, locale)?);
             child_env.extend(ensure_target_terraform_inputs(target, locale)?);
             if requirements.remote_bundle_source_required {
-                let remote_bundle_help = requirements
-                    .remote_bundle_source_help
-                    .as_deref()
-                    .unwrap_or("Pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE");
+                let remote_bundle_help = requirements.remote_bundle_source_help.as_deref().unwrap_or(
+                    "Pass --deploy-bundle-source https://.../bundle.gtbundle or set GREENTIC_DEPLOY_BUNDLE_SOURCE",
+                );
                 let remote_bundle_source = remote_bundle_source.ok_or_else(|| {
                     GtcError::message(format!(
                         "{} deploy requires a remote bundle source; {}",

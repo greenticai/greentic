@@ -65,6 +65,11 @@ gtc setup --no-ui ./cloud-deploy-demo-bundle --answers https://github.com/greent
 gtc start ./cloud-deploy-demo-bundle
 ```
 
+Notes:
+- For AWS, `gtc start` now auto-publishes a locally built `.gtbundle` to S3 and passes a presigned `https://` bundle URL into deploy.
+- If `GREENTIC_TERRAFORM_BACKEND_BUCKET` is already set, `gtc` reuses it as the default S3 publish location and lets you keep or change it interactively.
+- The AWS path now requires the `aws` CLI in `PATH`.
+
 Greentic is designed so the path from local proof-of-value to production deployment is short, explicit, and repeatable.
 
 
