@@ -99,18 +99,23 @@ fn run_bundle_build(
         )));
     }
 
-    // Find the produced .gtbundle in out_dir.
-    let entries = std::fs::read_dir(out_dir).map_err(|e| {
-        GtcError::message(format!(
-            "read built bundle out dir {}: {e}",
-            out_dir.display()
-        ))
-    })?;
+    // Find the produced .gtbundle. greentic-setup bundle build writes a portable
+    // bundle directory to <out>; the packaged .gtbundle lands at <out>/dist/*.gtbundle.
+    // Fall back to <out>/*.gtbundle for forward-compat with formats that flatten output.
+    let candidates = [out_dir.join("dist"), out_dir.to_path_buf()];
     let mut found = None;
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|s| s.to_str()) == Some("gtbundle") {
-            found = Some(path);
+    for dir in &candidates {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) == Some("gtbundle") {
+                found = Some(path);
+                break;
+            }
+        }
+        if found.is_some() {
             break;
         }
     }
