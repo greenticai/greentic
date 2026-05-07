@@ -353,7 +353,14 @@ fn ensure_cloud_credentials(target: StartTarget, locale: &str) -> GtcResult<Chil
 /// credentials on their own without explicit env vars.
 fn aws_default_credential_chain_available() -> bool {
     match std::process::Command::new("aws")
-        .args(["sts", "get-caller-identity", "--output", "text", "--query", "Account"])
+        .args([
+            "sts",
+            "get-caller-identity",
+            "--output",
+            "text",
+            "--query",
+            "Account",
+        ])
         .output()
     {
         Ok(output) if output.status.success() => {

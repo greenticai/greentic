@@ -677,6 +677,7 @@ mod tests {
             log_dir: None,
             verbose: false,
             quiet: false,
+            no_browser: false,
             admin: false,
             admin_port: 8443,
             admin_certs_dir: None,

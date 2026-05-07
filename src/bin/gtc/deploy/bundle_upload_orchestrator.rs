@@ -10,6 +10,9 @@ use serde::Deserialize;
 
 use gtc::error::{GtcError, GtcResult};
 
+use crate::DEPLOYER_BIN;
+use crate::process::resolve_companion_command;
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct UploadedBundle {
     pub url: String,
@@ -95,7 +98,8 @@ pub fn upload_bundle(
     bundle: &Path,
     presign_expires: u64,
 ) -> GtcResult<UploadedBundle> {
-    let output = ProcessCommand::new("greentic-deployer")
+    let deployer_bin = resolve_companion_command(DEPLOYER_BIN);
+    let output = ProcessCommand::new(&deployer_bin)
         .arg("bundle-upload")
         .arg("upload")
         .arg("--target")
@@ -127,7 +131,8 @@ pub fn upload_bundle(
 /// Spawn `greentic-deployer bundle-upload refresh-url --object-ref <ref> --presign-expires <secs>`
 /// and parse JSON stdout into `UploadedBundle`.
 pub fn refresh_bundle_url(object_ref: &str, presign_expires: u64) -> GtcResult<UploadedBundle> {
-    let output = ProcessCommand::new("greentic-deployer")
+    let deployer_bin = resolve_companion_command(DEPLOYER_BIN);
+    let output = ProcessCommand::new(&deployer_bin)
         .arg("bundle-upload")
         .arg("refresh-url")
         .arg("--object-ref")
@@ -154,6 +159,12 @@ pub fn refresh_bundle_url(object_ref: &str, presign_expires: u64) -> GtcResult<U
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::env_test_lock;
+    use std::env;
+    use std::fs;
+
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn prepare_warmed_bundle_rejects_non_directory() {
@@ -164,5 +175,92 @@ mod tests {
             msg.contains("requires a bundle DIRECTORY"),
             "expected directory error, got: {msg}"
         );
+    }
+
+    #[cfg(unix)]
+    fn write_fake_bundle_upload_script(script: &Path, log_path: &Path) {
+        let body = format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "{log}"
+if [ "$1" = "bundle-upload" ] && [ "$2" = "upload" ]; then
+  printf '%s\n' '{{"url":"https://example.test/uploaded.gtbundle","digest":"sha256:abc","expires_at":"2026-05-14T00:00:00Z","object_ref":"s3://bucket/key"}}'
+  exit 0
+fi
+if [ "$1" = "bundle-upload" ] && [ "$2" = "refresh-url" ]; then
+  printf '%s\n' '{{"url":"https://example.test/refreshed.gtbundle","digest":"sha256:def","expires_at":"2026-05-15T00:00:00Z","object_ref":"s3://bucket/key"}}'
+  exit 0
+fi
+echo "unexpected args: $*" >&2
+exit 1
+"#,
+            log = log_path.display()
+        );
+        fs::write(script, body).expect("write fake bundle upload script");
+        let mut perms = fs::metadata(script).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(script, perms).expect("chmod");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upload_bundle_respects_greentic_deployer_bin_override() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("greentic-deployer");
+        let log_path = dir.path().join("upload.log");
+        let bundle = dir.path().join("demo.gtbundle");
+        write_fake_bundle_upload_script(&script, &log_path);
+        fs::write(&bundle, b"bundle").expect("bundle file");
+
+        let original = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &script);
+        }
+
+        let result = upload_bundle("s3://bucket/prefix", &bundle, 123).expect("upload");
+
+        unsafe {
+            match original {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+
+        assert_eq!(result.digest, "sha256:abc");
+        let logged = fs::read_to_string(&log_path).expect("read log");
+        assert!(logged.contains("bundle-upload upload"));
+        assert!(logged.contains("--target s3://bucket/prefix"));
+        assert!(logged.contains("--bundle"));
+        assert!(logged.contains("--presign-expires 123"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refresh_bundle_url_respects_greentic_deployer_bin_override() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("greentic-deployer");
+        let log_path = dir.path().join("refresh.log");
+        write_fake_bundle_upload_script(&script, &log_path);
+
+        let original = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &script);
+        }
+
+        let result = refresh_bundle_url("s3://bucket/key", 456).expect("refresh");
+
+        unsafe {
+            match original {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+
+        assert_eq!(result.digest, "sha256:def");
+        let logged = fs::read_to_string(&log_path).expect("read log");
+        assert!(logged.contains("bundle-upload refresh-url"));
+        assert!(logged.contains("--object-ref s3://bucket/key"));
+        assert!(logged.contains("--presign-expires 456"));
     }
 }
