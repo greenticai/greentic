@@ -3,6 +3,29 @@ use clap::{Arg, ArgAction, Command};
 use crate::i18n_support::{leak_str, t, t_or};
 use crate::router::passthrough_args;
 
+fn upload_bundle_args(options_heading: &'static str) -> Vec<Arg> {
+    vec![
+        Arg::new("upload-bundle")
+            .long("upload-bundle")
+            .value_name("URL")
+            .num_args(1)
+            .help_heading(options_heading)
+            .help(
+                "Upload local bundle to cloud storage and use as --deploy-bundle-source. \
+                 Mutually exclusive with --deploy-bundle-source. \
+                 Schemes: s3://, gs://, https://*.blob.core.windows.net/",
+            )
+            .conflicts_with("deploy-bundle-source"),
+        Arg::new("upload-bundle-presign-expires")
+            .long("upload-bundle-presign-expires")
+            .value_name("SECONDS")
+            .num_args(1)
+            .default_value("604800")
+            .help_heading(options_heading)
+            .help("Presigned URL expiry in seconds (S3 hard-caps at 604800 = 7 days)"),
+    ]
+}
+
 pub(super) fn build_cli(locale: &str) -> Command {
     let cmd_args = passthrough_args();
     let options_heading = leak_str(t(locale, "gtc.help.options.heading").into_owned());
@@ -871,6 +894,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.deploy_bundle_source.help").into_owned()),
                 )
+                .args(upload_bundle_args(options_heading))
                 .arg(cmd_args.clone()),
         )
         .subcommand(
