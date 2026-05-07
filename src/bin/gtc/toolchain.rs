@@ -1401,6 +1401,8 @@ struct BearerTokenResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::env_test_lock;
+    use clap::{Arg, ArgAction, Command};
     use tempfile::tempdir;
 
     fn pinned_manifest() -> ToolchainManifest {
@@ -1565,5 +1567,205 @@ mod tests {
                 .starts_with("sha256:")
         );
         assert_eq!(resolved.source_kind, "local");
+    }
+
+    #[test]
+    fn toolchain_install_options_default_to_stable_channel() {
+        let matches = Command::new("toolchain")
+            .arg(Arg::new("manifest").long("manifest"))
+            .arg(Arg::new("release").long("release"))
+            .arg(Arg::new("channel").long("channel"))
+            .arg(Arg::new("force").long("force").action(ArgAction::SetTrue))
+            .arg(
+                Arg::new("dry-run")
+                    .long("dry-run")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-binaries-only")
+                    .long("install-binaries-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-packs-only")
+                    .long("install-packs-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-components-only")
+                    .long("install-components-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .get_matches_from(["toolchain"]);
+
+        let options = ToolchainInstallOptions::from_matches(&matches, "stable").expect("options");
+        assert_eq!(
+            options.source,
+            ToolchainSource::Channel("stable".to_string())
+        );
+        assert!(!options.force);
+        assert!(!options.dry_run);
+    }
+
+    #[test]
+    fn toolchain_install_options_prefer_manifest_over_release_and_channel() {
+        let matches = Command::new("toolchain")
+            .arg(Arg::new("manifest").long("manifest"))
+            .arg(Arg::new("release").long("release"))
+            .arg(Arg::new("channel").long("channel"))
+            .arg(Arg::new("force").long("force").action(ArgAction::SetTrue))
+            .arg(
+                Arg::new("dry-run")
+                    .long("dry-run")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-binaries-only")
+                    .long("install-binaries-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-packs-only")
+                    .long("install-packs-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .arg(
+                Arg::new("install-components-only")
+                    .long("install-components-only")
+                    .action(ArgAction::SetTrue),
+            )
+            .get_matches_from([
+                "toolchain",
+                "--manifest",
+                "/tmp/manifest.json",
+                "--release",
+                "1.2.3",
+                "--channel",
+                "dev",
+                "--force",
+                "--dry-run",
+            ]);
+
+        let options = ToolchainInstallOptions::from_matches(&matches, "stable").expect("options");
+        assert_eq!(
+            options.source,
+            ToolchainSource::LocalManifest(PathBuf::from("/tmp/manifest.json"))
+        );
+        assert!(options.force);
+        assert!(options.dry_run);
+    }
+
+    #[test]
+    fn parse_cargo_search_version_requires_matching_crate_and_quoted_version() {
+        assert_eq!(
+            parse_cargo_search_version(
+                "other = \"1.0.0\"\ngreentic-dev = \"0.6.0\" # demo",
+                "greentic-dev"
+            )
+            .as_deref(),
+            Some("0.6.0")
+        );
+        assert_eq!(
+            parse_cargo_search_version("greentic-dev = latest", "greentic-dev"),
+            None
+        );
+    }
+
+    #[test]
+    fn validate_toolchain_manifest_rejects_missing_bins_and_empty_bin_names() {
+        let mut missing_bins = pinned_manifest();
+        missing_bins.packages[0].bins.clear();
+        assert!(validate_toolchain_manifest(&missing_bins).is_err());
+
+        let mut empty_bin = pinned_manifest();
+        empty_bin.packages[0].bins = vec!["".to_string()];
+        assert!(validate_toolchain_manifest(&empty_bin).is_err());
+    }
+
+    #[test]
+    fn resolve_toolchain_manifest_uses_env_override_for_channel_sources() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("manifest.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&pinned_manifest()).expect("encode manifest"),
+        )
+        .expect("write manifest");
+
+        unsafe {
+            env::set_var("GTC_TOOLCHAIN_MANIFEST_PATH", &path);
+        }
+        let resolved = resolve_toolchain_manifest(
+            &ToolchainSource::Channel("stable".to_string()),
+            false,
+            "en",
+        )
+        .expect("resolve");
+        unsafe {
+            env::remove_var("GTC_TOOLCHAIN_MANIFEST_PATH");
+        }
+
+        assert_eq!(resolved.source_kind, "channel");
+        assert_eq!(
+            resolved.source,
+            "ghcr.io/greenticai/greentic-versions/gtc:stable"
+        );
+        assert!(
+            resolved
+                .digest
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("sha256:")
+        );
+    }
+
+    #[test]
+    fn installed_toolchain_round_trip_uses_override_state_dir() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempdir().expect("tempdir");
+        unsafe {
+            env::set_var("GTC_TOOLCHAIN_STATE_DIR", dir.path());
+        }
+        let state = installed_state_from_resolved(&ResolvedManifest {
+            source: "demo".to_string(),
+            source_kind: "local".to_string(),
+            digest: Some("sha256:abc".to_string()),
+            manifest: pinned_manifest(),
+        });
+
+        write_installed_toolchain(&state).expect("write state");
+        let loaded = read_installed_toolchain()
+            .expect("read state")
+            .expect("installed state");
+        unsafe {
+            env::remove_var("GTC_TOOLCHAIN_STATE_DIR");
+        }
+
+        assert_eq!(loaded.schema, INSTALLED_TOOLCHAIN_SCHEMA);
+        assert_eq!(loaded.source, "demo");
+        assert_eq!(loaded.resolved_digest.as_deref(), Some("sha256:abc"));
+    }
+
+    #[test]
+    fn parse_bearer_challenge_extracts_realm_service_and_scope() {
+        let parsed = parse_bearer_challenge(
+            "Bearer realm=\"https://ghcr.io/token\",service=\"ghcr.io\",scope=\"repo:demo:pull\"",
+        )
+        .expect("challenge");
+        assert_eq!(
+            parsed.get("realm").map(String::as_str),
+            Some("https://ghcr.io/token")
+        );
+        assert_eq!(parsed.get("service").map(String::as_str), Some("ghcr.io"));
+        assert_eq!(
+            parsed.get("scope").map(String::as_str),
+            Some("repo:demo:pull")
+        );
+    }
+
+    #[test]
+    fn ghcr_reference_parse_rejects_missing_tag() {
+        assert!(GhcrReference::parse("ghcr.io/greenticai/greentic-versions/gtc").is_err());
     }
 }
