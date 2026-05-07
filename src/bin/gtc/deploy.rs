@@ -2,6 +2,8 @@
 mod bundle_resolution;
 #[path = "deploy/cloud_deploy.rs"]
 mod cloud_deploy;
+#[path = "deploy/refresh.rs"]
+mod refresh;
 #[path = "deploy/start_stop.rs"]
 mod start_stop;
 
@@ -24,6 +26,8 @@ pub(super) use cloud_deploy::{
 };
 #[allow(unused_imports)]
 pub(super) use gtc::start_stop_parsing::{parse_start_request, parse_stop_request};
+#[allow(unused_imports)]
+pub(super) use refresh::{RefreshArgs, run_refresh};
 #[allow(unused_imports)]
 pub(super) use start_stop::{
     parse_start_cli_options, parse_stop_cli_options, run_start, run_start_with_bundle_ref_and_tail,
