@@ -346,6 +346,11 @@ fn ensure_target_terraform_inputs(target: StartTarget, locale: &str) -> GtcResul
     if requirements.variable_requirements.is_empty() {
         return Ok(ChildProcessEnv::new());
     }
+    // Inject well-known defaults for variables that have an obvious per-target
+    // value before running the missing-variables check. This avoids requiring
+    // the user to set e.g. GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND
+    // manually when the only sensible value is dictated by the chosen target.
+    inject_terraform_var_defaults(target);
     let missing = collect_missing_required_variables(&requirements);
     if missing.is_empty() {
         return Ok(ChildProcessEnv::new());
@@ -374,6 +379,35 @@ fn ensure_target_terraform_inputs(target: StartTarget, locale: &str) -> GtcResul
         env.set(requirement.name, value);
     }
     Ok(env)
+}
+
+/// Inject sensible per-target defaults for well-known Terraform variables that
+/// would otherwise require explicit user configuration. Only sets the variable
+/// when it is not already present in the environment.
+fn inject_terraform_var_defaults(target: StartTarget) {
+    // (env_var_name, default_value) keyed by StartTarget.
+    let defaults: &[(&str, &str)] = match target {
+        StartTarget::Aws => &[("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "s3")],
+        StartTarget::Gcp => &[("GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND", "gcs")],
+        StartTarget::Azure => &[(
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
+            "azurerm",
+        )],
+        StartTarget::SingleVm | StartTarget::Runtime => &[],
+    };
+    for (var, value) in defaults {
+        if !env_var_present(var) {
+            eprintln!(
+                "gtc: defaulting {var}={value} (override with {var}=... to use a different backend)"
+            );
+            // SAFETY: set_var is deprecated in Rust 2024 edition for
+            // multi-threaded safety, but gtc's deploy path is single-threaded
+            // at this point and no other threads read this variable concurrently.
+            unsafe {
+                std::env::set_var(var, value);
+            }
+        }
+    }
 }
 
 fn collect_missing_required_variables(
