@@ -290,10 +290,11 @@ fn run_multi_target_deployer_apply(
     debug: bool,
     locale: &str,
 ) -> GtcResult<()> {
-    let bundle_artifact = prepare_deployable_bundle_artifact(resolved, debug, locale)?;
-
     // If --upload-bundle is set, run warmup + deployer upload and synthesize
-    // --deploy-bundle-source + --bundle-digest from the result.
+    // --deploy-bundle-source + --bundle-digest from the result. In this path
+    // prepare_warmed_bundle (inside resolve_upload_bundle) already builds the
+    // bundle, so we must NOT also call prepare_deployable_bundle_artifact which
+    // would run a redundant greentic-setup bundle build beforehand.
     let synthesized_source: Option<(String, String)> =
         if let Some(upload_target) = cli_options.upload_bundle.as_deref() {
             let presign = cli_options.upload_bundle_presign_expires.unwrap_or(604800);
@@ -303,6 +304,20 @@ fn run_multi_target_deployer_apply(
         } else {
             None
         };
+
+    // Only build the portable .gtbundle artifact when we are NOT uploading a
+    // warmed bundle. When upload_bundle is set the warmed path returned by
+    // resolve_upload_bundle is the canonical artifact; there is no need to run
+    // the greentic-setup pre-build.
+    let bundle_artifact = if synthesized_source.is_some() {
+        // Use the bundle dir itself as a sentinel path; the actual artifact is
+        // the warmed bundle that was already uploaded. The path is only used
+        // for informational prints and digest computation when
+        // synthesized_source is None, so this branch is safe.
+        resolved.bundle_dir.clone()
+    } else {
+        prepare_deployable_bundle_artifact(resolved, debug, locale)?
+    };
 
     let remote_override = synthesized_source
         .as_ref()
