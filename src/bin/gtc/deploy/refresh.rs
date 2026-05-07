@@ -192,10 +192,10 @@ fn derive_object_ref_from_url(url: &str) -> Option<String> {
         return Some(format!("s3://{bucket}/{path}"));
     }
     // Virtual-hosted-style with region: <bucket>.s3.<region>.amazonaws.com/<key>
-    if let Some((bucket, suffix)) = host.split_once(".s3.") {
-        if suffix.ends_with(".amazonaws.com") {
-            return Some(format!("s3://{bucket}/{path}"));
-        }
+    if let Some((bucket, suffix)) = host.split_once(".s3.")
+        && suffix.ends_with(".amazonaws.com")
+    {
+        return Some(format!("s3://{bucket}/{path}"));
     }
     None
 }
