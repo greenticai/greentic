@@ -5,7 +5,7 @@ mod provider_packs;
 #[path = "cloud_deploy/single_vm.rs"]
 mod single_vm;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::DEPLOYER_BIN;
 use crate::process::{resolve_binary_in_dir, run_binary_capture};
@@ -483,6 +483,72 @@ fn binary_in_path(binary: &str) -> bool {
             std::env::split_paths(&path).any(|dir| resolve_binary_in_dir(&dir, binary).is_some())
         })
         .unwrap_or(false)
+}
+
+/// If `--upload-bundle` is set, run warmup + deployer upload subprocess and
+/// return the URL + digest to be injected into the standard deploy flow.
+/// Returns `(remote_url, digest)`.
+pub(crate) fn resolve_upload_bundle(
+    bundle_dir: &Path,
+    upload_bundle: &str,
+    presign_expires: u64,
+) -> GtcResult<(String, String)> {
+    use super::bundle_upload_orchestrator;
+
+    let gtbundle_path = locate_gtbundle_in_bundle_dir(bundle_dir).ok_or_else(|| {
+        GtcError::message(format!(
+            "could not locate .gtbundle inside {}; build the bundle first with `gtc setup`",
+            bundle_dir.display()
+        ))
+    })?;
+
+    // Warm if not already warmed.
+    let warmed_path = if bundle_upload_orchestrator::is_warmed(&gtbundle_path) {
+        gtbundle_path
+    } else {
+        let tmp = std::env::temp_dir().join("gtc-warmup");
+        std::fs::create_dir_all(&tmp).ok();
+        bundle_upload_orchestrator::warmup_bundle(&gtbundle_path, &tmp)?
+    };
+
+    let result = bundle_upload_orchestrator::upload_bundle(
+        upload_bundle,
+        &warmed_path,
+        presign_expires,
+    )?;
+
+    eprintln!("Uploaded bundle:");
+    eprintln!("  digest:      {}", result.digest);
+    eprintln!("  url:         {}", result.url);
+    if let Some(exp) = result.expires_at.as_ref() {
+        eprintln!("  expires:     {exp}");
+    }
+    eprintln!("  object ref:  {}", result.object_ref);
+    eprintln!("To refresh URL without re-uploading: gtc deploy refresh-bundle-url <BUNDLE_REF>");
+
+    Ok((result.url, result.digest))
+}
+
+fn locate_gtbundle_in_bundle_dir(bundle_dir: &Path) -> Option<PathBuf> {
+    let dist = bundle_dir.join("dist");
+    let entries = std::fs::read_dir(&dist).ok()?;
+    let mut best: Option<PathBuf> = None;
+    let mut best_warmed = false;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("gtbundle") {
+            let is_warmed = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(|n| n.starts_with("bundle-warmed-"))
+                .unwrap_or(false);
+            if best.is_none() || (is_warmed && !best_warmed) {
+                best = Some(path);
+                best_warmed = is_warmed;
+            }
+        }
+    }
+    best
 }
 
 #[cfg(test)]
