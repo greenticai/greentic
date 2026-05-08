@@ -10,8 +10,8 @@ use serde::Deserialize;
 
 use gtc::error::{GtcError, GtcResult};
 
-use crate::DEPLOYER_BIN;
 use crate::process::resolve_companion_command;
+use crate::{BUNDLE_BIN, DEPLOYER_BIN};
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct UploadedBundle {
@@ -26,7 +26,8 @@ pub struct UploadedBundle {
 /// `.cache/v1/<engine_profile_id>/...` into the produced .gtbundle so the
 /// operator's `adopt_bundle_cache_dir` picks it up on cold start.
 fn run_bundle_build(bundle_dir: &Path, output_file: &Path) -> GtcResult<()> {
-    let status = ProcessCommand::new("greentic-bundle")
+    let bundle_bin = resolve_companion_command(BUNDLE_BIN);
+    let status = ProcessCommand::new(&bundle_bin)
         .arg("build")
         .arg("--root")
         .arg(bundle_dir)
@@ -262,5 +263,236 @@ exit 1
         assert!(logged.contains("bundle-upload refresh-url"));
         assert!(logged.contains("--object-ref s3://bucket/key"));
         assert!(logged.contains("--presign-expires 456"));
+    }
+
+    #[cfg(unix)]
+    fn write_fake_greentic_bundle_script(script: &Path, log_path: &Path, exit_code: u8) {
+        let body = format!(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "{log}"
+# args are: build --root <dir> --output <file> --warmup
+output_file=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --output)
+      output_file="$2"
+      shift 2
+      ;;
+    *)
+      shift
+      ;;
+  esac
+done
+if [ "{exit_code}" = "0" ] && [ -n "$output_file" ]; then
+  : > "$output_file"
+fi
+exit {exit_code}
+"#,
+            log = log_path.display(),
+            exit_code = exit_code,
+        );
+        fs::write(script, body).expect("write fake greentic-bundle script");
+        let mut perms = fs::metadata(script).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(script, perms).expect("chmod");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_warmed_bundle_invokes_greentic_bundle_with_warmup() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("greentic-bundle");
+        let log_path = dir.path().join("bundle.log");
+        write_fake_greentic_bundle_script(&script, &log_path, 0);
+
+        let bundle_dir = dir.path().join("my-bundle");
+        fs::create_dir(&bundle_dir).expect("bundle dir");
+
+        let original = env::var_os("GREENTIC_BUNDLE_BIN");
+        unsafe {
+            env::set_var("GREENTIC_BUNDLE_BIN", &script);
+        }
+
+        let result = prepare_warmed_bundle(&bundle_dir);
+
+        unsafe {
+            match original {
+                Some(value) => env::set_var("GREENTIC_BUNDLE_BIN", value),
+                None => env::remove_var("GREENTIC_BUNDLE_BIN"),
+            }
+        }
+
+        let output_file = result.expect("prepare_warmed_bundle");
+        assert!(
+            output_file.is_file(),
+            "expected fake script to materialize {}",
+            output_file.display()
+        );
+        assert!(output_file.extension().and_then(|s| s.to_str()) == Some("gtbundle"));
+        let logged = fs::read_to_string(&log_path).expect("read log");
+        assert!(logged.contains("build"), "log: {logged}");
+        assert!(logged.contains("--warmup"), "log: {logged}");
+        assert!(logged.contains("--root"), "log: {logged}");
+        assert!(logged.contains("--output"), "log: {logged}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepare_warmed_bundle_propagates_bundle_build_failure() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("greentic-bundle");
+        let log_path = dir.path().join("bundle.log");
+        write_fake_greentic_bundle_script(&script, &log_path, 7);
+
+        let bundle_dir = dir.path().join("my-bundle");
+        fs::create_dir(&bundle_dir).expect("bundle dir");
+
+        let original = env::var_os("GREENTIC_BUNDLE_BIN");
+        unsafe {
+            env::set_var("GREENTIC_BUNDLE_BIN", &script);
+        }
+
+        let err = prepare_warmed_bundle(&bundle_dir).unwrap_err();
+
+        unsafe {
+            match original {
+                Some(value) => env::set_var("GREENTIC_BUNDLE_BIN", value),
+                None => env::remove_var("GREENTIC_BUNDLE_BIN"),
+            }
+        }
+
+        let msg = format!("{err:?}");
+        assert!(msg.contains("greentic-bundle build --warmup"), "{msg}");
+        assert!(msg.contains("status"), "{msg}");
+    }
+
+    #[cfg(unix)]
+    fn write_fake_deployer_script(script: &Path, exit_code: u8, stdout: &str, stderr: &str) {
+        let body = format!(
+            r#"#!/bin/sh
+printf '%s' '{stdout}'
+printf '%s' '{stderr}' >&2
+exit {exit_code}
+"#,
+            stdout = stdout.replace('\'', "'\\''"),
+            stderr = stderr.replace('\'', "'\\''"),
+            exit_code = exit_code,
+        );
+        fs::write(script, body).expect("write fake deployer script");
+        let mut perms = fs::metadata(script).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(script, perms).expect("chmod");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upload_bundle_reports_non_success_exit_with_stderr() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("greentic-deployer");
+        let bundle = dir.path().join("demo.gtbundle");
+        write_fake_deployer_script(&script, 9, "", "boom: presign denied");
+        fs::write(&bundle, b"bundle").expect("bundle file");
+
+        let original = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &script);
+        }
+
+        let err = upload_bundle("s3://bucket/x", &bundle, 1).unwrap_err();
+
+        unsafe {
+            match original {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+
+        let msg = format!("{err:?}");
+        assert!(msg.contains("bundle-upload upload failed"), "{msg}");
+        assert!(msg.contains("boom: presign denied"), "{msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upload_bundle_rejects_invalid_json_payload() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("greentic-deployer");
+        let bundle = dir.path().join("demo.gtbundle");
+        write_fake_deployer_script(&script, 0, "not-json", "");
+        fs::write(&bundle, b"bundle").expect("bundle file");
+
+        let original = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &script);
+        }
+
+        let err = upload_bundle("s3://bucket/x", &bundle, 1).unwrap_err();
+
+        unsafe {
+            match original {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+
+        let msg = format!("{err:?}");
+        assert!(msg.contains("invalid JSON"), "{msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refresh_bundle_url_reports_non_success_exit_with_stderr() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("greentic-deployer");
+        write_fake_deployer_script(&script, 4, "", "denied");
+
+        let original = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &script);
+        }
+
+        let err = refresh_bundle_url("s3://bucket/key", 1).unwrap_err();
+
+        unsafe {
+            match original {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+
+        let msg = format!("{err:?}");
+        assert!(msg.contains("bundle-upload refresh-url failed"), "{msg}");
+        assert!(msg.contains("denied"), "{msg}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn refresh_bundle_url_rejects_invalid_json_payload() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = dir.path().join("greentic-deployer");
+        write_fake_deployer_script(&script, 0, "not-json", "");
+
+        let original = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &script);
+        }
+
+        let err = refresh_bundle_url("s3://bucket/key", 1).unwrap_err();
+
+        unsafe {
+            match original {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+
+        let msg = format!("{err:?}");
+        assert!(msg.contains("invalid JSON from refresh-url"), "{msg}");
     }
 }
