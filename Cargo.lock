@@ -1202,7 +1202,7 @@ version = "1.1.0-dev.25478178810"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6712a75d262243c7ee9bc7b974d4468b32b6ffc84123832fb8559fbd8e093109"
 dependencies = [
- "greentic-types 1.1.0-dev.25376259391",
+ "greentic-types 1.1.0-dev.25540461571",
  "serde",
  "serde_json",
  "toml",
@@ -1211,9 +1211,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-distributor-client"
-version = "1.1.0-dev.25418356126"
+version = "1.1.0-dev.25537586660"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e8a5e1e17db3af5ea3ee263f492687a0359af8370f2b5774649fd79fe5a5890"
+checksum = "7eca60a00e35c61d1d6cf98435be3f7a78f3a06d450ad8ec7d15fb2a010b8019"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1222,7 +1222,7 @@ dependencies = [
  "greentic-config-types",
  "greentic-interfaces-guest",
  "greentic-secrets-lib",
- "greentic-types 1.1.0-dev.25376259391",
+ "greentic-types 1.1.0-dev.25540461571",
  "oci-distribution",
  "reqwest 0.13.3",
  "rpassword",
@@ -1252,7 +1252,7 @@ checksum = "0dd1739e0b520fcf8eeb706094e288572a821572a94bdfb10e7c5a68099f9db4"
 dependencies = [
  "anyhow",
  "constant_time_eq",
- "greentic-types 1.1.0-dev.25376259391",
+ "greentic-types 1.1.0-dev.25540461571",
  "semver",
  "thiserror 2.0.18",
  "time",
@@ -1269,7 +1269,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "31869558530be66ec330013f12e47514d15b8c987c45f72b814c99864d88b833"
 dependencies = [
  "greentic-interfaces",
- "greentic-types 1.1.0-dev.25376259391",
+ "greentic-types 1.1.0-dev.25540461571",
  "wit-bindgen 0.57.1",
  "wit-bindgen-core 0.57.1",
  "wit-bindgen-rust 0.57.1",
@@ -1412,9 +1412,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-types"
-version = "1.1.0-dev.25376259391"
+version = "1.1.0-dev.25540461571"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "20f2d79fd4554b6985d5fd529c88884dec49985c14846bf10b43c9a58ee16e1e"
+checksum = "df38b70a9539e751664e0c3e0a21d6b9ea48e5345d9089d16c5058f122055d30"
 dependencies = [
  "anyhow",
  "blake3",
@@ -1456,7 +1456,7 @@ dependencies = [
  "flate2",
  "greentic-distributor-client",
  "greentic-i18n-lib",
- "greentic-types 1.1.0-dev.25376259391",
+ "greentic-types 1.1.0-dev.25540461571",
  "insta",
  "oci-distribution",
  "proptest",
@@ -2545,7 +2545,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "syn",
