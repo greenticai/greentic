@@ -60,6 +60,16 @@ jobs:
         with:
           toolchain: 1.95.0
 
+      - name: Install cargo-binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Install deployer pack tooling
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo binstall -y greentic-pack
+          cargo binstall -y greentic-flow
+
       - name: Build and sync deployer pack
         shell: bash
         run: |
