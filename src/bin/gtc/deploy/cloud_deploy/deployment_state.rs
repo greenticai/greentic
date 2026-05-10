@@ -370,6 +370,8 @@ fn run_multi_target_deployer_apply(
         app_pack.display().to_string(),
         "--provider-pack".to_string(),
         provider_pack.display().to_string(),
+        "--bundle-root".to_string(),
+        resolved.bundle_dir.display().to_string(),
         "--bundle-source".to_string(),
         deploy_bundle_source.clone(),
         "--bundle-digest".to_string(),
@@ -734,6 +736,7 @@ mod tests {
 
         let logged = fs::read_to_string(log).expect("read");
         assert!(logged.contains("apply --tenant demo"));
+        assert!(logged.contains(&format!("--bundle-root {}", bundle_dir.display())));
         assert!(logged.contains("--bundle-source https://example.com/demo.gtbundle"));
         assert!(logged.contains("--environment prod"));
     }
