@@ -13,7 +13,9 @@ use crate::admin::{
     upsert_admin_registry_entry,
 };
 use crate::cli::build_cli;
-use crate::deploy::{resolve_local_mutable_bundle_dir, run_start, run_stop};
+use crate::deploy::{
+    RefreshArgs, resolve_local_mutable_bundle_dir, run_refresh, run_start, run_stop,
+};
 use crate::docs_cmd::run_docs;
 use crate::extensions::{run_extension_setup, run_extension_start, run_extension_wizard};
 use crate::i18n_support::i18n;
@@ -105,6 +107,30 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
             }
         }
         Some(("stop", sub_matches)) => run_stop(sub_matches, debug, &locale),
+        Some(("deploy", deploy_matches)) => match deploy_matches.subcommand() {
+            Some(("refresh-bundle-url", m)) => {
+                let args = RefreshArgs {
+                    bundle_ref: m
+                        .get_one::<String>("bundle-ref")
+                        .cloned()
+                        .unwrap_or_default(),
+                    cloud: m.get_one::<String>("cloud").cloned(),
+                    environment: m
+                        .get_one::<String>("environment")
+                        .cloned()
+                        .unwrap_or_else(|| "dev".to_string()),
+                    presign_expires: m
+                        .get_one::<String>("upload-bundle-presign-expires")
+                        .and_then(|s| s.parse::<u64>().ok())
+                        .unwrap_or(604800),
+                };
+                run_refresh(args)
+            }
+            _ => {
+                eprintln!("usage: gtc deploy refresh-bundle-url <BUNDLE_REF>");
+                2
+            }
+        },
         Some((name @ ("dev" | "op" | "wizard" | "setup"), sub_matches)) => {
             let tail = collect_tail(sub_matches);
             let tail = if matches!(name, "wizard" | "setup") {

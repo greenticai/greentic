@@ -3,6 +3,25 @@ use clap::{Arg, ArgAction, Command};
 use crate::i18n_support::{leak_str, t, t_or};
 use crate::router::passthrough_args;
 
+fn upload_bundle_args(options_heading: &'static str, locale: &str) -> Vec<Arg> {
+    vec![
+        Arg::new("upload-bundle")
+            .long("upload-bundle")
+            .value_name("URL")
+            .num_args(1)
+            .help_heading(options_heading)
+            .help(t(locale, "gtc.arg.upload_bundle.help").into_owned())
+            .conflicts_with("deploy-bundle-source"),
+        Arg::new("upload-bundle-presign-expires")
+            .long("upload-bundle-presign-expires")
+            .value_name("SECONDS")
+            .num_args(1)
+            .default_value("604800")
+            .help_heading(options_heading)
+            .help(t(locale, "gtc.arg.upload_bundle_presign_expires.help").into_owned()),
+    ]
+}
+
 pub(super) fn build_cli(locale: &str) -> Command {
     let cmd_args = passthrough_args();
     let options_heading = leak_str(t(locale, "gtc.help.options.heading").into_owned());
@@ -871,6 +890,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.deploy_bundle_source.help").into_owned()),
                 )
+                .args(upload_bundle_args(options_heading, locale))
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -977,6 +997,55 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .arg(release_context_strict_arg(options_heading))
                 .arg(release_context_ignore_arg(options_heading))
                 .arg(cmd_args),
+        )
+        .subcommand(
+            Command::new("deploy")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t(locale, "gtc.cmd.deploy.about").into_owned())
+                .subcommand(
+                    Command::new("refresh-bundle-url")
+                        .help_template(help_template)
+                        .disable_help_flag(true)
+                        .disable_version_flag(true)
+                        .about(t(locale, "gtc.cmd.deploy_refresh_bundle_url.about").into_owned())
+                        .arg(
+                            Arg::new("bundle-ref")
+                                .value_name("BUNDLE_REF")
+                                .required(true)
+                                .help_heading(arguments_heading)
+                                .help(t(locale, "gtc.arg.deploy_refresh_bundle_ref.help").into_owned()),
+                        )
+                        .arg(
+                            Arg::new("cloud")
+                                .long("cloud")
+                                .value_name("PROVIDER")
+                                .num_args(1)
+                                .value_parser(["aws", "azure", "gcp"])
+                                .help_heading(options_heading)
+                                .help(t(locale, "gtc.arg.deploy_refresh_cloud.help").into_owned()),
+                        )
+                        .arg(
+                            Arg::new("environment")
+                                .long("environment")
+                                .value_name("ENV")
+                                .num_args(1)
+                                .default_value("dev")
+                                .help_heading(options_heading)
+                                .help(t(locale, "gtc.arg.deploy_refresh_environment.help").into_owned()),
+                        )
+                        .arg(
+                            Arg::new("upload-bundle-presign-expires")
+                                .long("upload-bundle-presign-expires")
+                                .value_name("SECONDS")
+                                .num_args(1)
+                                .default_value("604800")
+                                .help_heading(options_heading)
+                                .help(t(locale, "gtc.arg.upload_bundle_presign_expires.help").into_owned()),
+                        ),
+                ),
         )
         .subcommand(
             Command::new("help")

@@ -5,7 +5,9 @@ use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use directories::BaseDirs;
-use greentic_distributor_client::{CachePolicy, DistClient, DistOptions, ResolvePolicy};
+use greentic_distributor_client::{
+    CachePolicy, DistClient, DistOptions, ReleaseArtifactKind, ResolvePolicy,
+};
 use gtc::error::{GtcError, GtcResult};
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, WWW_AUTHENTICATE};
@@ -823,12 +825,6 @@ enum ReleaseChannel {
     Rnd,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReleaseArtifactKind {
-    Pack,
-    Component,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ReleaseResolutionContext {
     release: String,
@@ -963,17 +959,15 @@ fn prefetch_release_artifacts_and_write_index(
                 .block_on(client.fetch(&descriptor, CachePolicy))
                 .map_err(|err| GtcError::message(format!("failed to fetch {version_ref}: {err}")))?
         } else {
-            let source = client.parse_source(&version_ref).map_err(|err| {
-                GtcError::message(format!("failed to parse {version_ref}: {err}"))
-            })?;
-            let descriptor = runtime
-                .block_on(client.resolve(source, ResolvePolicy))
-                .map_err(|err| {
-                    GtcError::message(format!("failed to resolve {version_ref}: {err}"))
-                })?;
             runtime
-                .block_on(client.fetch(&descriptor, CachePolicy))
-                .map_err(|err| GtcError::message(format!("failed to fetch {version_ref}: {err}")))?
+                .block_on(client.prefetch_release_artifact(
+                    release_ref.kind,
+                    &version_ref,
+                    CachePolicy,
+                ))
+                .map_err(|err| {
+                    GtcError::message(format!("failed to prefetch {version_ref}: {err}"))
+                })?
         };
         let entry = client
             .stat_cache(&resolved.descriptor.digest)
