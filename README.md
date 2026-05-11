@@ -417,13 +417,12 @@ installs companion Greentic tools.
 
 Required local tools and targets:
 
-- `mksquashfs`
 - `cargo-component`
 - `wasm32-wasip2`
 - `cargo-binstall`
 
-If `mksquashfs`, `cargo-component`, or `wasm32-wasip2` are missing, `gtc install`
-tries to install them for the current platform before continuing. If automatic
+If `cargo-component` or `wasm32-wasip2` are missing, `gtc install` tries to
+install them for the current platform before continuing. If automatic
 installation is not available in your environment, install them manually and run
 `gtc install` again.
 
