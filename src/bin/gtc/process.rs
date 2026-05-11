@@ -7,7 +7,9 @@ use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 
 use super::deploy::{ChildProcessEnv, StartTarget};
-use super::toolchain::installed_toolchain_label;
+use super::toolchain::{
+    InstalledReleaseArtifact, installed_release_artifacts, installed_toolchain_label,
+};
 use super::{
     BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, FLOW_BIN, OP_BIN, PACK_BIN, RUNNER_BIN,
     SECRETS_BIN, SETUP_BIN, START_BIN,
@@ -286,7 +288,49 @@ pub(super) fn run_doctor(locale: &str) -> i32 {
         }
     }
 
+    if let Err(err) = print_installed_release_artifacts() {
+        failed = true;
+        println!(
+            "Greentic release artifacts: {} ({err})",
+            t(locale, "gtc.doctor.warn")
+        );
+    }
+
     if failed { 1 } else { 0 }
+}
+
+fn print_installed_release_artifacts() -> GtcResult<()> {
+    let Some(artifacts) = installed_release_artifacts()? else {
+        println!("Greentic release artifacts: not installed");
+        return Ok(());
+    };
+
+    println!(
+        "Greentic release artifacts: {} ({}) [{}]",
+        artifacts.release,
+        artifacts.channel,
+        artifacts.index_path.display()
+    );
+    print_release_artifact_group(&format!("{} packs", artifacts.channel), &artifacts.packs);
+    print_release_artifact_group(
+        &format!("{} components", artifacts.channel),
+        &artifacts.components,
+    );
+    Ok(())
+}
+
+fn print_release_artifact_group(label: &str, artifacts: &[InstalledReleaseArtifact]) {
+    if artifacts.is_empty() {
+        println!("{label}: none cached");
+        return;
+    }
+    println!("{label}:");
+    for artifact in artifacts {
+        println!(
+            "  {} -> {} ({}) [{}]",
+            artifact.reference, artifact.canonical_ref, artifact.version, artifact.digest
+        );
+    }
 }
 
 fn first_non_empty_line(text: &str) -> Option<String> {

@@ -692,6 +692,52 @@ fn doctor_uses_greentic_dev_bin_override() {
 }
 
 #[test]
+fn doctor_prints_stable_packs_and_components_from_release_index() {
+    let sandbox = TestSandbox::new("doctor_prints_stable_packs_and_components_from_release_index");
+    sandbox.write_version_tool("greentic-dev", "greentic-dev 0.0.0");
+    sandbox.write_version_tool("greentic-operator", "greentic-operator 0.0.0");
+    sandbox.write_version_tool("greentic-bundle", "greentic-bundle 0.0.0");
+    sandbox.write_version_tool("greentic-component", "greentic-component 0.0.0");
+    sandbox.write_version_tool("greentic-flow", "greentic-flow 0.0.0");
+    sandbox.write_version_tool("greentic-pack", "greentic-pack 0.0.0");
+    sandbox.write_version_tool("greentic-runner", "greentic-runner 0.0.0");
+    sandbox.write_version_tool("greentic-secrets", "greentic-secrets 0.0.0");
+    sandbox.write_version_tool("greentic-setup", "greentic-setup 0.0.0");
+    sandbox.write_version_tool("greentic-start", "greentic-start 0.0.0");
+    sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
+
+    let state_dir = sandbox.path().join("toolchain-state");
+    let cache_dir = sandbox.path().join("cache");
+    write_installed_toolchain_state(&state_dir, "1.0.4", "stable", "sha256:testdigest");
+    write_test_release_index(&cache_dir, "stable", "1.0.4");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        state_dir.display().to_string(),
+    );
+    extra.insert(
+        "GREENTIC_CACHE_DIR".to_string(),
+        cache_dir.display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["doctor"], extra);
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Greentic release artifacts: 1.0.4 (stable)"));
+    assert!(stdout.contains("stable packs:"));
+    assert!(stdout.contains("ghcr.io/greenticai/packs/messaging/messaging-webchat-gui:stable"));
+    assert!(stdout.contains("stable components:"));
+    assert!(stdout.contains("ghcr.io/greenticai/components/templates:stable"));
+}
+
+#[test]
 fn op_setup_routes_to_demo_setup_with_default_tenant_team() {
     let sandbox = TestSandbox::new("op_setup_routes_to_demo_setup_with_default_tenant_team");
     let log_file = sandbox.path().join("op.log");
@@ -2323,7 +2369,6 @@ impl TestSandbox {
     }
 
     fn write_install_prereq_tools(&self) {
-        self.write_exit_tool("mksquashfs", 0);
         self.write_stdout_tool("rustc", "rustc 1.95.0\n", 0);
         self.compile_rust_tool_at(
             &self.binary_path("rustup"),
@@ -2926,6 +2971,41 @@ fn write_installed_toolchain_state(root: &Path, version: &str, channel: &str, di
         serde_json::to_vec_pretty(&state).expect("installed state json"),
     )
     .expect("write installed toolchain state");
+}
+
+fn write_test_release_index(cache_dir: &Path, channel: &str, release: &str) {
+    let path = cache_dir
+        .join("release-index")
+        .join("v1")
+        .join(channel)
+        .join(format!("{release}.json"));
+    fs::create_dir_all(path.parent().expect("release index parent"))
+        .expect("create release index dir");
+    let pack_digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111";
+    let component_digest =
+        "sha256:2222222222222222222222222222222222222222222222222222222222222222";
+    let index = serde_json::json!({
+        "schema": "greentic.release-index.v1",
+        "release": release,
+        "channel": channel,
+        "refs": {
+            format!("ghcr.io/greenticai/packs/messaging/messaging-webchat-gui:{channel}"): {
+                "version": "0.5.4",
+                "digest": pack_digest,
+                "canonical_ref": format!("oci://ghcr.io/greenticai/packs/messaging/messaging-webchat-gui@{pack_digest}")
+            },
+            format!("ghcr.io/greenticai/components/templates:{channel}"): {
+                "version": "0.5.8",
+                "digest": component_digest,
+                "canonical_ref": format!("oci://ghcr.io/greenticai/components/templates@{component_digest}")
+            }
+        }
+    });
+    fs::write(
+        path,
+        serde_json::to_vec_pretty(&index).expect("release index json"),
+    )
+    .expect("write release index");
 }
 
 fn rust_exit_tool_program(exit_code: i32) -> String {

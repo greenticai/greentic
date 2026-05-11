@@ -1,7 +1,6 @@
 use std::fs;
 use std::io::{self, Read};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command as ProcessCommand;
 
 use gtc::error::{GtcError, GtcResult};
 
@@ -11,41 +10,6 @@ pub(super) fn looks_like_zip(data: &[u8]) -> bool {
 
 pub(super) fn looks_like_gzip(data: &[u8]) -> bool {
     data.len() >= 2 && data[0] == 0x1F && data[1] == 0x8B
-}
-
-pub(super) fn looks_like_squashfs(data: &[u8]) -> bool {
-    data.len() >= 4 && &data[0..4] == b"hsqs"
-}
-
-pub(super) fn extract_squashfs_file(path: &Path, out_dir: &Path) -> GtcResult<()> {
-    let output = ProcessCommand::new("unsquashfs")
-        .arg("-no-progress")
-        .arg("-dest")
-        .arg(out_dir)
-        .arg(path)
-        .output()
-        .map_err(|e| {
-            GtcError::io(
-                format!("failed to run unsquashfs for {}", path.display()),
-                e,
-            )
-        })?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Err(GtcError::message(format!(
-        "failed to extract squashfs bundle {}: {}{}{}",
-        path.display(),
-        stdout.trim(),
-        if !stdout.trim().is_empty() && !stderr.trim().is_empty() {
-            " "
-        } else {
-            ""
-        },
-        stderr.trim()
-    )))
 }
 
 pub(super) fn extract_zip_bytes(data: &[u8], out_dir: &Path) -> GtcResult<()> {
@@ -200,7 +164,7 @@ pub(super) fn set_executable_if_unix(_path: &Path) -> GtcResult<()> {
 mod tests {
     #[cfg(unix)]
     use super::{ensure_no_symlink_ancestors, set_executable_if_unix};
-    use super::{looks_like_gzip, looks_like_squashfs, looks_like_zip, safe_join};
+    use super::{looks_like_gzip, looks_like_zip, safe_join};
     use gtc::error::GtcError;
     #[cfg(unix)]
     use std::fs;
@@ -213,10 +177,8 @@ mod tests {
     fn archive_magic_detection_matches_expected_formats() {
         assert!(looks_like_zip(b"PK\x03\x04rest"));
         assert!(looks_like_gzip(&[0x1F, 0x8B, 0x08]));
-        assert!(looks_like_squashfs(b"hsqsrest"));
         assert!(!looks_like_zip(b"notzip"));
         assert!(!looks_like_gzip(b"gz"));
-        assert!(!looks_like_squashfs(b"sqsh"));
     }
 
     #[test]
