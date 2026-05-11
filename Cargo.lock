@@ -1198,11 +1198,11 @@ dependencies = [
 
 [[package]]
 name = "greentic-config-types"
-version = "0.5.0"
+version = "1.1.0-dev.25478178810"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "57b57ff54329cc825cc37a5d3f5839b6c45fc2460ef9de12ee9d282f45f9f22e"
+checksum = "6712a75d262243c7ee9bc7b974d4468b32b6ffc84123832fb8559fbd8e093109"
 dependencies = [
- "greentic-types",
+ "greentic-types 1.1.0-dev.25540461571",
  "serde",
  "serde_json",
  "toml",
@@ -1211,9 +1211,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-distributor-client"
-version = "0.5.3"
+version = "1.1.0-dev.25537586660"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "987d1f0fb6fabbad071c0d3377112f9470cbde7beb2344a8e0ec80f4229bb101"
+checksum = "7eca60a00e35c61d1d6cf98435be3f7a78f3a06d450ad8ec7d15fb2a010b8019"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1222,7 +1222,7 @@ dependencies = [
  "greentic-config-types",
  "greentic-interfaces-guest",
  "greentic-secrets-lib",
- "greentic-types",
+ "greentic-types 1.1.0-dev.25540461571",
  "oci-distribution",
  "reqwest 0.13.3",
  "rpassword",
@@ -1236,9 +1236,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-i18n-lib"
-version = "0.5.1"
+version = "1.1.0-dev.25375505278"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e1c181b9a5fb0beccd9959fb11296572a7802ee1e237d90ca37ff46e8a1fbef3"
+checksum = "a61861d10962625ad96c632c355bd0e99c3d34d4f05fa6572e7cb8dd1a768cff"
 dependencies = [
  "blake3",
  "data-encoding",
@@ -1246,13 +1246,13 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces"
-version = "0.5.0"
+version = "1.1.0-dev.25380112032"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2abe5ccec746bbeb0fbb291e0368096752e2ad31d5dbf70053638b12ec43c8d"
+checksum = "0dd1739e0b520fcf8eeb706094e288572a821572a94bdfb10e7c5a68099f9db4"
 dependencies = [
  "anyhow",
  "constant_time_eq",
- "greentic-types",
+ "greentic-types 1.1.0-dev.25540461571",
  "semver",
  "thiserror 2.0.18",
  "time",
@@ -1264,12 +1264,12 @@ dependencies = [
 
 [[package]]
 name = "greentic-interfaces-guest"
-version = "0.5.0"
+version = "1.1.0-dev.25380112032"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c6ae2fd6855448749061b052250c54b29ee8388ea6a81087ce07fdbc671e7eb7"
+checksum = "31869558530be66ec330013f12e47514d15b8c987c45f72b814c99864d88b833"
 dependencies = [
  "greentic-interfaces",
- "greentic-types",
+ "greentic-types 1.1.0-dev.25540461571",
  "wit-bindgen 0.57.1",
  "wit-bindgen-core 0.57.1",
  "wit-bindgen-rust 0.57.1",
@@ -1277,9 +1277,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-secrets-api"
-version = "0.5.0"
+version = "1.1.0-dev.25478204617"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33b05da6497a5b153592dfa6891db30696e152db755ad31344f867f89d8fd61d"
+checksum = "2fd0039a55cf385c2834a5e4cb1c245dfe6374e8e3f60442af191fe11f97532d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1288,9 +1288,9 @@ dependencies = [
 
 [[package]]
 name = "greentic-secrets-core"
-version = "0.5.0"
+version = "1.1.0-dev.25478204617"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "163826dfe0ead6553581d8d09bf74f66479570e7433d005bf1a9b566d9d3de6d"
+checksum = "37f62ca4a043135c9d45c4a25be8d917e7f75d5bf5fe0696ad0c338e12f98faf"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1298,7 +1298,7 @@ dependencies = [
  "greentic-secrets-api",
  "greentic-secrets-provider-dev",
  "greentic-secrets-spec",
- "greentic-types",
+ "greentic-types 0.5.2",
  "hkdf",
  "lru",
  "once_cell",
@@ -1316,23 +1316,23 @@ dependencies = [
 
 [[package]]
 name = "greentic-secrets-lib"
-version = "0.5.0"
+version = "1.1.0-dev.25478204617"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61ae64224552cd7961859c2d04f8a848b268e85dfa0c5e3a3e9c0cbb2656b688"
+checksum = "9f3ced76fbae3cbaf828bcb2a85ab0334b3247a07ad0d6134b58c9ab0868388c"
 dependencies = [
  "async-trait",
  "greentic-secrets-api",
  "greentic-secrets-core",
  "greentic-secrets-provider-dev",
  "greentic-secrets-spec",
- "greentic-types",
+ "greentic-types 0.5.2",
 ]
 
 [[package]]
 name = "greentic-secrets-provider-dev"
-version = "0.5.0"
+version = "1.1.0-dev.25478204617"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "59bab04dae2096f0a19c72e27173b67b1b9a29c5f6ab6662bdf3698f995e39fb"
+checksum = "39ed14c49f8f4d95ffde9e0847e334617552f06358684323c3c0ab9462fdea47"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -1347,12 +1347,12 @@ dependencies = [
 
 [[package]]
 name = "greentic-secrets-spec"
-version = "0.5.0"
+version = "1.1.0-dev.25478204617"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d53eae0820853253dc6760c7c7044ec5d97922200e7abc0a57d363432da0993d"
+checksum = "17584de61667605f52bb509a04381aa589bf0a5c0f0796f3bc4c1d4c47aadbdf"
 dependencies = [
  "async-trait",
- "greentic-types",
+ "greentic-types 0.5.2",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1397,6 +1397,32 @@ dependencies = [
  "greentic-types-macros",
  "indexmap",
  "opentelemetry-otlp",
+ "semver",
+ "serde",
+ "serde_bytes",
+ "serde_json",
+ "serde_with",
+ "sha2 0.11.0",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "unic-langid",
+]
+
+[[package]]
+name = "greentic-types"
+version = "1.1.0-dev.25540461571"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df38b70a9539e751664e0c3e0a21d6b9ea48e5345d9089d16c5058f122055d30"
+dependencies = [
+ "anyhow",
+ "blake3",
+ "chrono",
+ "ciborium",
+ "constant_time_eq",
+ "fnv",
+ "indexmap",
  "schemars",
  "semver",
  "serde",
@@ -1406,9 +1432,6 @@ dependencies = [
  "sha2 0.11.0",
  "thiserror 2.0.18",
  "time",
- "tokio",
- "tracing",
- "tracing-subscriber",
  "unic-langid",
 ]
 
@@ -1425,7 +1448,7 @@ dependencies = [
 
 [[package]]
 name = "gtc"
-version = "1.0.23"
+version = "1.1.0-dev.4"
 dependencies = [
  "clap",
  "criterion",
@@ -1433,7 +1456,7 @@ dependencies = [
  "flate2",
  "greentic-distributor-client",
  "greentic-i18n-lib",
- "greentic-types",
+ "greentic-types 1.1.0-dev.25540461571",
  "insta",
  "oci-distribution",
  "proptest",
