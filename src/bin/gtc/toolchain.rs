@@ -72,6 +72,23 @@ pub(crate) struct InstalledToolchain {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InstalledReleaseArtifacts {
+    pub release: String,
+    pub channel: String,
+    pub index_path: PathBuf,
+    pub packs: Vec<InstalledReleaseArtifact>,
+    pub components: Vec<InstalledReleaseArtifact>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct InstalledReleaseArtifact {
+    pub reference: String,
+    pub version: String,
+    pub digest: String,
+    pub canonical_ref: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ToolchainInstallOptions {
     pub source: ToolchainSource,
     pub force: bool,
@@ -737,6 +754,62 @@ pub(crate) fn installed_toolchain_label() -> String {
         Ok(None) => "not installed".to_string(),
         Err(err) => format!("unknown ({err})"),
     }
+}
+
+pub(crate) fn installed_release_artifacts() -> GtcResult<Option<InstalledReleaseArtifacts>> {
+    let Some(installed) = read_installed_toolchain()? else {
+        return Ok(None);
+    };
+    let channel = installed
+        .channel
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .unwrap_or("stable");
+    let Some(release_channel) = parse_release_channel(channel) else {
+        return Err(GtcError::message(format!(
+            "release channel '{channel}' is not supported; use stable, dev, or rnd"
+        )));
+    };
+    let ctx = ReleaseResolutionContext {
+        release: installed.version.clone(),
+        channel: release_channel,
+    };
+    let cache_root = DistOptions::default().cache_dir;
+    let index_path = release_index_path(&cache_root, &ctx)?;
+    let Some(index) = read_release_index_if_exists(&index_path)? else {
+        return Ok(Some(InstalledReleaseArtifacts {
+            release: installed.version,
+            channel: channel.to_string(),
+            index_path,
+            packs: Vec::new(),
+            components: Vec::new(),
+        }));
+    };
+
+    let mut packs = Vec::new();
+    let mut components = Vec::new();
+    for (reference, entry) in index.refs {
+        let artifact = InstalledReleaseArtifact {
+            reference: reference.clone(),
+            version: entry.version,
+            digest: entry.digest,
+            canonical_ref: entry.canonical_ref,
+        };
+        if reference.contains("/packs/") {
+            packs.push(artifact);
+        } else if reference.contains("/components/") {
+            components.push(artifact);
+        }
+    }
+
+    Ok(Some(InstalledReleaseArtifacts {
+        release: installed.version,
+        channel: channel.to_string(),
+        index_path,
+        packs,
+        components,
+    }))
 }
 
 pub(crate) fn latest_release_context_warning(
