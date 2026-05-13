@@ -61,9 +61,15 @@ This repo does **not** currently own the full semantics of every setup flag.
 For normal setup usage, `gtc` forwards the trailing arguments to
 `greentic-setup`.
 
-That means syntax such as `--answers` or `--no-ui` may be valid in current
-workflows, but the deeper flag behavior is owned by the downstream setup tool,
-not re-parsed by `gtc` itself.
+`gtc` does resolve and validate `--answers` before forwarding. `--answers`
+accepts JSON object documents from plain local paths, `file://...`,
+`http://...`, `https://...`, `oci://...`, `store://...`, and `repo://...`.
+Distributor-backed schemes are resolved through `greentic-distributor-client`
+and forwarded to `greentic-setup` as a temporary local answers file.
+
+Other syntax such as `--no-ui` may be valid in current workflows, but the
+deeper flag behavior is owned by the downstream setup tool, not re-parsed by
+`gtc` itself.
 
 ## Basic Usage
 
@@ -79,8 +85,8 @@ The README also shows:
 gtc setup --no-ui ./cloud-deploy-demo-bundle --answers <setup-answers.json>
 ```
 
-Those forms are passed through to `greentic-setup` in the current
-implementation.
+Those forms are passed through to `greentic-setup` after answer source
+resolution succeeds.
 
 ## Does `./<name>.gtbundle` Work?
 

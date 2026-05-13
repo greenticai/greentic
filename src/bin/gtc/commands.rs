@@ -5,12 +5,17 @@ use std::path::Path;
 
 use clap::ArgMatches;
 use serde_json::Value;
+use tempfile::TempDir;
 
 use crate::admin::{
     load_admin_registry, remove_admin_registry_entry, run_admin_access, run_admin_add_client,
     run_admin_certs, run_admin_clients, run_admin_health, run_admin_list, run_admin_remove_client,
     run_admin_status, run_admin_stop, run_admin_token, run_admin_tunnel, save_admin_registry,
     upsert_admin_registry_entry,
+};
+use crate::answer_resolver::{
+    AnswerSourceKind, DefaultAnswerSourceLoader, classify_answers_source, load_answer_bytes,
+    load_answers, parse_answers_bytes,
 };
 use crate::cli::build_cli;
 use crate::deploy::{
@@ -161,6 +166,21 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
             } else {
                 tail
             };
+            let mut answers_tempdir = None;
+            let tail = if matches!(name, "wizard" | "setup") {
+                match resolve_answers_args(&tail) {
+                    Ok(resolved) => {
+                        answers_tempdir = resolved.tempdir;
+                        resolved.args
+                    }
+                    Err(err) => {
+                        eprintln!("{err}");
+                        return answers_error_exit_code(&err);
+                    }
+                }
+            } else {
+                tail
+            };
             if name == "wizard" && sub_matches.get_many::<String>("extensions").is_some() {
                 return run_extension_wizard(sub_matches, &tail, debug, &locale);
             }
@@ -178,9 +198,102 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 }
                 return run_wizard_schema(binary, &args, debug, &locale);
             }
+            let _answers_tempdir = answers_tempdir;
             passthrough(binary, &args, debug, &locale)
         }
         _ => 2,
+    }
+}
+
+struct ResolvedAnswersArgs {
+    args: Vec<String>,
+    tempdir: Option<TempDir>,
+}
+
+fn resolve_answers_args(args: &[String]) -> gtc::error::GtcResult<ResolvedAnswersArgs> {
+    let loader = DefaultAnswerSourceLoader;
+    let mut rewritten = Vec::with_capacity(args.len());
+    let mut tempdir: Option<TempDir> = None;
+    let mut index = 0usize;
+    let mut materialized_count = 0usize;
+
+    while index < args.len() {
+        let arg = &args[index];
+        if arg == "--answers" {
+            let Some(source) = args.get(index + 1) else {
+                return Err(gtc::error::GtcError::invalid_data(
+                    "answers source",
+                    "--answers requires a value",
+                ));
+            };
+            rewritten.push(arg.clone());
+            rewritten.push(resolve_answers_arg_value(
+                source,
+                &loader,
+                &mut tempdir,
+                &mut materialized_count,
+            )?);
+            index += 2;
+            continue;
+        }
+
+        if let Some(source) = arg.strip_prefix("--answers=") {
+            let resolved =
+                resolve_answers_arg_value(source, &loader, &mut tempdir, &mut materialized_count)?;
+            rewritten.push(format!("--answers={resolved}"));
+            index += 1;
+            continue;
+        }
+
+        rewritten.push(arg.clone());
+        index += 1;
+    }
+
+    Ok(ResolvedAnswersArgs {
+        args: rewritten,
+        tempdir,
+    })
+}
+
+fn resolve_answers_arg_value(
+    source: &str,
+    loader: &DefaultAnswerSourceLoader,
+    tempdir: &mut Option<TempDir>,
+    materialized_count: &mut usize,
+) -> gtc::error::GtcResult<String> {
+    let kind = classify_answers_source(source)?;
+    match kind {
+        AnswerSourceKind::LocalPath | AnswerSourceKind::FileUrl | AnswerSourceKind::Http => {
+            let _answers = load_answers(source)?;
+            Ok(source.to_string())
+        }
+        AnswerSourceKind::Distributor => {
+            let bytes = load_answer_bytes(source, loader)?;
+            let _answers = parse_answers_bytes(source, &bytes)?;
+            if tempdir.is_none() {
+                *tempdir = Some(tempfile::tempdir().map_err(|err| {
+                    gtc::error::GtcError::io("failed to create temporary answers directory", err)
+                })?);
+            }
+            let dir = tempdir.as_ref().expect("temporary answers directory");
+            let path = dir
+                .path()
+                .join(format!("answers-{materialized_count}.json"));
+            *materialized_count += 1;
+            fs::write(&path, bytes).map_err(|err| {
+                gtc::error::GtcError::io(format!("failed to write {}", path.display()), err)
+            })?;
+            Ok(path.display().to_string())
+        }
+    }
+}
+
+fn answers_error_exit_code(err: &gtc::error::GtcError) -> i32 {
+    if matches!(err, gtc::error::GtcError::InvalidData { context, .. } if context == "answers source")
+    {
+        2
+    } else {
+        1
     }
 }
 
