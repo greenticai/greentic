@@ -48,6 +48,10 @@ gtc wizard --emit-answers ./answers.json
 gtc wizard --answers ./answers.json
 ```
 
+`gtc wizard --answers` and `gtc setup --answers` accept the same source forms:
+plain local paths, `file://...`, `http://...`, `https://...`, `oci://...`,
+`store://...`, and `repo://...`. The referenced JSON must parse as an object.
+
 If the downstream wizard does not support `--emit-answers` for your exact flow,
 fall back to using the schema output directly.
 

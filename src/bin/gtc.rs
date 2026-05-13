@@ -1,5 +1,7 @@
 #[path = "gtc/admin.rs"]
 mod admin;
+#[path = "gtc/answer_resolver.rs"]
+mod answer_resolver;
 #[path = "gtc/archive.rs"]
 mod archive;
 #[path = "gtc/cli.rs"]

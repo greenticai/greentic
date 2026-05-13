@@ -88,8 +88,20 @@ Current README and test coverage support the repo-local pattern:
 gtc wizard --answers <answers.json>
 ```
 
-In the current implementation, `gtc` forwards that request to the downstream
-wizard owner rather than validating the answer structure itself.
+`--answers` accepts JSON object documents from:
+
+- plain local paths
+- `file://...`
+- `http://...`
+- `https://...`
+- `oci://...`
+- `store://...`
+- `repo://...`
+
+`gtc` validates that the referenced document is valid JSON with an object at the
+top level before launching the downstream wizard. Distributor-backed schemes are
+resolved through `greentic-distributor-client` and forwarded as a temporary local
+answers file.
 
 That means the safe rule is:
 

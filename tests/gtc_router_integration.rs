@@ -211,34 +211,56 @@ fn gtc_dev_runner_info_forwards_args() {
 fn wizard_passthrough_routes_to_greentic_dev_with_all_args() {
     let sandbox = TestSandbox::new("wizard_passthrough_routes_to_greentic_dev_with_all_args");
     let log_file = sandbox.path().join("dev.log");
+    let answers_file = sandbox.path().join("answers.json");
+    fs::write(&answers_file, br#"{"ok":true}"#).expect("write answers");
     sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
 
     let status = sandbox.run_gtc(
-        ["wizard", "--locale", "fr", "--answers", "oci://example"],
+        [
+            "wizard",
+            "--locale",
+            "fr",
+            "--answers",
+            answers_file.to_str().expect("answers path"),
+        ],
         HashMap::new(),
     );
     assert_eq!(status.code(), Some(0));
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
-    assert!(logged.contains("wizard --locale fr --answers oci://example"));
+    assert!(logged.contains(&format!(
+        "wizard --locale fr --answers {}",
+        answers_file.display()
+    )));
 }
 
 #[test]
 fn wizard_passthrough_preserves_global_locale_for_greentic_dev() {
     let sandbox = TestSandbox::new("wizard_passthrough_preserves_global_locale_for_greentic_dev");
     let log_file = sandbox.path().join("dev.log");
+    let answers_file = sandbox.path().join("answers.json");
+    fs::write(&answers_file, br#"{"ok":true}"#).expect("write answers");
     sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
     sandbox.write_exit_tool("greentic-operator", 0);
 
     let status = sandbox.run_gtc(
-        ["--locale", "fr", "wizard", "--answers", "oci://example"],
+        [
+            "--locale",
+            "fr",
+            "wizard",
+            "--answers",
+            answers_file.to_str().expect("answers path"),
+        ],
         HashMap::new(),
     );
     assert_eq!(status.code(), Some(0));
 
     let logged = fs::read_to_string(log_file).expect("read dev log");
-    assert!(logged.contains("wizard --locale fr --answers oci://example"));
+    assert!(logged.contains(&format!(
+        "wizard --locale fr --answers {}",
+        answers_file.display()
+    )));
 }
 
 #[test]
@@ -329,6 +351,101 @@ fn setup_ignore_release_context_skips_check_and_strips_flag() {
     let logged = fs::read_to_string(log_file).expect("read setup log");
     assert!(logged.contains("--dry-run"));
     assert!(!logged.contains("--ignore-release-context"));
+}
+
+#[test]
+fn wizard_answers_local_file_is_validated_and_forwarded() {
+    let sandbox = TestSandbox::new("wizard_answers_local_file_is_validated_and_forwarded");
+    let log_file = sandbox.path().join("wizard.log");
+    let answers_file = sandbox.path().join("answers.json");
+    fs::write(&answers_file, br#"{"selected_action":"exit"}"#).expect("write answers");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+
+    let status = sandbox.run_gtc(
+        [
+            "wizard",
+            "--ignore-release-context",
+            "--answers",
+            answers_file.to_str().expect("answers path"),
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read wizard log");
+    assert!(logged.contains(&format!("--answers {}", answers_file.display())));
+    assert!(!logged.contains("--ignore-release-context"));
+}
+
+#[test]
+fn setup_answers_file_url_is_validated_and_forwarded() {
+    let sandbox = TestSandbox::new("setup_answers_file_url_is_validated_and_forwarded");
+    let log_file = sandbox.path().join("setup.log");
+    let answers_file = sandbox.path().join("setup-answers.json");
+    fs::write(&answers_file, br#"{"setup":true}"#).expect("write answers");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+
+    let answers_url = format!("file://{}", answers_file.display());
+    let status = sandbox.run_gtc(
+        [
+            "setup",
+            "--ignore-release-context",
+            "--answers",
+            answers_url.as_str(),
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    assert!(logged.contains(&format!("--answers {answers_url}")));
+    assert!(!logged.contains("--ignore-release-context"));
+}
+
+#[test]
+fn wizard_answers_invalid_json_errors_before_passthrough() {
+    let sandbox = TestSandbox::new("wizard_answers_invalid_json_errors_before_passthrough");
+    let log_file = sandbox.path().join("wizard.log");
+    let answers_file = sandbox.path().join("answers.json");
+    fs::write(&answers_file, b"{not-json").expect("write answers");
+    sandbox.write_arg_logger_tool("greentic-dev", &log_file, 0);
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "wizard",
+            "--ignore-release-context",
+            "--answers",
+            answers_file.to_str().expect("answers path"),
+        ],
+        HashMap::new(),
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(!log_file.exists(), "wizard should not run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("failed to parse answers JSON"));
+}
+
+#[test]
+fn setup_answers_invalid_scheme_errors_before_passthrough() {
+    let sandbox = TestSandbox::new("setup_answers_invalid_scheme_errors_before_passthrough");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "setup",
+            "--ignore-release-context",
+            "--answers",
+            "ftp://example",
+        ],
+        HashMap::new(),
+    );
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(!log_file.exists(), "setup should not run");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unsupported scheme"));
 }
 
 #[test]
@@ -565,16 +682,27 @@ fn op_help_passthrough_routes_to_greentic_operator() {
 fn gtc_dev_wizard_routes_to_dev_suffixed_greentic_dev() {
     let sandbox = TestSandbox::new("gtc_dev_wizard_routes_to_dev_suffixed_greentic_dev");
     let log_file = sandbox.path().join("wizard-dev.log");
+    let answers_file = sandbox.path().join("answers.json");
+    fs::write(&answers_file, br#"{"ok":true}"#).expect("write answers");
     sandbox.write_arg_logger_tool("greentic-dev-dev", &log_file, 0);
 
     let output = sandbox.run_gtc_dev_capture(
-        ["wizard", "--locale", "fr", "--answers", "oci://example"],
+        [
+            "wizard",
+            "--locale",
+            "fr",
+            "--answers",
+            answers_file.to_str().expect("answers path"),
+        ],
         HashMap::new(),
     );
     assert_eq!(output.status.code(), Some(0));
 
     let logged = fs::read_to_string(log_file).expect("read wizard log");
-    assert!(logged.contains("wizard --locale fr --answers oci://example"));
+    assert!(logged.contains(&format!(
+        "wizard --locale fr --answers {}",
+        answers_file.display()
+    )));
 }
 
 #[test]
