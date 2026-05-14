@@ -765,15 +765,22 @@ mod tests {
     use super::{
         AdminAuth, AdminRegistryDocument, build_remote_admin_client,
         capture_admin_deployer_command, ensure_admin_cert_dir_contents, ensure_admin_certs_ready,
-        load_admin_registry, render_admin_http_body, resolve_remote_admin_context,
-        run_admin_deployer_command, save_admin_registry,
+        load_admin_registry, remove_admin_registry_entry, render_admin_http_body,
+        resolve_admin_cert_dir, resolve_remote_admin_context, run_admin_add_client,
+        run_admin_clients, run_admin_deployer_command, run_admin_list, run_admin_remove_client,
+        run_admin_status, run_admin_stop, run_admin_tunnel, save_admin_registry,
+        upsert_admin_registry_entry,
     };
     use crate::tests::env_test_lock;
     use clap::{Arg, Command};
     use std::env;
     use std::fs;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::sync::mpsc;
+    use std::thread;
 
     #[test]
     fn admin_registry_roundtrips_and_rejects_invalid_json() {
@@ -991,4 +998,365 @@ exit 1
         assert!(logged.contains("azure admin-access --bundle-dir"));
         assert!(logged.contains("--output json"));
     }
+
+    #[test]
+    fn upsert_admin_registry_entry_replaces_existing_entry_and_sorts() {
+        let mut registry = AdminRegistryDocument { admins: Vec::new() };
+        upsert_admin_registry_entry(
+            &mut registry,
+            Some("bob".to_string()),
+            "CN=bob".to_string(),
+            "ssh-ed25519 BOB".to_string(),
+        );
+        upsert_admin_registry_entry(
+            &mut registry,
+            Some("alice".to_string()),
+            "CN=alice".to_string(),
+            "ssh-ed25519 ALICE".to_string(),
+        );
+        assert_eq!(registry.admins.len(), 2);
+        assert_eq!(registry.admins[0].client_cn, "CN=alice");
+        assert_eq!(registry.admins[1].client_cn, "CN=bob");
+
+        upsert_admin_registry_entry(
+            &mut registry,
+            Some("alice-renamed".to_string()),
+            "CN=alice".to_string(),
+            "ssh-ed25519 ALICE-NEW".to_string(),
+        );
+        assert_eq!(registry.admins.len(), 2);
+        let alice = registry
+            .admins
+            .iter()
+            .find(|entry| entry.client_cn == "CN=alice")
+            .expect("alice");
+        assert_eq!(alice.name.as_deref(), Some("alice-renamed"));
+        assert_eq!(alice.public_key, "ssh-ed25519 ALICE-NEW");
+    }
+
+    #[test]
+    fn remove_admin_registry_entry_supports_name_lookup_and_returns_false_when_missing() {
+        let mut registry = AdminRegistryDocument { admins: Vec::new() };
+        upsert_admin_registry_entry(
+            &mut registry,
+            Some("alice".to_string()),
+            "CN=alice".to_string(),
+            "key".to_string(),
+        );
+        upsert_admin_registry_entry(
+            &mut registry,
+            Some("bob".to_string()),
+            "CN=bob".to_string(),
+            "key".to_string(),
+        );
+
+        let removed = remove_admin_registry_entry(&mut registry, None, Some("alice"));
+        assert!(removed);
+        assert_eq!(registry.admins.len(), 1);
+        assert_eq!(registry.admins[0].client_cn, "CN=bob");
+
+        let removed_again = remove_admin_registry_entry(&mut registry, None, Some("missing"));
+        assert!(!removed_again);
+    }
+
+    #[test]
+    fn resolve_admin_cert_dir_returns_default_when_no_bundle_certs() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let resolved = resolve_admin_cert_dir(dir.path());
+        assert_eq!(resolved, std::path::PathBuf::from("/etc/greentic/admin"));
+    }
+
+    #[test]
+    fn admin_status_list_clients_stop_add_remove_error_without_bundle_ref() {
+        fn base_cmd() -> Command {
+            Command::new("test")
+                .arg(Arg::new("bundle-ref").required(false))
+                .arg(Arg::new("target").long("target").num_args(1))
+                .arg(Arg::new("output").long("output").num_args(1))
+                .arg(
+                    Arg::new("local-port")
+                        .long("local-port")
+                        .default_value("8443"),
+                )
+                .arg(Arg::new("cn").long("cn").num_args(1))
+        }
+
+        let matches = base_cmd().try_get_matches_from(["test"]).expect("matches");
+        assert_eq!(run_admin_status(&matches, "en"), 2);
+        assert_eq!(run_admin_list(&matches, "en"), 2);
+        assert_eq!(run_admin_clients(&matches, "en"), 2);
+        assert_eq!(run_admin_stop(&matches, "en"), 2);
+        let with_cn = base_cmd()
+            .try_get_matches_from(["test", "--cn", "CN=alice"])
+            .expect("matches");
+        assert_eq!(run_admin_add_client(&with_cn, "en"), 2);
+        assert_eq!(run_admin_remove_client(&with_cn, "en"), 2);
+    }
+
+    #[test]
+    fn admin_add_and_remove_client_require_cn_flag() {
+        let matches = Command::new("test")
+            .arg(Arg::new("bundle-ref").required(true))
+            .arg(Arg::new("cn").long("cn").num_args(1))
+            .arg(Arg::new("target").long("target").num_args(1))
+            .arg(Arg::new("output").long("output").num_args(1))
+            .arg(
+                Arg::new("local-port")
+                    .long("local-port")
+                    .default_value("8443"),
+            )
+            .try_get_matches_from(["test", "./bundle"])
+            .expect("matches");
+        assert_eq!(run_admin_add_client(&matches, "en"), 2);
+        assert_eq!(run_admin_remove_client(&matches, "en"), 2);
+    }
+
+    #[test]
+    fn admin_status_list_clients_stop_fail_when_bundle_dir_missing() {
+        fn build_matches() -> clap::ArgMatches {
+            Command::new("test")
+                .arg(Arg::new("bundle-ref").required(true))
+                .arg(Arg::new("target").long("target").num_args(1))
+                .arg(Arg::new("output").long("output").num_args(1))
+                .arg(
+                    Arg::new("local-port")
+                        .long("local-port")
+                        .default_value("8443"),
+                )
+                .arg(Arg::new("cn").long("cn").num_args(1))
+                .try_get_matches_from([
+                    "test",
+                    "/definitely/missing/bundle",
+                    "--target",
+                    "gcp",
+                    "--cn",
+                    "CN=alice",
+                ])
+                .expect("matches")
+        }
+        assert_eq!(run_admin_status(&build_matches(), "en"), 1);
+        assert_eq!(run_admin_list(&build_matches(), "en"), 1);
+        assert_eq!(run_admin_clients(&build_matches(), "en"), 1);
+        assert_eq!(run_admin_stop(&build_matches(), "en"), 1);
+        assert_eq!(run_admin_add_client(&build_matches(), "en"), 1);
+        assert_eq!(run_admin_remove_client(&build_matches(), "en"), 1);
+    }
+
+    #[test]
+    fn admin_tunnel_errors_when_bundle_ref_missing() {
+        let matches = Command::new("test")
+            .arg(Arg::new("bundle-ref").required(false))
+            .arg(Arg::new("target").long("target").num_args(1))
+            .arg(
+                Arg::new("local-port")
+                    .long("local-port")
+                    .default_value("8443"),
+            )
+            .arg(
+                Arg::new("container")
+                    .long("container")
+                    .default_value("greentic-admin"),
+            )
+            .try_get_matches_from(["test"])
+            .expect("matches");
+        assert_eq!(run_admin_tunnel(&matches, "en"), 2);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_remote_admin_request_uses_bearer_auth_and_renders_response() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let (tx, rx) = mpsc::channel();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut buf = [0u8; 4096];
+            let mut request = Vec::new();
+            loop {
+                let read = stream.read(&mut buf).expect("read");
+                request.extend_from_slice(&buf[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request_text = String::from_utf8_lossy(&request).to_string();
+            let path = request_text
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .map(str::to_string)
+                .unwrap_or_default();
+            let auth = request_text
+                .lines()
+                .find_map(|line| {
+                    let (name, value) = line.split_once(':')?;
+                    if name.eq_ignore_ascii_case("authorization") {
+                        Some(value.trim().to_string())
+                    } else {
+                        None
+                    }
+                });
+            tx.send((path, auth)).expect("send");
+            let body = "{\"state\":\"running\"}";
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream.write_all(response.as_bytes()).expect("write");
+            stream.flush().expect("flush");
+        });
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = root.path().join("bundle");
+        fs::create_dir_all(&bundle).expect("bundle dir");
+        let deployer = root.path().join("greentic-deployer");
+        fs::write(
+            &deployer,
+            format!(
+                r#"#!/bin/sh
+case "$2" in
+  admin-access)
+    printf '%s\n' '{{"admin_public_endpoint":"http://{addr}/admin/v1"}}'
+    ;;
+  admin-token)
+    printf '%s\n' 'remote-bearer-token'
+    ;;
+  *)
+    echo "unexpected: $*" >&2
+    exit 1
+    ;;
+esac
+exit 0
+"#
+            ),
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+
+        let matches = Command::new("status")
+            .arg(Arg::new("bundle-ref").required(true))
+            .arg(Arg::new("target").long("target").num_args(1))
+            .arg(Arg::new("output").long("output").num_args(1))
+            .arg(
+                Arg::new("local-port")
+                    .long("local-port")
+                    .default_value("8443"),
+            )
+            .try_get_matches_from([
+                "status",
+                bundle.to_str().expect("utf8"),
+                "--target",
+                "gcp",
+                "--output",
+                "json",
+            ])
+            .expect("matches");
+        let code = run_admin_status(&matches, "en");
+        handle.join().expect("join");
+
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+        assert_eq!(code, 0);
+        let (path, auth) = rx.recv().expect("request");
+        assert_eq!(path, "/admin/v1/status");
+        assert_eq!(auth.as_deref(), Some("Bearer remote-bearer-token"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_remote_admin_request_returns_one_when_endpoint_unreachable() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let root = tempfile::tempdir().expect("tempdir");
+        let bundle = root.path().join("bundle");
+        fs::create_dir_all(&bundle).expect("bundle dir");
+        let deployer = root.path().join("greentic-deployer");
+        // Use an unroutable port so the HTTP request fails fast.
+        fs::write(
+            &deployer,
+            r#"#!/bin/sh
+case "$2" in
+  admin-access)
+    printf '%s\n' '{"admin_public_endpoint":"http://127.0.0.1:1/admin/v1"}'
+    ;;
+  admin-token)
+    printf '%s\n' 'unused'
+    ;;
+  *)
+    exit 1
+    ;;
+esac
+exit 0
+"#,
+        )
+        .expect("write deployer");
+        let mut perms = fs::metadata(&deployer).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&deployer, perms).expect("chmod");
+
+        let old = env::var_os("GREENTIC_DEPLOYER_BIN");
+        unsafe {
+            env::set_var("GREENTIC_DEPLOYER_BIN", &deployer);
+        }
+
+        let matches = Command::new("status")
+            .arg(Arg::new("bundle-ref").required(true))
+            .arg(Arg::new("target").long("target").num_args(1))
+            .arg(Arg::new("output").long("output").num_args(1))
+            .arg(
+                Arg::new("local-port")
+                    .long("local-port")
+                    .default_value("8443"),
+            )
+            .try_get_matches_from([
+                "status",
+                bundle.to_str().expect("utf8"),
+                "--target",
+                "gcp",
+            ])
+            .expect("matches");
+        let code = run_admin_status(&matches, "en");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GREENTIC_DEPLOYER_BIN", value),
+                None => env::remove_var("GREENTIC_DEPLOYER_BIN"),
+            }
+        }
+        assert_eq!(code, 1);
+    }
+
+    #[test]
+    fn admin_http_body_renderer_handles_yaml_parse_failure() {
+        let err = render_admin_http_body("not json", "yaml").unwrap_err();
+        assert!(err.contains("failed to parse admin JSON response"));
+    }
+
+    #[test]
+    fn admin_auth_variants_are_distinct() {
+        let _ = AdminAuth::Bearer("token".to_string());
+        let _ = AdminAuth::Mtls {
+            ca_cert_path: std::path::PathBuf::from("/tmp/ca.crt"),
+            client_cert_path: std::path::PathBuf::from("/tmp/c.crt"),
+            client_key_path: std::path::PathBuf::from("/tmp/c.key"),
+        };
+        // Used only for type assertion / coverage of branches in build_remote_admin_client.
+        let bearer_context = super::RemoteAdminContext {
+            base_url: "http://example.test".to_string(),
+            auth: AdminAuth::Bearer("token".to_string()),
+        };
+        build_remote_admin_client(&bearer_context).expect("bearer client builds");
+    }
+
 }

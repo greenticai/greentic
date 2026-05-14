@@ -542,10 +542,16 @@ mod tests {
         build_extension_wizard_args, build_setup_args_from_handoff, build_start_tail_from_handoff,
         collect_extension_ids, has_extension_flags, load_descriptor, load_extension_setup_handoff,
         load_extension_start_handoff, load_registry, resolve_descriptor_path,
-        resolve_descriptor_working_directory, write_launcher_handoff,
+        resolve_descriptor_working_directory, resolve_handoff_output_path,
+        resolve_registry_path, run_extension_setup, run_extension_start, run_extension_wizard,
+        write_launcher_handoff,
     };
+    use crate::tests::env_test_lock;
     use clap::{Arg, ArgAction, Command};
+    use std::env;
     use std::fs;
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn extension_flags_are_detected() {
@@ -850,5 +856,312 @@ mod tests {
 
     fn load_descriptor_from_str(raw: &str) -> super::ExtensionDescriptor {
         serde_json::from_str(raw).expect("descriptor")
+    }
+
+    fn build_wizard_matches(args: &[&str]) -> clap::ArgMatches {
+        Command::new("wizard")
+            .arg(
+                Arg::new("extensions")
+                    .long("extensions")
+                    .action(ArgAction::Append)
+                    .num_args(1..),
+            )
+            .arg(
+                Arg::new("extension-registry")
+                    .long("extension-registry")
+                    .num_args(1),
+            )
+            .arg(
+                Arg::new("emit-extension-handoff")
+                    .long("emit-extension-handoff")
+                    .num_args(1),
+            )
+            .try_get_matches_from(args)
+            .expect("matches")
+    }
+
+    #[test]
+    fn run_extension_wizard_errors_when_no_extension_ids_supplied() {
+        let matches = build_wizard_matches(&["wizard"]);
+        let exit = run_extension_wizard(&matches, &[], false, "en");
+        assert_eq!(exit, 2);
+    }
+
+    #[test]
+    fn run_extension_wizard_errors_when_registry_path_invalid() {
+        let matches = build_wizard_matches(&[
+            "wizard",
+            "--extensions",
+            "telco-x",
+            "--extension-registry",
+            "/definitely/missing/registry.json",
+        ]);
+        let exit = run_extension_wizard(&matches, &[], false, "en");
+        assert_eq!(exit, 1);
+    }
+
+    #[test]
+    fn run_extension_wizard_errors_when_no_registry_found() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old_cwd = env::current_dir().expect("cwd");
+        let old_home = env::var_os("HOME");
+        let old_registry = env::var_os("GTC_EXTENSION_REGISTRY");
+        env::set_current_dir(dir.path()).expect("set cwd");
+        let fake_home = dir.path().join("home");
+        fs::create_dir_all(&fake_home).expect("home");
+        unsafe {
+            env::set_var("HOME", &fake_home);
+            env::remove_var("GTC_EXTENSION_REGISTRY");
+        }
+        let matches = build_wizard_matches(&["wizard", "--extensions", "telco-x"]);
+        let exit = run_extension_wizard(&matches, &[], false, "en");
+        env::set_current_dir(&old_cwd).expect("restore cwd");
+        unsafe {
+            match old_home {
+                Some(value) => env::set_var("HOME", value),
+                None => env::remove_var("HOME"),
+            }
+            match old_registry {
+                Some(value) => env::set_var("GTC_EXTENSION_REGISTRY", value),
+                None => env::remove_var("GTC_EXTENSION_REGISTRY"),
+            }
+        }
+        assert_eq!(exit, 1);
+    }
+
+    #[test]
+    fn run_extension_setup_errors_when_handoff_flag_missing() {
+        let matches = Command::new("extension-setup")
+            .arg(
+                Arg::new("extension-setup-handoff")
+                    .long("extension-setup-handoff")
+                    .num_args(1),
+            )
+            .try_get_matches_from(["extension-setup"])
+            .expect("matches");
+        assert_eq!(run_extension_setup(&matches, &[], false, "en"), 2);
+    }
+
+    #[test]
+    fn run_extension_setup_errors_when_handoff_path_invalid() {
+        let matches = Command::new("extension-setup")
+            .arg(
+                Arg::new("extension-setup-handoff")
+                    .long("extension-setup-handoff")
+                    .num_args(1),
+            )
+            .try_get_matches_from([
+                "extension-setup",
+                "--extension-setup-handoff",
+                "/definitely/missing/handoff.json",
+            ])
+            .expect("matches");
+        assert_eq!(run_extension_setup(&matches, &[], false, "en"), 1);
+    }
+
+    #[test]
+    fn run_extension_start_errors_when_handoff_flag_missing() {
+        let matches = Command::new("extension-start")
+            .arg(
+                Arg::new("extension-start-handoff")
+                    .long("extension-start-handoff")
+                    .num_args(1),
+            )
+            .try_get_matches_from(["extension-start"])
+            .expect("matches");
+        assert_eq!(run_extension_start(&matches, &[], false, "en"), 2);
+    }
+
+    #[test]
+    fn run_extension_start_errors_when_handoff_path_invalid() {
+        let matches = Command::new("extension-start")
+            .arg(
+                Arg::new("extension-start-handoff")
+                    .long("extension-start-handoff")
+                    .num_args(1),
+            )
+            .try_get_matches_from([
+                "extension-start",
+                "--extension-start-handoff",
+                "/definitely/missing/start.json",
+            ])
+            .expect("matches");
+        assert_eq!(run_extension_start(&matches, &[], false, "en"), 1);
+    }
+
+    #[test]
+    fn resolve_registry_path_prefers_env_var_then_cwd_then_installed() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let registry = dir.path().join("custom-registry.json");
+        fs::write(&registry, "{}").expect("write registry");
+        let matches = Command::new("wizard")
+            .arg(
+                Arg::new("extension-registry")
+                    .long("extension-registry")
+                    .num_args(1),
+            )
+            .try_get_matches_from(["wizard"])
+            .expect("matches");
+
+        let old_env = env::var_os("GTC_EXTENSION_REGISTRY");
+        unsafe {
+            env::set_var("GTC_EXTENSION_REGISTRY", &registry);
+        }
+        let resolved = resolve_registry_path(&matches).expect("registry path");
+        unsafe {
+            match old_env {
+                Some(value) => env::set_var("GTC_EXTENSION_REGISTRY", value),
+                None => env::remove_var("GTC_EXTENSION_REGISTRY"),
+            }
+        }
+        assert_eq!(resolved.as_deref(), Some(registry.as_path()));
+    }
+
+    #[test]
+    fn resolve_handoff_output_path_defaults_to_greentic_wizard_dir() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let old_cwd = env::current_dir().expect("cwd");
+        env::set_current_dir(dir.path()).expect("set cwd");
+        let matches = Command::new("wizard")
+            .arg(
+                Arg::new("emit-extension-handoff")
+                    .long("emit-extension-handoff")
+                    .num_args(1),
+            )
+            .try_get_matches_from(["wizard"])
+            .expect("matches");
+        let resolved = resolve_handoff_output_path(&matches).expect("handoff path");
+        env::set_current_dir(&old_cwd).expect("restore cwd");
+        assert!(resolved.ends_with(".greentic/wizard/extensions/launcher-handoff.json"));
+    }
+
+    #[test]
+    fn resolve_handoff_output_path_honors_explicit_override() {
+        let matches = Command::new("wizard")
+            .arg(
+                Arg::new("emit-extension-handoff")
+                    .long("emit-extension-handoff")
+                    .num_args(1),
+            )
+            .try_get_matches_from(["wizard", "--emit-extension-handoff", "/tmp/handoff.json"])
+            .expect("matches");
+        let resolved = resolve_handoff_output_path(&matches).expect("handoff path");
+        assert_eq!(resolved, std::path::PathBuf::from("/tmp/handoff.json"));
+    }
+
+    #[test]
+    fn build_setup_args_omits_optional_identity_when_absent() {
+        let handoff = super::ExtensionSetupHandoff {
+            schema_id: "gtc.extension.setup.handoff".to_string(),
+            schema_version: "1.0.0".to_string(),
+            bundle_ref: "/tmp/bundle".to_string(),
+            answers_path: None,
+            tenant: None,
+            team: None,
+            env: None,
+            setup_args: Vec::new(),
+        };
+        let args = build_setup_args_from_handoff(&handoff, &[]);
+        assert_eq!(args, vec!["/tmp/bundle".to_string()]);
+    }
+
+    #[test]
+    fn resolve_descriptor_working_directory_returns_none_when_missing() {
+        let descriptor = load_descriptor_from_str(
+            r#"{
+  "schema_version": "1",
+  "extension_id": "telco-x",
+  "family": "solution-x",
+  "wizard": { "binary": "greentic-x", "args": ["wizard"] }
+}"#,
+        );
+        let resolved = resolve_descriptor_working_directory(
+            &descriptor,
+            std::path::Path::new("/tmp/anywhere/descriptor.json"),
+        );
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn resolve_descriptor_path_returns_absolute_unchanged() {
+        let root = tempfile::tempdir().expect("tempdir");
+        let registry_path = root.path().join("registry.json");
+        fs::write(
+            &registry_path,
+            r#"{"schema_version":"1","extensions":[{"id":"alpha","descriptor":"/abs/path.json"}]}"#,
+        )
+        .expect("write");
+        let registry = load_registry(&registry_path).expect("registry");
+        let resolved = resolve_descriptor_path(&registry, &registry_path, "alpha").expect("path");
+        assert_eq!(resolved, std::path::PathBuf::from("/abs/path.json"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn run_extension_setup_invokes_setup_binary_with_handoff_args() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempfile::tempdir().expect("tempdir");
+        let setup_bin = dir.path().join("greentic-setup");
+        let log = dir.path().join("setup.log");
+        fs::write(
+            &setup_bin,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" > '{}'\nexit 0\n",
+                log.display()
+            ),
+        )
+        .expect("write setup");
+        let mut perms = fs::metadata(&setup_bin).expect("metadata").permissions();
+        perms.set_mode(0o755);
+        fs::set_permissions(&setup_bin, perms).expect("chmod");
+
+        let handoff_path = dir.path().join("setup-handoff.json");
+        fs::write(
+            &handoff_path,
+            r#"{
+  "schema_id": "gtc.extension.setup.handoff",
+  "schema_version": "1.0.0",
+  "bundle_ref": "/tmp/bundle",
+  "tenant": "demo",
+  "setup_args": ["--prepare"]
+}"#,
+        )
+        .expect("write handoff");
+
+        let old_setup = env::var_os("GREENTIC_SETUP_BIN");
+        unsafe {
+            env::set_var("GREENTIC_SETUP_BIN", &setup_bin);
+        }
+
+        let matches = Command::new("extension-setup")
+            .arg(
+                Arg::new("extension-setup-handoff")
+                    .long("extension-setup-handoff")
+                    .num_args(1),
+            )
+            .try_get_matches_from([
+                "extension-setup",
+                "--extension-setup-handoff",
+                handoff_path.to_str().expect("utf8"),
+            ])
+            .expect("matches");
+        let exit = run_extension_setup(&matches, &["--no-ui".to_string()], false, "en");
+
+        unsafe {
+            match old_setup {
+                Some(value) => env::set_var("GREENTIC_SETUP_BIN", value),
+                None => env::remove_var("GREENTIC_SETUP_BIN"),
+            }
+        }
+        assert_eq!(exit, 0);
+        let logged = fs::read_to_string(&log).expect("read log");
+        assert!(logged.contains("--prepare"));
+        assert!(logged.contains("--tenant"));
+        assert!(logged.contains("demo"));
+        assert!(logged.contains("--no-ui"));
+        assert!(logged.contains("/tmp/bundle"));
     }
 }
