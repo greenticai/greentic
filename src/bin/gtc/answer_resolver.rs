@@ -1,8 +1,12 @@
 use std::fs;
 use std::path::PathBuf;
 
-use greentic_distributor_client::{CachePolicy, DistClient, DistOptions, ResolvePolicy};
+use greentic_distributor_client::{
+    DistClient, DistOptions, PackFetchOptions, default_pack_layer_media_types,
+    fetch_pack_to_cache_with_options,
+};
 use gtc::error::{GtcError, GtcResult};
+use oci_distribution::Reference;
 use reqwest::blocking::Client;
 use serde_json::{Map, Value};
 
@@ -37,31 +41,71 @@ impl AnswerSourceLoader for DefaultAnswerSourceLoader {
     }
 
     fn load_distributor(&self, source: &str) -> GtcResult<Vec<u8>> {
-        let client = DistClient::new(DistOptions::default());
+        let options = DistOptions::default();
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|err| GtcError::message(format!("failed to create runtime: {err}")))?;
-        let artifact_source = client.parse_source(source).map_err(|err| {
-            GtcError::message(format!("failed to parse answers source {source}: {err}"))
-        })?;
-        let descriptor = runtime
-            .block_on(client.resolve(artifact_source, ResolvePolicy))
-            .map_err(|err| {
-                GtcError::message(format!("failed to resolve answers source {source}: {err}"))
-            })?;
-        let artifact = runtime
-            .block_on(client.fetch(&descriptor, CachePolicy))
-            .map_err(|err| {
-                GtcError::message(format!("failed to fetch answers source {source}: {err}"))
-            })?;
-        artifact
-            .wasm_bytes()
-            .map(|bytes| bytes.to_vec())
-            .map_err(|err| {
-                GtcError::message(format!("failed to read resolved answers {source}: {err}"))
-            })
+        let resolved = match classify_answers_source(source)? {
+            AnswerSourceKind::Distributor => {
+                if source.starts_with("store://") {
+                    let client = DistClient::new(options);
+                    let artifact = runtime
+                        .block_on(client.download_store_artifact(source))
+                        .map_err(|err| {
+                            GtcError::message(format!(
+                                "failed to fetch answers source {source}: {err}"
+                            ))
+                        })?;
+                    DistributedAnswerBytes {
+                        bytes: artifact.bytes,
+                        media_type: artifact.media_type,
+                    }
+                } else {
+                    let mapped = map_oci_answers_reference(source, &options)?;
+                    let artifact = runtime
+                        .block_on(fetch_pack_to_cache_with_options(
+                            &mapped,
+                            answer_pack_fetch_options(&options),
+                        ))
+                        .map_err(|err| {
+                            GtcError::message(format!(
+                                "failed to fetch answers source {source}: {err}"
+                            ))
+                        })?;
+                    let bytes = fs::read(&artifact.path).map_err(|err| {
+                        GtcError::io(
+                            format!(
+                                "failed to read resolved answers {}",
+                                artifact.path.display()
+                            ),
+                            err,
+                        )
+                    })?;
+                    DistributedAnswerBytes {
+                        bytes,
+                        media_type: artifact.media_type,
+                    }
+                }
+            }
+            _ => unreachable!("load_distributor is only called for distributor answer sources"),
+        };
+        if !is_json_media_type(&resolved.media_type) {
+            return Err(GtcError::invalid_data(
+                "answers OCI artifact",
+                format!(
+                    "{source} resolved to media type {}; expected application/json or a +json media type",
+                    resolved.media_type
+                ),
+            ));
+        }
+        Ok(resolved.bytes)
     }
+}
+
+struct DistributedAnswerBytes {
+    bytes: Vec<u8>,
+    media_type: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,15 +188,98 @@ fn file_url_path(url: &str) -> Option<PathBuf> {
     Some(PathBuf::from(path))
 }
 
+fn map_oci_answers_reference(source: &str, options: &DistOptions) -> GtcResult<String> {
+    if let Some(reference) = source.strip_prefix("oci://") {
+        validate_oci_reference(source, reference)?;
+        return Ok(reference.to_string());
+    }
+
+    if let Some(target) = source.strip_prefix("repo://") {
+        return map_registry_target(source, target, options.repo_registry_base.as_deref());
+    }
+
+    Err(GtcError::invalid_data(
+        "answers source",
+        format!("unsupported distributor answers source {source}"),
+    ))
+}
+
+fn map_registry_target(source: &str, target: &str, base: Option<&str>) -> GtcResult<String> {
+    if Reference::try_from(target).is_ok() {
+        return Ok(target.to_string());
+    }
+    let Some(base) = base else {
+        return Err(GtcError::message(format!(
+            "{source} requires GREENTIC_REPO_REGISTRY_BASE to map to OCI"
+        )));
+    };
+    let mapped = format!(
+        "{}/{}",
+        base.trim_end_matches('/'),
+        target.trim_start_matches('/')
+    );
+    validate_oci_reference(source, &mapped)?;
+    Ok(mapped)
+}
+
+fn validate_oci_reference(source: &str, reference: &str) -> GtcResult<()> {
+    Reference::try_from(reference).map(|_| ()).map_err(|err| {
+        GtcError::invalid_data(
+            "answers source",
+            format!("{source} is not a valid OCI reference: {err}"),
+        )
+    })
+}
+
+fn answer_pack_fetch_options(options: &DistOptions) -> PackFetchOptions {
+    let mut accepted = vec![
+        "application/json".to_string(),
+        "application/vnd.greentic.answers.v1+json".to_string(),
+        "application/vnd.greentic.answers.create.v1+json".to_string(),
+        "application/vnd.greentic.answers.setup.v1+json".to_string(),
+    ];
+    extend_unique_media_types(&mut accepted, default_pack_layer_media_types());
+    PackFetchOptions {
+        allow_tags: options.allow_tags,
+        offline: options.offline,
+        cache_dir: options.cache_dir.join("answers"),
+        accepted_layer_media_types: accepted,
+        preferred_layer_media_types: vec![
+            "application/vnd.greentic.answers.setup.v1+json".to_string(),
+            "application/vnd.greentic.answers.create.v1+json".to_string(),
+            "application/vnd.greentic.answers.v1+json".to_string(),
+            "application/json".to_string(),
+        ],
+        ..PackFetchOptions::default()
+    }
+}
+
+fn extend_unique_media_types<I>(accepted: &mut Vec<String>, media_types: I)
+where
+    I: IntoIterator<Item = String>,
+{
+    for media_type in media_types {
+        if !accepted.iter().any(|candidate| candidate == &media_type) {
+            accepted.push(media_type);
+        }
+    }
+}
+
+fn is_json_media_type(media_type: &str) -> bool {
+    media_type == "application/json" || media_type.ends_with("+json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        AnswerSourceKind, AnswerSourceLoader, classify_answers_source, load_answer_bytes,
-        load_answers_with,
+        AnswerSourceKind, AnswerSourceLoader, answer_pack_fetch_options, classify_answers_source,
+        is_json_media_type, load_answer_bytes, load_answers_with, map_oci_answers_reference,
     };
+    use greentic_distributor_client::DistOptions;
     use gtc::error::{GtcError, GtcResult};
     use std::cell::RefCell;
     use std::fs;
+    use std::path::PathBuf;
 
     #[derive(Default)]
     struct MockLoader {
@@ -307,5 +434,110 @@ mod tests {
 
         assert!(String::from_utf8(bytes).unwrap().contains("oci://"));
         assert_eq!(loader.dist.borrow().len(), 1);
+    }
+
+    #[test]
+    fn json_media_type_accepts_standard_and_vendor_json() {
+        assert!(is_json_media_type("application/json"));
+        assert!(is_json_media_type(
+            "application/vnd.greentic.answers.v1+json"
+        ));
+        assert!(is_json_media_type(
+            "application/vnd.greentic.answers.create.v1+json"
+        ));
+        assert!(is_json_media_type(
+            "application/vnd.greentic.answers.setup.v1+json"
+        ));
+        assert!(!is_json_media_type("application/wasm"));
+        assert!(!is_json_media_type("application/octet-stream"));
+    }
+
+    #[test]
+    fn answer_pack_fetch_options_prefers_answers_json_layers() {
+        let options = DistOptions {
+            cache_dir: PathBuf::from("/tmp/gtc-answer-test-cache"),
+            allow_tags: true,
+            offline: false,
+            allow_insecure_local_http: false,
+            cache_max_bytes: 42,
+            repo_registry_base: None,
+            store_registry_base: None,
+            store_auth_path: PathBuf::from("/tmp/store-auth.json"),
+            store_state_path: PathBuf::from("/tmp/store-state.json"),
+        };
+
+        let fetch_options = answer_pack_fetch_options(&options);
+
+        assert_eq!(
+            fetch_options
+                .preferred_layer_media_types
+                .first()
+                .map(String::as_str),
+            Some("application/vnd.greentic.answers.setup.v1+json")
+        );
+        for media_type in [
+            "application/json",
+            "application/vnd.greentic.answers.v1+json",
+            "application/vnd.greentic.answers.create.v1+json",
+            "application/vnd.greentic.answers.setup.v1+json",
+        ] {
+            assert!(
+                fetch_options
+                    .accepted_layer_media_types
+                    .iter()
+                    .any(|accepted| accepted == media_type),
+                "missing accepted media type {media_type}"
+            );
+            assert!(
+                fetch_options
+                    .preferred_layer_media_types
+                    .iter()
+                    .any(|preferred| preferred == media_type),
+                "missing preferred media type {media_type}"
+            );
+        }
+    }
+
+    #[test]
+    fn maps_oci_and_repo_answers_to_oci_references() {
+        let options = DistOptions {
+            cache_dir: PathBuf::from("/tmp/gtc-answer-test-cache"),
+            allow_tags: true,
+            offline: false,
+            allow_insecure_local_http: false,
+            cache_max_bytes: 42,
+            repo_registry_base: Some("ghcr.io/acme".to_string()),
+            store_registry_base: None,
+            store_auth_path: PathBuf::from("/tmp/store-auth.json"),
+            store_state_path: PathBuf::from("/tmp/store-state.json"),
+        };
+
+        assert_eq!(
+            map_oci_answers_reference("oci://ghcr.io/acme/answers:stable", &options).unwrap(),
+            "ghcr.io/acme/answers:stable"
+        );
+        assert_eq!(
+            map_oci_answers_reference("repo:///answers:stable", &options).unwrap(),
+            "ghcr.io/acme/answers:stable"
+        );
+    }
+
+    #[test]
+    fn repo_answers_require_registry_base_when_target_is_not_oci() {
+        let options = DistOptions {
+            cache_dir: PathBuf::from("/tmp/gtc-answer-test-cache"),
+            allow_tags: true,
+            offline: false,
+            allow_insecure_local_http: false,
+            cache_max_bytes: 42,
+            repo_registry_base: None,
+            store_registry_base: None,
+            store_auth_path: PathBuf::from("/tmp/store-auth.json"),
+            store_state_path: PathBuf::from("/tmp/store-state.json"),
+        };
+
+        let err = map_oci_answers_reference("repo:///answers:stable", &options).unwrap_err();
+
+        assert!(err.to_string().contains("GREENTIC_REPO_REGISTRY_BASE"));
     }
 }
