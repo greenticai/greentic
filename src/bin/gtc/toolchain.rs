@@ -1927,7 +1927,7 @@ mod tests {
         fs::write(&target, b"fixture").expect("write target");
         fs::write(
             &index_path,
-            "{{\"ghcr.io/example:1.0.0\":\"artifacts/file.bin\",\"misc\":\"value\"}}",
+            r#"{"ghcr.io/example:1.0.0":"artifacts/file.bin","misc":"value"}"#,
         )
         .expect("write index");
 

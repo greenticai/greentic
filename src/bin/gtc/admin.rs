@@ -1187,16 +1187,14 @@ exit 1
                 .and_then(|line| line.split_whitespace().nth(1))
                 .map(str::to_string)
                 .unwrap_or_default();
-            let auth = request_text
-                .lines()
-                .find_map(|line| {
-                    let (name, value) = line.split_once(':')?;
-                    if name.eq_ignore_ascii_case("authorization") {
-                        Some(value.trim().to_string())
-                    } else {
-                        None
-                    }
-                });
+            let auth = request_text.lines().find_map(|line| {
+                let (name, value) = line.split_once(':')?;
+                if name.eq_ignore_ascii_case("authorization") {
+                    Some(value.trim().to_string())
+                } else {
+                    None
+                }
+            });
             tx.send((path, auth)).expect("send");
             let body = "{\"state\":\"running\"}";
             let response = format!(
@@ -1320,12 +1318,7 @@ exit 0
                     .long("local-port")
                     .default_value("8443"),
             )
-            .try_get_matches_from([
-                "status",
-                bundle.to_str().expect("utf8"),
-                "--target",
-                "gcp",
-            ])
+            .try_get_matches_from(["status", bundle.to_str().expect("utf8"), "--target", "gcp"])
             .expect("matches");
         let code = run_admin_status(&matches, "en");
         unsafe {
@@ -1358,5 +1351,4 @@ exit 0
         };
         build_remote_admin_client(&bearer_context).expect("bearer client builds");
     }
-
 }

@@ -542,9 +542,8 @@ mod tests {
         build_extension_wizard_args, build_setup_args_from_handoff, build_start_tail_from_handoff,
         collect_extension_ids, has_extension_flags, load_descriptor, load_extension_setup_handoff,
         load_extension_start_handoff, load_registry, resolve_descriptor_path,
-        resolve_descriptor_working_directory, resolve_handoff_output_path,
-        resolve_registry_path, run_extension_setup, run_extension_start, run_extension_wizard,
-        write_launcher_handoff,
+        resolve_descriptor_working_directory, resolve_handoff_output_path, resolve_registry_path,
+        run_extension_setup, run_extension_start, run_extension_wizard, write_launcher_handoff,
     };
     use crate::tests::env_test_lock;
     use clap::{Arg, ArgAction, Command};
