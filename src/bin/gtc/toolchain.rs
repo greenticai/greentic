@@ -1633,4 +1633,482 @@ mod tests {
         );
         assert_eq!(resolved.source_kind, "local");
     }
+
+    #[test]
+    fn parse_release_channel_recognizes_stable_dev_rnd() {
+        assert!(matches!(
+            parse_release_channel("stable"),
+            Some(ReleaseChannel::Stable)
+        ));
+        assert!(matches!(
+            parse_release_channel("dev"),
+            Some(ReleaseChannel::Dev)
+        ));
+        assert!(matches!(
+            parse_release_channel("rnd"),
+            Some(ReleaseChannel::Rnd)
+        ));
+        assert!(parse_release_channel("ga").is_none());
+    }
+
+    #[test]
+    fn release_channel_name_round_trips() {
+        assert_eq!(release_channel_name(&ReleaseChannel::Stable), "stable");
+        assert_eq!(release_channel_name(&ReleaseChannel::Dev), "dev");
+        assert_eq!(release_channel_name(&ReleaseChannel::Rnd), "rnd");
+    }
+
+    #[test]
+    fn artifact_repo_rejects_invalid_ids_and_accepts_valid_ones() {
+        assert_eq!(
+            artifact_repo("packs/sample/foo").expect("ok"),
+            "ghcr.io/greenticai/packs/sample/foo"
+        );
+        // Leading slash is stripped but the rest must remain non-empty.
+        assert_eq!(
+            artifact_repo("/packs/foo").expect("ok"),
+            "ghcr.io/greenticai/packs/foo"
+        );
+        assert!(artifact_repo("").is_err());
+        assert!(artifact_repo("packs//foo").is_err());
+        assert!(artifact_repo("packs/../foo").is_err());
+    }
+
+    #[test]
+    fn canonical_ref_digest_normalizes_with_or_without_sha_prefix() {
+        let raw_digest = "0".repeat(64);
+        let canonical = format!("oci://repo@{raw_digest}");
+        assert_eq!(
+            canonical_ref_digest(&canonical).as_deref(),
+            Some(format!("sha256:{raw_digest}").as_str())
+        );
+        let with_prefix = format!("oci://repo@sha256:{raw_digest}");
+        assert_eq!(
+            canonical_ref_digest(&with_prefix).as_deref(),
+            Some(format!("sha256:{raw_digest}").as_str())
+        );
+        assert!(canonical_ref_digest("not-canonical").is_none());
+    }
+
+    #[test]
+    fn parse_bearer_challenge_collects_quoted_params_and_rejects_unsupported() {
+        let parsed = parse_bearer_challenge(
+            "Bearer realm=\"https://example/token\",service=\"ghcr.io\",scope=\"repo:foo:pull\"",
+        )
+        .expect("parsed");
+        assert_eq!(
+            parsed.get("realm").map(String::as_str),
+            Some("https://example/token")
+        );
+        assert_eq!(parsed.get("service").map(String::as_str), Some("ghcr.io"));
+        assert_eq!(
+            parsed.get("scope").map(String::as_str),
+            Some("repo:foo:pull")
+        );
+
+        assert!(parse_bearer_challenge("Basic realm=\"example\"").is_err());
+    }
+
+    #[test]
+    fn ghcr_reference_parse_returns_repository_and_tag() {
+        let parsed = GhcrReference::parse("ghcr.io/greenticai/example:stable").expect("ref");
+        assert_eq!(parsed.repository, "greenticai/example");
+        assert_eq!(parsed.reference, "stable");
+
+        assert!(GhcrReference::parse("docker.io/example:tag").is_err());
+        assert!(GhcrReference::parse("ghcr.io/greenticai/example").is_err());
+    }
+
+    #[test]
+    fn installed_toolchain_path_honors_state_dir_env() {
+        let dir = tempdir().expect("tempdir");
+        let old = env::var_os("GTC_TOOLCHAIN_STATE_DIR");
+        unsafe {
+            env::set_var("GTC_TOOLCHAIN_STATE_DIR", dir.path());
+        }
+        let path = installed_toolchain_path().expect("path");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GTC_TOOLCHAIN_STATE_DIR", value),
+                None => env::remove_var("GTC_TOOLCHAIN_STATE_DIR"),
+            }
+        }
+        assert_eq!(path, dir.path().join("installed.json"));
+    }
+
+    #[test]
+    fn current_release_context_path_honors_state_dir_env() {
+        let dir = tempdir().expect("tempdir");
+        let old = env::var_os("GTC_RELEASE_STATE_DIR");
+        unsafe {
+            env::set_var("GTC_RELEASE_STATE_DIR", dir.path());
+        }
+        let path = current_release_context_path().expect("path");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GTC_RELEASE_STATE_DIR", value),
+                None => env::remove_var("GTC_RELEASE_STATE_DIR"),
+            }
+        }
+        assert_eq!(path, dir.path().join("current.json"));
+    }
+
+    #[test]
+    fn write_then_read_installed_toolchain_roundtrips_through_state_dir_env() {
+        let dir = tempdir().expect("tempdir");
+        let old = env::var_os("GTC_TOOLCHAIN_STATE_DIR");
+        unsafe {
+            env::set_var("GTC_TOOLCHAIN_STATE_DIR", dir.path());
+        }
+        let resolved = ResolvedManifest {
+            source: "ghcr.io/greenticai/greentic-versions/gtc:1.0.4".to_string(),
+            source_kind: "channel".to_string(),
+            digest: Some("sha256:deadbeef".to_string()),
+            manifest: pinned_manifest(),
+        };
+        let state = installed_state_from_resolved(&resolved);
+        write_installed_toolchain(&state).expect("write");
+        let read = read_installed_toolchain().expect("read").expect("present");
+        assert_eq!(read.version, state.version);
+        assert_eq!(read.resolved_digest.as_deref(), Some("sha256:deadbeef"));
+
+        let label = installed_toolchain_label();
+        assert!(label.contains(&state.version));
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GTC_TOOLCHAIN_STATE_DIR", value),
+                None => env::remove_var("GTC_TOOLCHAIN_STATE_DIR"),
+            }
+        }
+    }
+
+    #[test]
+    fn installed_toolchain_label_reports_not_installed_when_state_absent() {
+        let dir = tempdir().expect("tempdir");
+        let old = env::var_os("GTC_TOOLCHAIN_STATE_DIR");
+        unsafe {
+            env::set_var("GTC_TOOLCHAIN_STATE_DIR", dir.path());
+        }
+        let label = installed_toolchain_label();
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GTC_TOOLCHAIN_STATE_DIR", value),
+                None => env::remove_var("GTC_TOOLCHAIN_STATE_DIR"),
+            }
+        }
+        assert_eq!(label, "not installed");
+    }
+
+    #[test]
+    fn has_selected_release_artifacts_respects_phase_selection() {
+        let mut manifest = pinned_manifest();
+        manifest.extension_packs = Some(vec![ToolchainArtifactRef {
+            id: "packs/sample".to_string(),
+            version: "0.1.0".to_string(),
+        }]);
+        assert!(has_selected_release_artifacts(
+            &manifest,
+            ToolchainInstallPhases::all()
+        ));
+        assert!(!has_selected_release_artifacts(
+            &manifest,
+            ToolchainInstallPhases {
+                binaries: true,
+                packs: false,
+                components: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn validate_toolchain_artifact_refs_rejects_duplicates_and_empty_values() {
+        let dup = vec![
+            ToolchainArtifactRef {
+                id: "packs/a".to_string(),
+                version: "0.1".to_string(),
+            },
+            ToolchainArtifactRef {
+                id: "packs/a".to_string(),
+                version: "0.2".to_string(),
+            },
+        ];
+        assert!(validate_toolchain_artifact_refs("extension_packs", Some(dup.as_slice())).is_err());
+
+        let empty_version = vec![ToolchainArtifactRef {
+            id: "packs/a".to_string(),
+            version: String::new(),
+        }];
+        assert!(
+            validate_toolchain_artifact_refs("extension_packs", Some(empty_version.as_slice()))
+                .is_err()
+        );
+
+        let empty_id = vec![ToolchainArtifactRef {
+            id: String::new(),
+            version: "0.1".to_string(),
+        }];
+        assert!(
+            validate_toolchain_artifact_refs("extension_packs", Some(empty_id.as_slice())).is_err()
+        );
+
+        // None is accepted.
+        validate_toolchain_artifact_refs("extension_packs", None).expect("none ok");
+    }
+
+    #[test]
+    fn release_index_path_rejects_path_separators_in_release() {
+        let cache_root = std::path::PathBuf::from("/tmp/cache");
+        let ctx = ReleaseResolutionContext {
+            release: "../escape".to_string(),
+            channel: ReleaseChannel::Stable,
+        };
+        assert!(release_index_path(&cache_root, &ctx).is_err());
+
+        let ctx_ok = ReleaseResolutionContext {
+            release: "1.0.4".to_string(),
+            channel: ReleaseChannel::Stable,
+        };
+        let path = release_index_path(&cache_root, &ctx_ok).expect("path");
+        assert!(
+            path.ends_with(
+                std::path::Path::new("release-index")
+                    .join("v1")
+                    .join("stable")
+                    .join("1.0.4.json")
+            )
+        );
+    }
+
+    #[test]
+    fn cache_artifact_dir_validates_digest_shape() {
+        let cache_root = std::path::PathBuf::from("/tmp/cache");
+        let digest = format!("sha256:{}", "ab".repeat(32));
+        let dir = cache_artifact_dir(&cache_root, &digest).expect("ok");
+        assert!(dir.starts_with("/tmp/cache/artifacts/sha256"));
+
+        let blob = cache_blob_path(&cache_root, &digest).expect("blob");
+        assert!(blob.ends_with("blob"));
+        let entry = cache_entry_path(&cache_root, &digest).expect("entry");
+        assert!(entry.ends_with("entry.json"));
+
+        assert!(cache_artifact_dir(&cache_root, "deadbeef").is_err());
+        assert!(cache_artifact_dir(&cache_root, "sha256:bad").is_err());
+        let bad_hex = format!("sha256:{}", "zz".repeat(32));
+        assert!(cache_artifact_dir(&cache_root, &bad_hex).is_err());
+    }
+
+    #[test]
+    fn version_output_matches_handles_punctuation_and_v_prefix() {
+        assert!(super::version_output_matches("greentic 0.1.2", "0.1.2"));
+        assert!(super::version_output_matches("greentic v0.1.2", "0.1.2"));
+        assert!(super::version_output_matches(
+            "greentic-dev (0.1.2)",
+            "0.1.2"
+        ));
+        assert!(!super::version_output_matches("greentic 0.1.3", "0.1.2"));
+    }
+
+    #[test]
+    fn parse_cargo_search_version_extracts_first_match_and_skips_other_packages() {
+        let raw = "greentic-flow = \"0.1.0\"  # description\nother-pkg = \"9.9.9\"";
+        assert_eq!(
+            parse_cargo_search_version(raw, "greentic-flow").as_deref(),
+            Some("0.1.0")
+        );
+        assert!(parse_cargo_search_version("blank-output", "greentic-flow").is_none());
+    }
+
+    #[test]
+    fn mock_prefetch_source_ref_returns_path_when_env_points_at_index() {
+        let dir = tempdir().expect("tempdir");
+        let index_path = dir.path().join("index.json");
+        let target = dir.path().join("artifacts").join("file.bin");
+        fs::create_dir_all(target.parent().expect("parent")).expect("mkdir");
+        fs::write(&target, b"fixture").expect("write target");
+        fs::write(
+            &index_path,
+            r#"{"ghcr.io/example:1.0.0":"artifacts/file.bin","misc":"value"}"#,
+        )
+        .expect("write index");
+
+        let old = env::var_os("GTC_RELEASE_ARTIFACT_MOCK_ROOT");
+        unsafe {
+            env::set_var("GTC_RELEASE_ARTIFACT_MOCK_ROOT", dir.path());
+        }
+        let resolved = mock_prefetch_source_ref("ghcr.io/example:1.0.0")
+            .expect("ok")
+            .expect("some");
+        let missing = mock_prefetch_source_ref("ghcr.io/example:9.9.9");
+        unsafe {
+            match old {
+                Some(value) => env::set_var("GTC_RELEASE_ARTIFACT_MOCK_ROOT", value),
+                None => env::remove_var("GTC_RELEASE_ARTIFACT_MOCK_ROOT"),
+            }
+        }
+        assert_eq!(resolved, target.display().to_string());
+        assert!(missing.is_err());
+    }
+
+    #[test]
+    fn mock_prefetch_source_ref_returns_none_without_env() {
+        let old = env::var_os("GTC_RELEASE_ARTIFACT_MOCK_ROOT");
+        unsafe {
+            env::remove_var("GTC_RELEASE_ARTIFACT_MOCK_ROOT");
+        }
+        let resolved = mock_prefetch_source_ref("ghcr.io/example:1.0.0").expect("ok");
+        unsafe {
+            if let Some(value) = old {
+                env::set_var("GTC_RELEASE_ARTIFACT_MOCK_ROOT", value);
+            }
+        }
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn write_json_atomic_creates_parent_directories_and_replaces_file() {
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("nested").join("dir").join("file.json");
+        let value = pinned_manifest();
+        write_json_atomic(&path, &value).expect("write");
+        let raw = fs::read_to_string(&path).expect("read");
+        let decoded: ToolchainManifest = serde_json::from_str(&raw).expect("decode");
+        assert_eq!(decoded, value);
+    }
+
+    #[test]
+    fn install_options_from_matches_supports_explicit_release_and_local_manifest() {
+        let cmd = || {
+            clap::Command::new("install")
+                .arg(clap::Arg::new("manifest").long("manifest").num_args(1))
+                .arg(clap::Arg::new("release").long("release").num_args(1))
+                .arg(clap::Arg::new("channel").long("channel").num_args(1))
+                .arg(
+                    clap::Arg::new("force")
+                        .long("force")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    clap::Arg::new("dry-run")
+                        .long("dry-run")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    clap::Arg::new("install-binaries-only")
+                        .long("install-binaries-only")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    clap::Arg::new("install-packs-only")
+                        .long("install-packs-only")
+                        .action(clap::ArgAction::SetTrue),
+                )
+                .arg(
+                    clap::Arg::new("install-components-only")
+                        .long("install-components-only")
+                        .action(clap::ArgAction::SetTrue),
+                )
+        };
+
+        let release_matches = cmd()
+            .try_get_matches_from([
+                "install",
+                "--release",
+                "1.0.4",
+                "--channel",
+                "stable",
+                "--dry-run",
+            ])
+            .expect("matches");
+        let release_options =
+            ToolchainInstallOptions::from_matches(&release_matches, "stable").expect("options");
+        assert!(matches!(
+            release_options.source,
+            ToolchainSource::Release { ref release, ref channel } if release == "1.0.4" && channel == "stable"
+        ));
+        assert!(release_options.dry_run);
+        assert!(release_options.phases.binaries);
+
+        let dir = tempdir().expect("tempdir");
+        let manifest_path = dir.path().join("manifest.json");
+        fs::write(&manifest_path, "{}").expect("manifest");
+        let manifest_matches = cmd()
+            .try_get_matches_from([
+                "install",
+                "--manifest",
+                manifest_path.to_str().expect("utf8"),
+                "--install-packs-only",
+            ])
+            .expect("matches");
+        let manifest_options =
+            ToolchainInstallOptions::from_matches(&manifest_matches, "stable").expect("options");
+        assert!(matches!(
+            manifest_options.source,
+            ToolchainSource::LocalManifest(ref path) if path == &manifest_path
+        ));
+        assert!(!manifest_options.phases.binaries);
+        assert!(manifest_options.phases.packs);
+        assert!(!manifest_options.phases.components);
+
+        let channel_matches = cmd().try_get_matches_from(["install"]).expect("matches");
+        let channel_options =
+            ToolchainInstallOptions::from_matches(&channel_matches, "dev").expect("options");
+        assert!(matches!(
+            channel_options.source,
+            ToolchainSource::Channel(ref channel) if channel == "dev"
+        ));
+    }
+
+    #[test]
+    fn toolchain_install_phases_any_artifacts_reflects_selection() {
+        let none = ToolchainInstallPhases {
+            binaries: true,
+            packs: false,
+            components: false,
+        };
+        assert!(!none.any_artifacts());
+        let packs = ToolchainInstallPhases {
+            binaries: false,
+            packs: true,
+            components: false,
+        };
+        assert!(packs.any_artifacts());
+        let components = ToolchainInstallPhases {
+            binaries: false,
+            packs: false,
+            components: true,
+        };
+        assert!(components.any_artifacts());
+    }
+
+    #[test]
+    fn release_context_from_resolved_returns_none_for_channel_without_manifest_channel() {
+        let mut manifest = pinned_manifest();
+        manifest.channel = None;
+        let source = ToolchainSource::Channel("stable".to_string());
+        let result = release_context_from_resolved(&source, &manifest).expect("ok");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn release_context_from_resolved_uses_manifest_channel_for_local() {
+        let mut manifest = pinned_manifest();
+        manifest.channel = Some("dev".to_string());
+        let source = ToolchainSource::LocalManifest(std::path::PathBuf::from("/tmp/m.json"));
+        let ctx = release_context_from_resolved(&source, &manifest)
+            .expect("ok")
+            .expect("some");
+        assert_eq!(ctx.release, manifest.version);
+        assert!(matches!(ctx.channel, ReleaseChannel::Dev));
+    }
+
+    #[test]
+    fn release_context_from_resolved_rejects_unsupported_channel_label() {
+        let mut manifest = pinned_manifest();
+        manifest.channel = Some("ga".to_string());
+        let source = ToolchainSource::Release {
+            release: "1.0.4".to_string(),
+            channel: "ga".to_string(),
+        };
+        assert!(release_context_from_resolved(&source, &manifest).is_err());
+    }
 }
