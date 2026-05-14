@@ -1768,9 +1768,7 @@ mod tests {
         };
         let state = installed_state_from_resolved(&resolved);
         write_installed_toolchain(&state).expect("write");
-        let read = read_installed_toolchain()
-            .expect("read")
-            .expect("present");
+        let read = read_installed_toolchain().expect("read").expect("present");
         assert_eq!(read.version, state.version);
         assert_eq!(read.resolved_digest.as_deref(), Some("sha256:deadbeef"));
 
@@ -1850,8 +1848,7 @@ mod tests {
             version: "0.1".to_string(),
         }];
         assert!(
-            validate_toolchain_artifact_refs("extension_packs", Some(empty_id.as_slice()))
-                .is_err()
+            validate_toolchain_artifact_refs("extension_packs", Some(empty_id.as_slice())).is_err()
         );
 
         // None is accepted.
@@ -1904,7 +1901,10 @@ mod tests {
     fn version_output_matches_handles_punctuation_and_v_prefix() {
         assert!(super::version_output_matches("greentic 0.1.2", "0.1.2"));
         assert!(super::version_output_matches("greentic v0.1.2", "0.1.2"));
-        assert!(super::version_output_matches("greentic-dev (0.1.2)", "0.1.2"));
+        assert!(super::version_output_matches(
+            "greentic-dev (0.1.2)",
+            "0.1.2"
+        ));
         assert!(!super::version_output_matches("greentic 0.1.3", "0.1.2"));
     }
 
@@ -1927,9 +1927,7 @@ mod tests {
         fs::write(&target, b"fixture").expect("write target");
         fs::write(
             &index_path,
-            format!(
-                "{{\"ghcr.io/example:1.0.0\":\"artifacts/file.bin\",\"misc\":\"value\"}}"
-            ),
+            "{{\"ghcr.io/example:1.0.0\":\"artifacts/file.bin\",\"misc\":\"value\"}}",
         )
         .expect("write index");
 
@@ -1937,8 +1935,9 @@ mod tests {
         unsafe {
             env::set_var("GTC_RELEASE_ARTIFACT_MOCK_ROOT", dir.path());
         }
-        let resolved =
-            mock_prefetch_source_ref("ghcr.io/example:1.0.0").expect("ok").expect("some");
+        let resolved = mock_prefetch_source_ref("ghcr.io/example:1.0.0")
+            .expect("ok")
+            .expect("some");
         let missing = mock_prefetch_source_ref("ghcr.io/example:9.9.9");
         unsafe {
             match old {
@@ -2050,9 +2049,7 @@ mod tests {
         assert!(manifest_options.phases.packs);
         assert!(!manifest_options.phases.components);
 
-        let channel_matches = cmd()
-            .try_get_matches_from(["install"])
-            .expect("matches");
+        let channel_matches = cmd().try_get_matches_from(["install"]).expect("matches");
         let channel_options =
             ToolchainInstallOptions::from_matches(&channel_matches, "dev").expect("options");
         assert!(matches!(
