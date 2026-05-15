@@ -4,7 +4,11 @@ Implementation owner: repo-local schema sync tooling
 
 # Drift Report
 
-No schema drift was detected during the latest sync run.
+## Generated Status Docs Changed
 
-This means the generated schema artifacts and their markdown wrappers were
-already in sync with the current tool outputs used by the refresh command.
+- `/projects/ai/greentic-ng/greentic/docs/04-schemas/setup-schema.md`
+
+## Docs Likely Needing Manual Review
+
+- `docs/02-cli/gtc-setup.md`
+
