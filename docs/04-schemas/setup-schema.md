@@ -24,7 +24,6 @@ path.
 Observed stderr:
 
 ```text
-warning: Greentic toolchain release context is 1.0.18 (stable), but the latest stable release is 1.0.15. Run `gtc install` to upgrade.
 error: unexpected argument '--schema' found
 
   tip: to pass '--schema' as a value, use '-- --schema'

@@ -942,6 +942,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_help_flag(true)
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.wizard.about").into_owned())
+                .after_help("Answers sources: --answers accepts local paths, file://, http://, https://, oci://, store://, and repo:// JSON object documents.")
                 .arg(
                     Arg::new("extensions")
                         .long("extensions")
@@ -984,6 +985,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_help_flag(true)
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.setup.about").into_owned())
+                .after_help("Answers sources: --answers accepts local paths, file://, http://, https://, oci://, store://, and repo:// JSON object documents.")
                 .arg(
                     Arg::new("extension-setup-handoff")
                         .long("extension-setup-handoff")
