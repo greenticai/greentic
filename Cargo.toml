@@ -1,6 +1,6 @@
 [package]
 name = "gtc"
-version = "1.0.25"
+version = "1.0.26"
 edition = "2024"
 rust-version = "1.95"
 description = "Greentic - The digital workers operating system"
@@ -20,7 +20,7 @@ exclude = [
 clap = { version = "4.5", features = ["std"] }
 directories = "6"
 flate2 = "1.1"
-greentic-distributor-client = { version = "0.5.3", features = ["dist-client", "oci-components"] }
+greentic-distributor-client = { version = "0.5.3", features = ["dist-client", "oci-components", "pack-fetch"] }
 greentic-i18n-lib = "0.5"
 greentic-types = "0.5"
 # `oci-distribution` 0.11.0 is still the newest crates.io release available as
