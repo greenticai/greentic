@@ -1469,7 +1469,6 @@ struct BearerTokenResponse {
 mod tests {
     use super::*;
     use crate::tests::env_test_lock;
-    use clap::{Arg, ArgAction, Command};
     use tempfile::tempdir;
 
     fn pinned_manifest() -> ToolchainManifest {
