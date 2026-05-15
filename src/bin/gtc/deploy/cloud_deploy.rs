@@ -941,6 +941,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn require_tool_in_path_uses_current_path() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let tool = dir.path().join("terraform");
         fs::write(&tool, "#!/bin/sh\nexit 0\n").expect("write");
