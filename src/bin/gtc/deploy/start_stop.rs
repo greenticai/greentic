@@ -590,7 +590,7 @@ fn prompt_start_target(targets: &[StartTarget], locale: &str) -> GtcResult<Start
 fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
     args.get(idx)
         .cloned()
-        .ok_or_else(|| GtcError::message(format!("missing value for {flag}")))
+        .ok_or_else(|| GtcError::message(format!("missing value for {}", flag)))
 }
 
 #[cfg(test)]

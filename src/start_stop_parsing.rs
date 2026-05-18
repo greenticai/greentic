@@ -425,7 +425,7 @@ pub fn parse_stop_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<Sto
 fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
     args.get(idx)
         .cloned()
-        .ok_or_else(|| GtcError::message(format!("missing value for {flag}")))
+        .ok_or_else(|| GtcError::message(format!("missing value for {}", flag)))
 }
 
 fn parse_nats_mode(value: &str) -> GtcResult<NatsModeArg> {
