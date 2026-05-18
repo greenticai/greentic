@@ -922,9 +922,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_help_flag(true)
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.op.about").into_owned())
-                .after_help(
-                    "Nouns: env, env-packs, bundles, revisions, traffic, config, credentials, secrets.\nEvery verb honors --schema (dump payload JSON schema) and --answers <path> (JSON/YAML payload).\nExamples:\n  gtc op env create --answers env.json\n  gtc op revisions warm --answers warm.yaml\n  gtc op traffic show --answers \"{\\\"deployment_id\\\":\\\"…\\\"}\"",
-                )
                 .arg(cmd_args.clone()),
         )
         .subcommand(
