@@ -1498,10 +1498,31 @@ fn admin_health_runs_deployer_for_gcp_bundle() {
 }
 
 #[test]
+fn admin_tunnel_errors_when_target_arg_is_absent() {
+    let cli = build_cli("en");
+    let matches = cli
+        .try_get_matches_from(["gtc", "admin", "tunnel", "/some/bundle"])
+        .expect("matches");
+    let (_, admin_matches) = matches.subcommand().expect("admin");
+    let ("tunnel", tunnel_matches) = admin_matches.subcommand().expect("tunnel") else {
+        panic!("expected tunnel subcommand");
+    };
+
+    assert_eq!(run_admin_tunnel(tunnel_matches, "en"), 2);
+}
+
+#[test]
 fn admin_tunnel_errors_when_bundle_dir_is_missing() {
     let cli = build_cli("en");
     let matches = cli
-        .try_get_matches_from(["gtc", "admin", "tunnel", "/definitely/missing/bundle"])
+        .try_get_matches_from([
+            "gtc",
+            "admin",
+            "tunnel",
+            "/definitely/missing/bundle",
+            "--target",
+            "aws",
+        ])
         .expect("matches");
     let (_, admin_matches) = matches.subcommand().expect("admin");
     let ("tunnel", tunnel_matches) = admin_matches.subcommand().expect("tunnel") else {
@@ -1525,6 +1546,8 @@ fn admin_tunnel_runs_deployer_for_local_bundle() {
             "admin",
             "tunnel",
             bundle.path().to_str().expect("bundle path"),
+            "--target",
+            "aws",
             "--local-port",
             "9443",
             "--container",
