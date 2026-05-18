@@ -794,7 +794,7 @@ fn install_store_asset_item(
         .map_err(|e| GtcError::message(format!("failed to build tokio runtime: {e}")))?;
     let artifact = rt
         .block_on(client.download_store_artifact(store_url))
-        .map_err(|e| GtcError::message(format!("{}: {e}", t(locale, "gtc.err.pull_failed"))))?;
+        .map_err(|e| GtcError::message(format!("{}: {}", t(locale, "gtc.err.pull_failed"), e)))?;
     let file_name = store_asset_file_name(store_url)
         .ok_or_else(|| GtcError::message(format!("unable to derive filename from {store_url}")))?;
     let target = store_asset_target_path(artifacts_root, &file_name)?;

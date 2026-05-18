@@ -226,7 +226,7 @@ fn validate_oci_reference(source: &str, reference: &str) -> GtcResult<()> {
     Reference::try_from(reference).map(|_| ()).map_err(|err| {
         GtcError::invalid_data(
             "answers source",
-            format!("{source} is not a valid OCI reference: {err}"),
+            format!("{} is not a valid OCI reference: {}", source, err),
         )
     })
 }
