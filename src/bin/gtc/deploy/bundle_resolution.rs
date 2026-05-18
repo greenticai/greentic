@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::{BufReader, Read, Write};
 use std::path::{Component, Path, PathBuf};
 
 use gtc::config::GtcConfig;
@@ -171,6 +172,27 @@ fn resolve_archive_bundle_path(
         )));
     }
     let temp = tempfile::tempdir().map_err(|e| GtcError::message(e.to_string()))?;
+    let extracted = temp.path().join("bundle");
+    fs::create_dir_all(&extracted)
+        .map_err(|e| GtcError::io(format!("failed to create {}", extracted.display()), e))?;
+    expand_bundle_archive(&archive_path, &extracted)?;
+    let bundle_dir = detect_bundle_root(&extracted);
+    Ok(StartBundleResolution {
+        bundle_dir,
+        deployment_key,
+        deploy_artifact: Some(archive_path),
+        _hold: Some(temp),
+    })
+}
+
+fn expand_bundle_archive(archive_path: &Path, extracted: &Path) -> GtcResult<()> {
+    let data = fs::read(archive_path)
+        .map_err(|e| GtcError::io(format!("failed to read {}", archive_path.display()), e))?;
+    if looks_like_squashfs(&data) {
+        return extract_squashfs_archive(archive_path, extracted);
+    }
+
+    let temp = tempfile::tempdir().map_err(|e| GtcError::message(e.to_string()))?;
     let staging = temp.path().join("staging");
     fs::create_dir_all(&staging)
         .map_err(|e| GtcError::io(format!("failed to create {}", staging.display()), e))?;
@@ -180,7 +202,7 @@ fn resolve_archive_bundle_path(
         .unwrap_or("bundle.bin")
         .to_string();
     let staged_path = staging.join(file_name);
-    fs::copy(&archive_path, &staged_path).map_err(|e| {
+    fs::copy(archive_path, &staged_path).map_err(|e| {
         GtcError::io(
             format!(
                 "failed to stage bundle artifact {} -> {}",
@@ -191,17 +213,107 @@ fn resolve_archive_bundle_path(
         )
     })?;
 
-    let extracted = temp.path().join("bundle");
-    fs::create_dir_all(&extracted)
+    expand_into_target(&staging, extracted).map_err(|e| GtcError::message(e.to_string()))
+}
+
+fn looks_like_squashfs(data: &[u8]) -> bool {
+    data.starts_with(b"hsqs") || data.starts_with(b"sqsh")
+}
+
+fn extract_squashfs_archive(archive_path: &Path, extracted: &Path) -> GtcResult<()> {
+    let file = fs::File::open(archive_path)
+        .map_err(|e| GtcError::io(format!("failed to open {}", archive_path.display()), e))?;
+    let reader = backhand::FilesystemReader::from_reader(BufReader::new(file)).map_err(|e| {
+        GtcError::message(format!(
+            "failed to read SquashFS bundle {}: {e}",
+            archive_path.display()
+        ))
+    })?;
+
+    fs::create_dir_all(extracted)
         .map_err(|e| GtcError::io(format!("failed to create {}", extracted.display()), e))?;
-    expand_into_target(&staging, &extracted).map_err(|e| GtcError::message(e.to_string()))?;
-    let bundle_dir = detect_bundle_root(&extracted);
-    Ok(StartBundleResolution {
-        bundle_dir,
-        deployment_key,
-        deploy_artifact: Some(archive_path),
-        _hold: Some(temp),
+
+    for node in reader.files() {
+        let path_str = node.fullpath.to_string_lossy();
+        if path_str == "/" || path_str.is_empty() {
+            continue;
+        }
+        if path_str.contains("..") {
+            return Err(GtcError::message(format!(
+                "invalid path in SquashFS bundle: {path_str}"
+            )));
+        }
+
+        let relative_path = path_str.trim_start_matches('/');
+        let out_path = extracted.join(relative_path);
+        match &node.inner {
+            backhand::InnerNode::Dir(_) => fs::create_dir_all(&out_path)
+                .map_err(|e| GtcError::io(format!("failed to create {}", out_path.display()), e))?,
+            backhand::InnerNode::File(file_reader) => {
+                if let Some(parent) = out_path.parent() {
+                    fs::create_dir_all(parent).map_err(|e| {
+                        GtcError::io(format!("failed to create {}", parent.display()), e)
+                    })?;
+                }
+                let mut out_file = fs::File::create(&out_path).map_err(|e| {
+                    GtcError::io(format!("failed to create {}", out_path.display()), e)
+                })?;
+                let content = reader.file(file_reader);
+                let mut decompressed = Vec::new();
+                content
+                    .reader()
+                    .read_to_end(&mut decompressed)
+                    .map_err(|e| {
+                        GtcError::io(
+                            format!("failed to decompress {}", node.fullpath.display()),
+                            e,
+                        )
+                    })?;
+                out_file.write_all(&decompressed).map_err(|e| {
+                    GtcError::io(format!("failed to write {}", out_path.display()), e)
+                })?;
+                set_permissions_from_squashfs_header(&out_path, node.header.permissions)?;
+            }
+            backhand::InnerNode::Symlink(link) => {
+                #[cfg(not(unix))]
+                let _ = link;
+                #[cfg(unix)]
+                {
+                    if let Some(parent) = out_path.parent() {
+                        fs::create_dir_all(parent).map_err(|e| {
+                            GtcError::io(format!("failed to create {}", parent.display()), e)
+                        })?;
+                    }
+                    std::os::unix::fs::symlink(&link.link, &out_path).map_err(|e| {
+                        GtcError::io(
+                            format!("failed to create symlink {}", out_path.display()),
+                            e,
+                        )
+                    })?;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+fn set_permissions_from_squashfs_header(path: &Path, permissions: u16) -> GtcResult<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    fs::set_permissions(path, fs::Permissions::from_mode(u32::from(permissions))).map_err(|e| {
+        GtcError::io(
+            format!("failed to set permissions on {}", path.display()),
+            e,
+        )
     })
+}
+
+#[cfg(not(unix))]
+fn set_permissions_from_squashfs_header(_path: &Path, _permissions: u16) -> GtcResult<()> {
+    Ok(())
 }
 
 pub(crate) fn detect_bundle_root(extracted_root: &Path) -> PathBuf {
@@ -289,9 +401,9 @@ fn map_registry_target(target: &str, base: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        deployment_key_for_path, detect_bundle_root, map_registry_target, map_remote_bundle_ref,
-        parse_local_bundle_ref, resolve_bundle_reference, resolve_local_mutable_bundle_dir,
-        sanitize_identifier, should_ignore_fingerprint_path,
+        deployment_key_for_path, detect_bundle_root, looks_like_squashfs, map_registry_target,
+        map_remote_bundle_ref, parse_local_bundle_ref, resolve_bundle_reference,
+        resolve_local_mutable_bundle_dir, sanitize_identifier, should_ignore_fingerprint_path,
     };
     use crate::tests::env_test_lock;
     use std::env;
@@ -333,6 +445,14 @@ mod tests {
             sanitize_identifier("Acme.Dev/Bundle@01"),
             "acme-dev-bundle-01"
         );
+    }
+
+    #[test]
+    fn looks_like_squashfs_detects_squashfs_magic() {
+        assert!(looks_like_squashfs(b"hsqs\x01\x00"));
+        assert!(looks_like_squashfs(b"sqsh\x01\x00"));
+        assert!(!looks_like_squashfs(b"PK\x03\x04"));
+        assert!(!looks_like_squashfs(b""));
     }
 
     #[test]

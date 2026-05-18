@@ -386,13 +386,11 @@ bundle_digest = "sha256:abc"
     }
 
     fn fake_status(success: bool) -> ExitStatus {
-        // Fabricate a real ExitStatus by spawning a noop command. Using
-        // `true`/`false` keeps this portable across POSIX systems.
         #[cfg(unix)]
         {
-            ProcessCommand::new(if success { "true" } else { "false" })
-                .status()
-                .expect("spawn noop command")
+            use std::os::unix::process::ExitStatusExt;
+
+            ExitStatus::from_raw(if success { 0 } else { 1 << 8 })
         }
         #[cfg(not(unix))]
         {

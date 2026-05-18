@@ -17,6 +17,7 @@ exclude = [
 ]
 
 [dependencies]
+backhand = "0.25"
 clap = { version = "4.5", features = ["std"] }
 directories = "6"
 flate2 = "1.1"
