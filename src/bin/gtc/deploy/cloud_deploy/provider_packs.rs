@@ -104,7 +104,7 @@ fn bundle_layout_provider_pack_candidates(target: StartTarget) -> Vec<String> {
             candidates.push("azure.gtpack".to_string());
             candidates.push("terraform.gtpack".to_string());
         }
-        StartTarget::SingleVm | StartTarget::Runtime => {}
+        StartTarget::Runtime => {}
     }
 
     candidates.dedup();
@@ -125,13 +125,12 @@ fn resolve_target_provider_pack_from_metadata(
     for record in doc.targets {
         let parsed_target = match record.target.trim() {
             "runtime" | "local" => StartTarget::Runtime,
-            "single-vm" | "single_vm" => StartTarget::SingleVm,
             "aws" => StartTarget::Aws,
             "gcp" => StartTarget::Gcp,
             "azure" => StartTarget::Azure,
             other => {
                 return Err(GtcError::message(format!(
-                    "unsupported --target value {other}; expected runtime, single-vm, aws, gcp, or azure"
+                    "unsupported --target value {other}; expected runtime, aws, gcp, or azure"
                 )));
             }
         };

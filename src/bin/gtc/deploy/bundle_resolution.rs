@@ -185,7 +185,7 @@ fn resolve_archive_bundle_path(
     })
 }
 
-fn expand_bundle_archive(archive_path: &Path, extracted: &Path) -> GtcResult<()> {
+pub(super) fn expand_bundle_archive(archive_path: &Path, extracted: &Path) -> GtcResult<()> {
     let data = fs::read(archive_path)
         .map_err(|e| GtcError::io(format!("failed to read {}", archive_path.display()), e))?;
     if looks_like_squashfs(&data) {
@@ -401,14 +401,19 @@ fn map_registry_target(target: &str, base: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        deployment_key_for_path, detect_bundle_root, looks_like_squashfs, map_registry_target,
-        map_remote_bundle_ref, parse_local_bundle_ref, resolve_bundle_reference,
-        resolve_local_mutable_bundle_dir, sanitize_identifier, should_ignore_fingerprint_path,
+        deployment_key_for_path, detect_bundle_root, download_https_bundle_to_tempfile,
+        expand_bundle_archive, fingerprint_bundle_dir, looks_like_squashfs, map_registry_target,
+        map_remote_bundle_ref, normalize_bundle_fingerprint, parse_local_bundle_ref,
+        resolve_archive_bundle_path, resolve_bundle_reference, resolve_local_mutable_bundle_dir,
+        sanitize_identifier, should_ignore_fingerprint_path,
     };
     use crate::tests::env_test_lock;
     use std::env;
     use std::fs;
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
     use std::path::{Path, PathBuf};
+    use std::thread;
 
     #[test]
     fn ignore_fingerprint_path_filters_runtime_noise_locations() {
@@ -421,6 +426,13 @@ mod tests {
         assert!(should_ignore_fingerprint_path(Path::new(
             "logs/operator.log"
         )));
+        assert!(should_ignore_fingerprint_path(Path::new(
+            "state/pids/app.pid"
+        )));
+        assert!(should_ignore_fingerprint_path(Path::new(
+            "state/runtime/cache"
+        )));
+        assert!(should_ignore_fingerprint_path(Path::new("state/runs/last")));
         assert!(!should_ignore_fingerprint_path(Path::new(
             "packs/demo.gtpack"
         )));
@@ -435,6 +447,11 @@ mod tests {
         assert_eq!(
             parse_local_bundle_ref("file:///tmp/demo"),
             Some(PathBuf::from("/tmp/demo"))
+        );
+        assert_eq!(parse_local_bundle_ref("file://   "), None);
+        assert_eq!(
+            parse_local_bundle_ref("https://example.test/bundle.gtbundle"),
+            None
         );
         assert_eq!(parse_local_bundle_ref("oci://ghcr.io/demo:latest"), None);
     }
@@ -463,6 +480,47 @@ mod tests {
     }
 
     #[test]
+    fn normalize_bundle_fingerprint_keeps_paths_and_drops_noise() {
+        let raw = [
+            "",
+            "dir:packs",
+            "dir:.greentic/dev",
+            "file:packs/demo.gtpack:42:abcdef",
+            "file:logs/runtime.log:99:ignored",
+            "file:state/runtime/cache.bin:1:ignored",
+            "invalid:entry",
+        ]
+        .join("\n");
+
+        assert_eq!(
+            normalize_bundle_fingerprint(&raw),
+            "dir:packs\nfile:packs/demo.gtpack:42"
+        );
+    }
+
+    #[test]
+    fn fingerprint_bundle_dir_includes_config_changes_and_ignores_runtime_noise() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let config = dir
+            .path()
+            .join("assets")
+            .join("example-pack")
+            .join("config");
+        fs::create_dir_all(&config).expect("mkdir");
+        fs::write(config.join("runtime.json"), "{}\n").expect("write");
+        fs::create_dir_all(dir.path().join("logs")).expect("logs");
+        fs::write(dir.path().join("logs").join("runtime.log"), "ignored\n").expect("log");
+
+        let first = fingerprint_bundle_dir(dir.path()).expect("fingerprint");
+        fs::write(config.join("runtime.json"), "{\"enabled\":true}\n").expect("rewrite");
+        let second = fingerprint_bundle_dir(dir.path()).expect("fingerprint");
+
+        assert_ne!(first, second);
+        assert!(second.contains("assets/example-pack/config/runtime.json"));
+        assert!(!second.contains("runtime.log"));
+    }
+
+    #[test]
     fn map_registry_target_passes_through_fully_qualified_refs() {
         assert_eq!(
             map_registry_target(
@@ -476,8 +534,8 @@ mod tests {
     #[test]
     fn map_registry_target_joins_base_and_target() {
         assert_eq!(
-            map_registry_target("providers/demo:latest", Some("ghcr.io/base/".to_string())),
-            Some("providers/demo:latest".to_string())
+            map_registry_target("demo", Some("ghcr.io/base/".to_string())),
+            Some("ghcr.io/base/demo".to_string())
         );
     }
 
@@ -492,21 +550,31 @@ mod tests {
         unsafe {
             env::set_var("GREENTIC_REPO_REGISTRY_BASE", "ghcr.io/greentic/repo");
         }
-        let mapped = map_remote_bundle_ref("repo://providers/demo:latest").unwrap();
+        let mapped = map_remote_bundle_ref("repo://providers/demo").unwrap();
         unsafe {
             env::remove_var("GREENTIC_REPO_REGISTRY_BASE");
         }
-        assert_eq!(mapped, "providers/demo:latest");
+        assert_eq!(mapped, "ghcr.io/greentic/repo/providers/demo");
     }
 
     #[test]
     fn map_remote_bundle_ref_requires_registry_base_for_unqualified_refs() {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         unsafe {
+            env::remove_var("GREENTIC_REPO_REGISTRY_BASE");
             env::remove_var("GREENTIC_STORE_REGISTRY_BASE");
         }
+        let err = map_remote_bundle_ref("repo://demo").unwrap_err();
+        assert!(err.contains("GREENTIC_REPO_REGISTRY_BASE"));
+
         let err = map_remote_bundle_ref("store://demo").unwrap_err();
         assert!(err.contains("GREENTIC_STORE_REGISTRY_BASE"));
+    }
+
+    #[test]
+    fn map_remote_bundle_ref_rejects_unknown_schemes() {
+        let err = map_remote_bundle_ref("ftp://example.test/bundle").unwrap_err();
+        assert!(err.contains("unsupported bundle scheme"));
     }
 
     #[test]
@@ -514,6 +582,40 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let nested = dir.path().join("nested");
         fs::create_dir_all(&nested).expect("mkdir");
+        assert_eq!(detect_bundle_root(dir.path()), dir.path());
+    }
+
+    #[test]
+    fn detect_bundle_root_accepts_direct_runtime_markers() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(
+            dir.path().join("greentic.operator.yaml"),
+            "operator: true\n",
+        )
+        .expect("write");
+        assert_eq!(detect_bundle_root(dir.path()), dir.path());
+    }
+
+    #[test]
+    fn detect_bundle_root_uses_single_nested_runtime_root() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let nested = dir.path().join("bundle");
+        fs::create_dir_all(&nested).expect("mkdir");
+        fs::write(nested.join("bundle.yaml"), "name: demo\n").expect("bundle");
+        fs::write(nested.join("bundle-manifest.json"), "{}\n").expect("manifest");
+
+        assert_eq!(detect_bundle_root(dir.path()), nested);
+    }
+
+    #[test]
+    fn detect_bundle_root_falls_back_when_nested_root_is_ambiguous() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for name in ["one", "two"] {
+            let nested = dir.path().join(name);
+            fs::create_dir_all(&nested).expect("mkdir");
+            fs::write(nested.join("greentic.demo.yaml"), "demo: true\n").expect("write");
+        }
+
         assert_eq!(detect_bundle_root(dir.path()), dir.path());
     }
 
@@ -528,6 +630,16 @@ mod tests {
         fs::write(&file, b"fixture").expect("write");
         let err = resolve_local_mutable_bundle_dir(file.to_str().expect("utf8")).unwrap_err();
         assert!(err.contains("local bundle directory"));
+    }
+
+    #[test]
+    fn resolve_local_mutable_bundle_dir_accepts_directory_file_url() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let reference = format!("file://{}", dir.path().display());
+        assert_eq!(
+            resolve_local_mutable_bundle_dir(&reference).expect("dir"),
+            dir.path()
+        );
     }
 
     #[test]
@@ -558,7 +670,6 @@ mod tests {
         let options = zip::write::SimpleFileOptions::default();
         zip.start_file("bundle/greentic.demo.yaml", options)
             .expect("start");
-        use std::io::Write as _;
         zip.write_all(b"demo: true\n").expect("write");
         zip.finish().expect("finish");
 
@@ -569,5 +680,85 @@ mod tests {
             resolved.deploy_artifact.as_deref(),
             Some(archive_path.as_path())
         );
+    }
+
+    #[test]
+    fn resolve_bundle_reference_downloads_http_gtbundle_archives() {
+        let bytes = zipped_runtime_bundle_bytes();
+        let (url, handle) = serve_http_once("bundle.gtbundle", bytes);
+
+        let resolved = resolve_bundle_reference(&url, "en").expect("resolved");
+        handle.join().expect("server thread");
+
+        assert!(resolved.bundle_dir.join("greentic.demo.yaml").exists());
+        assert!(resolved.deploy_artifact.as_deref().is_some_and(|path| {
+            path.file_name().and_then(|name| name.to_str()) == Some("bundle.gtbundle")
+        }));
+    }
+
+    #[test]
+    fn download_https_bundle_to_tempfile_rejects_non_gtbundle_urls() {
+        let (url, handle) = serve_http_once("bundle.txt", b"not a bundle".to_vec());
+
+        let err = download_https_bundle_to_tempfile(&url, "en").unwrap_err();
+        handle.join().expect("server thread");
+
+        assert!(err.contains("must point to a .gtbundle archive"));
+    }
+
+    #[test]
+    fn resolve_bundle_reference_rejects_empty_and_unknown_scheme_refs() {
+        let err = resolve_bundle_reference("   ", "en").unwrap_err();
+        assert!(err.contains("empty"));
+
+        let err = resolve_bundle_reference("ftp://example.test/bundle.gtbundle", "en").unwrap_err();
+        assert!(err.contains("unsupported bundle scheme"));
+    }
+
+    #[test]
+    fn resolve_archive_bundle_path_rejects_non_file_artifacts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let err = resolve_archive_bundle_path(dir.path().to_path_buf(), "demo".to_string())
+            .expect_err("directory is not an archive file");
+        assert!(err.contains("bundle artifact is not a file"));
+    }
+
+    #[test]
+    fn expand_bundle_archive_stages_non_squashfs_artifacts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let archive = dir.path().join("bundle.gtbundle");
+        fs::write(&archive, b"bundle bytes").expect("write");
+        let extracted = dir.path().join("extracted");
+        fs::create_dir_all(&extracted).expect("mkdir");
+
+        expand_bundle_archive(&archive, &extracted).expect("expanded");
+        assert!(extracted.join("bundle.gtbundle").exists());
+    }
+
+    fn zipped_runtime_bundle_bytes() -> Vec<u8> {
+        let cursor = std::io::Cursor::new(Vec::new());
+        let mut zip = zip::ZipWriter::new(cursor);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("bundle/greentic.demo.yaml", options)
+            .expect("start");
+        zip.write_all(b"demo: true\n").expect("write");
+        zip.finish().expect("finish").into_inner()
+    }
+
+    fn serve_http_once(file_name: &str, body: Vec<u8>) -> (String, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0_u8; 1024];
+            let _ = stream.read(&mut request).expect("read request");
+            let headers = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(headers.as_bytes()).expect("headers");
+            stream.write_all(&body).expect("body");
+        });
+        (format!("http://{addr}/{file_name}"), handle)
     }
 }

@@ -9,11 +9,12 @@ use serde::Deserialize;
 
 use super::bundle_resolution::resolve_bundle_reference;
 use super::cloud_deploy::{destroy_deployment, ensure_started_or_deployed};
-use super::{StartCliOptions, StartTarget, StopCliOptions};
+use super::prepared_bundle::{prepare_bundle_for_start, print_prepared_bundle_debug};
+use super::{ChildProcessEnv, StartCliOptions, StartTarget, StopCliOptions};
 use crate::START_BIN;
 use crate::admin::ensure_admin_certs_ready;
 use crate::i18n_support::t_or;
-use crate::process::run_binary_checked;
+use crate::process::{run_binary_checked, run_binary_checked_with_target_and_env};
 use crate::router::collect_tail;
 
 pub(crate) fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
@@ -115,11 +116,52 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     println!("Selected deployment target: {}", target.as_str());
     println!("Bundle source: {}", bundle_ref);
     println!("Resolved bundle dir: {}", resolved.bundle_dir.display());
+    let prepared = match prepare_bundle_for_start(bundle_ref, &resolved, debug, locale) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.start.err.prepare_failed",
+                    "failed to prepare bundle"
+                )
+            );
+            return 1;
+        }
+    };
+    request.bundle = Some(prepared.prepared_root.display().to_string());
+    if request.admin {
+        if request
+            .admin_certs_dir
+            .as_deref()
+            .is_some_and(|path| path.starts_with(&resolved.bundle_dir))
+        {
+            request.admin_certs_dir = None;
+        }
+        match ensure_admin_certs_ready(&prepared.prepared_root, request.admin_certs_dir.as_deref())
+        {
+            Ok(cert_dir) => request.admin_certs_dir = Some(cert_dir),
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(
+                        locale,
+                        "gtc.start.err.admin_certs_failed",
+                        "failed to prepare admin certificates"
+                    )
+                );
+                return 1;
+            }
+        }
+    }
+    print_prepared_bundle_debug(&prepared, target, None, None);
     if target != StartTarget::Runtime {
         println!("Deployment mode: deploy via {} target", target.as_str());
         let deploy_result = ensure_started_or_deployed(
             bundle_ref,
             &resolved,
+            &prepared,
             &request,
             &cli_options,
             target,
@@ -148,7 +190,16 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
         request.team.as_deref().unwrap_or("default")
     );
     let args = request.to_runtime_start_args(locale);
-    match run_binary_checked(START_BIN, &args, debug, locale, "start bundle") {
+    let runtime_env = local_runtime_secret_env(&resolved.bundle_dir);
+    match run_binary_checked_with_target_and_env(
+        START_BIN,
+        &args,
+        debug,
+        locale,
+        "start bundle",
+        None,
+        runtime_env.as_ref(),
+    ) {
         Ok(()) => 0,
         Err(err) => {
             eprintln!(
@@ -158,6 +209,22 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
             1
         }
     }
+}
+
+fn local_runtime_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
+    let dev_secrets = bundle_dir
+        .join(".greentic")
+        .join("dev")
+        .join(".dev.secrets.env");
+    if !dev_secrets.is_file() {
+        return None;
+    }
+    let mut env = ChildProcessEnv::new();
+    env.set(
+        "GREENTIC_DEV_SECRETS_PATH",
+        dev_secrets.display().to_string(),
+    );
+    Some(env)
 }
 
 pub(crate) fn run_stop(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
@@ -438,12 +505,11 @@ pub(crate) fn parse_stop_cli_options(tail: &[String]) -> GtcResult<StopCliOption
 fn parse_start_target(value: &str) -> GtcResult<StartTarget> {
     match value.trim() {
         "runtime" | "local" => Ok(StartTarget::Runtime),
-        "single-vm" | "single_vm" => Ok(StartTarget::SingleVm),
         "aws" => Ok(StartTarget::Aws),
         "gcp" => Ok(StartTarget::Gcp),
         "azure" => Ok(StartTarget::Azure),
         other => Err(GtcError::message(format!(
-            "unsupported --target value {other}; expected runtime, single-vm, aws, gcp, or azure"
+            "unsupported --target value {other}; expected runtime, aws, gcp, or azure"
         ))),
     }
 }
@@ -478,8 +544,7 @@ fn select_start_target_with_mode(
         StartTarget::Aws => 0,
         StartTarget::Gcp => 1,
         StartTarget::Azure => 2,
-        StartTarget::SingleVm => 3,
-        StartTarget::Runtime => 4,
+        StartTarget::Runtime => 3,
     });
     deploy_targets.dedup();
     if deploy_targets.is_empty() {
@@ -588,9 +653,10 @@ fn prompt_start_target(targets: &[StartTarget], locale: &str) -> GtcResult<Start
 }
 
 fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
+    let flag_name = flag.to_string();
     args.get(idx)
         .cloned()
-        .ok_or_else(|| GtcError::message(format!("missing value for {}", flag)))
+        .ok_or_else(|| GtcError::message(format!("missing value for {flag_name}")))
 }
 
 #[cfg(test)]
@@ -635,14 +701,14 @@ mod tests {
     fn parse_stop_cli_options_extracts_destroy_flag() {
         let opts = parse_stop_cli_options(&[
             "--destroy".to_string(),
-            "--target=single-vm".to_string(),
+            "--target=aws".to_string(),
             "--team".to_string(),
             "ops".to_string(),
         ])
         .expect("opts");
 
         assert!(opts.destroy);
-        assert_eq!(opts.explicit_target, Some(StartTarget::SingleVm));
+        assert_eq!(opts.explicit_target, Some(StartTarget::Aws));
         assert_eq!(
             opts.stop_args,
             vec!["--team".to_string(), "ops".to_string()]
@@ -769,12 +835,12 @@ mod tests {
         fs::create_dir_all(&greentic).expect("mkdir");
         fs::write(
             greentic.join("deployment-targets.json"),
-            r#"{"targets":[{"target":"aws"},{"target":"single-vm","default":true}]}"#,
+            r#"{"targets":[{"target":"aws"},{"target":"gcp","default":true}]}"#,
         )
         .expect("write");
 
         let target = load_default_deployment_target(dir.path()).expect("target");
-        assert_eq!(target, Some(StartTarget::SingleVm));
+        assert_eq!(target, Some(StartTarget::Gcp));
     }
 
     #[test]
@@ -784,7 +850,7 @@ mod tests {
         fs::create_dir_all(&greentic).expect("mkdir");
         fs::write(
             greentic.join("deployment-targets.json"),
-            r#"{"targets":[{"target":"single-vm","default":true}]}"#,
+            r#"{"targets":[{"target":"gcp","default":true}]}"#,
         )
         .expect("write");
 
@@ -816,7 +882,7 @@ mod tests {
         fs::create_dir_all(&greentic).expect("mkdir");
         fs::write(
             greentic.join("deployment-targets.json"),
-            r#"{"targets":[{"target":"aws"},{"target":"single-vm"}]}"#,
+            r#"{"targets":[{"target":"aws"},{"target":"gcp"}]}"#,
         )
         .expect("write");
 

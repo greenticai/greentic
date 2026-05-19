@@ -156,6 +156,7 @@ pub(super) fn remove_admin_registry_entry(
     before != registry.admins.len()
 }
 
+#[cfg(test)]
 pub(super) fn resolve_admin_cert_dir(bundle_dir: &Path) -> PathBuf {
     for candidate in [
         bundle_dir.join(".greentic").join("admin").join("certs"),

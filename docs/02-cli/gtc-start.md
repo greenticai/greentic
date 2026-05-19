@@ -20,11 +20,11 @@ substantial start-time behavior, including:
 Use `gtc start` when you want to launch a prepared bundle either:
 
 - in the local runtime path, or
-- through a deployer-backed target such as `aws`, `gcp`, `azure`, or `single-vm`
+- through a deployer-backed target such as `aws`, `gcp`, or `azure`
 
 ## When Should I Use It?
 
-Use `gtc start` after setup or when you already have a prepared bundle and know
+Use `gtc start` after setup or when you already have a bundle workspace and know
 the execution path you want.
 
 ## What Should I Use Instead If Not This?
@@ -66,19 +66,41 @@ handing control elsewhere:
    `--environment`, `--provider-pack`, `--app-pack`, and
    `--deploy-bundle-source`
 2. resolve the bundle reference into a concrete bundle directory
-3. parse runtime-facing start arguments
-4. prepare admin certificates when admin mode is requested
-5. select the effective start target
-6. choose between local runtime mode and deployer-backed mode
+3. prepare one warmed deployable bundle from the post-setup workspace
+4. parse runtime-facing start arguments
+5. prepare admin certificates when admin mode is requested
+6. select the effective start target
+7. choose between local runtime mode and deployer-backed mode
+
+## Prepared Bundle Contract
+
+`gtc start` always runs a warmed prepared bundle. The prepared bundle is built
+from the resolved post-setup workspace before the command branches into local
+runtime or deployer-backed behavior.
+
+Target selection changes only where that prepared bundle runs:
+
+- `gtc start <bundle>` runs the prepared bundle locally.
+- `gtc start <bundle> --target aws` deploys that prepared bundle to AWS.
+- `gtc start <bundle> --target gcp` deploys that prepared bundle to GCP.
+- `gtc start <bundle> --target azure` deploys that prepared bundle to Azure.
+
+Packs own their setup-derived runtime config. If setup generates non-secret
+pack-owned files, those files should be written into the bundle workspace under
+normal bundle files/assets so they are included in the warmed prepared bundle.
+Deployer targets receive the prepared bundle artifact/root/digest; they should
+not parse pack-specific runtime config.
 
 ## Local Runtime Start
 
 If the selected target is `runtime`, `gtc`:
 
 - resolves the bundle
+- builds and warms the prepared bundle
 - builds the runtime start request
 - prints the selected target and resolved bundle directory
-- invokes `greentic-start` with serialized runtime arguments
+- invokes `greentic-start` with serialized runtime arguments pointing at the
+  prepared bundle root
 
 In this mode, `gtc` prints:
 
@@ -96,7 +118,6 @@ behavior.
 Current supported target values are:
 
 - `runtime`
-- `single-vm`
 - `aws`
 - `gcp`
 - `azure`
@@ -104,8 +125,10 @@ Current supported target values are:
 In deployer-backed mode, `gtc`:
 
 - resolves the bundle
+- builds and warms the prepared bundle
 - chooses the target
-- calls deploy/start orchestration logic before normal runtime start
+- passes the prepared bundle root/artifact/digest into deploy/start
+  orchestration
 - returns once the deploy/start path succeeds or fails
 
 This is why `gtc start` is not just "run the local runtime binary." It owns the
