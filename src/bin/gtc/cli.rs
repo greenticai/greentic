@@ -386,7 +386,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -423,7 +422,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -458,7 +456,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -493,7 +490,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -537,7 +533,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -581,7 +576,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -625,7 +619,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -669,7 +662,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -722,7 +714,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -775,7 +766,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -821,7 +811,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws"])
                                 .help_heading(options_heading)
                                 .help(t(locale, "gtc.arg.admin.tunnel.target.help").into_owned()),
