@@ -2,8 +2,6 @@
 mod deployment_state;
 #[path = "cloud_deploy/provider_packs.rs"]
 mod provider_packs;
-#[path = "cloud_deploy/single_vm.rs"]
-mod single_vm;
 
 use std::path::Path;
 
@@ -24,8 +22,6 @@ pub(crate) use provider_packs::{
     resolve_canonical_target_provider_pack_from, resolve_deploy_app_pack_path,
     resolve_target_provider_pack,
 };
-pub(crate) use single_vm::write_single_vm_spec;
-
 pub(crate) fn describe_cloud_target_requirements_for_gtc(
     target: StartTarget,
     locale: &str,
@@ -47,7 +43,7 @@ pub(crate) fn canonical_provider_pack_filename_for_gtc(
                 Err(err) => Err(err),
             }
         }
-        StartTarget::Runtime | StartTarget::SingleVm => Ok(None),
+        StartTarget::Runtime => Ok(None),
     }
 }
 
@@ -88,7 +84,7 @@ pub(crate) fn validate_cloud_deploy_inputs(
             }
             Ok(child_env)
         }
-        StartTarget::SingleVm | StartTarget::Runtime => Ok(child_env),
+        StartTarget::Runtime => Ok(child_env),
     }
 }
 
@@ -207,7 +203,7 @@ fn describe_cloud_target_requirements(
         StartTarget::Aws => "aws",
         StartTarget::Azure => "azure",
         StartTarget::Gcp => "gcp",
-        StartTarget::SingleVm | StartTarget::Runtime => {
+        StartTarget::Runtime => {
             return Err(GtcError::message(format!(
                 "cloud target requirements are not available for {}",
                 target.as_str()
@@ -291,7 +287,7 @@ fn fallback_cloud_target_requirements(target: StartTarget) -> CloudTargetRequire
                 default_value: None,
             }],
         ),
-        StartTarget::SingleVm | StartTarget::Runtime => unreachable!(),
+        StartTarget::Runtime => unreachable!(),
     };
 
     CloudTargetRequirementsV1 {
@@ -431,7 +427,7 @@ fn inject_terraform_var_defaults(target: StartTarget) {
             "GREENTIC_DEPLOY_TERRAFORM_VAR_REMOTE_STATE_BACKEND",
             "azurerm",
         )],
-        StartTarget::SingleVm | StartTarget::Runtime => &[],
+        StartTarget::Runtime => &[],
     };
     for (var, value) in defaults {
         if !env_var_present(var) {
@@ -557,23 +553,21 @@ fn binary_in_path(binary: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// If `--upload-bundle` is set, run warmup + bundle rebuild + deployer upload subprocess
-/// and return the URL + digest to be injected into the standard deploy flow.
+/// If `--upload-bundle` is set, upload the already prepared bundle artifact and
+/// return the URL + digest to be injected into the standard deploy flow.
 /// Returns `(remote_url, digest)`.
 pub(crate) fn resolve_upload_bundle(
-    bundle_dir: &Path,
+    prepared_artifact: &Path,
     upload_bundle: &str,
     presign_expires: u64,
 ) -> GtcResult<(String, String)> {
     use super::bundle_upload_orchestrator;
 
-    // Auto-warm + rebuild the bundle. Result is a freshly built .gtbundle in a temp dir
-    // with the warmed component cache embedded. The temp dir leaks intentionally on
-    // success — it's small (~tens of MB) and useful for debugging if the upload fails.
-    let warmed_path = bundle_upload_orchestrator::prepare_warmed_bundle(bundle_dir)?;
-
-    let result =
-        bundle_upload_orchestrator::upload_bundle(upload_bundle, &warmed_path, presign_expires)?;
+    let result = bundle_upload_orchestrator::upload_bundle(
+        upload_bundle,
+        prepared_artifact,
+        presign_expires,
+    )?;
 
     eprintln!("Uploaded bundle:");
     eprintln!("  digest:      {}", result.digest);

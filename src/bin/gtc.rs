@@ -63,7 +63,7 @@ use deploy::{
     normalize_bundle_fingerprint, parse_start_cli_options, parse_start_request,
     parse_stop_cli_options, parse_stop_request, resolve_canonical_target_provider_pack_from,
     resolve_deploy_app_pack_path, resolve_target_provider_pack, select_start_target,
-    validate_cloud_deploy_inputs, write_single_vm_spec,
+    validate_cloud_deploy_inputs,
 };
 use gtc::perf_targets::sha256_file as perf_sha256_file;
 #[cfg(test)]

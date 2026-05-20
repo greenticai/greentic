@@ -915,6 +915,7 @@ fn runtime_start_routes_to_greentic_start_cli() {
     let log_file = sandbox.path().join("start.log");
 
     sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_bundle_build_tool("greentic-bundle", &sandbox.path().join("bundle.log"));
     sandbox.write_arg_logger_tool("greentic-start", &log_file, 0);
 
     let output = sandbox.run_gtc_capture(
@@ -943,7 +944,7 @@ fn runtime_start_routes_to_greentic_start_cli() {
     let logged = fs::read_to_string(log_file).expect("read start log");
     assert!(logged.contains("--locale en start"));
     assert!(logged.contains("--bundle"));
-    assert!(logged.contains(bundle_dir.to_str().expect("bundle utf8")));
+    assert!(!logged.contains(bundle_dir.to_str().expect("bundle utf8")));
     assert!(logged.contains("--tenant demo"));
     assert!(logged.contains("--team ops"));
     assert!(logged.contains("--cloudflared off"));
@@ -2200,204 +2201,10 @@ fn add_and_remove_admin_roundtrip_updates_registry() {
     );
 }
 
-#[test]
-#[cfg(unix)]
-#[cfg_attr(target_os = "macos", ignore)]
-fn start_single_vm_creates_artifact_spec_and_state() {
-    let sandbox = TestSandbox::new("start_single_vm_creates_artifact_spec_and_state");
-    let bundle_dir = sandbox.path().join("bundle");
-    create_minimal_bundle_dir(&bundle_dir);
-
-    let setup_log = sandbox.path().join("setup.log");
-    let deployer_log = sandbox.path().join("deployer.log");
-    sandbox.write_exit_tool("greentic-dev", 0);
-    sandbox.write_setup_bundle_tool("greentic-setup", &setup_log);
-    sandbox.write_single_vm_deployer_tool("greentic-deployer", &deployer_log);
-
-    let state_home = sandbox.path().join("xdg-state");
-    let data_home = sandbox.path().join("xdg-data");
-    fs::create_dir_all(&state_home).expect("state home");
-    fs::create_dir_all(&data_home).expect("data home");
-
-    let mut extra = HashMap::new();
-    extra.insert(
-        "XDG_STATE_HOME".to_string(),
-        state_home.display().to_string(),
-    );
-    extra.insert("XDG_DATA_HOME".to_string(), data_home.display().to_string());
-
-    let output = sandbox.run_gtc_capture(
-        [
-            "start",
-            bundle_dir.to_str().expect("bundle utf8"),
-            "--target",
-            "single-vm",
-            "--tenant",
-            "acme",
-            "--team",
-            "ops",
-        ],
-        extra,
-    );
-    assert_eq!(
-        output.status.code(),
-        Some(0),
-        "stdout: {}\nstderr: {}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-
-    let setup_logged = fs::read_to_string(&setup_log).expect("read setup log");
-    assert!(setup_logged.contains("bundle build"));
-
-    let deployer_logged = fs::read_to_string(&deployer_log).expect("read deployer log");
-    assert!(deployer_logged.contains("single-vm status"));
-    assert!(deployer_logged.contains("single-vm apply"));
-
-    let specs_dir = state_home.join("greentic").join("gtc").join("single-vm");
-    let spec_path = find_file_named(&specs_dir, "single-vm.deployment.yaml")
-        .expect("single-vm spec should be written");
-    let spec = fs::read_to_string(&spec_path).expect("read spec");
-    assert!(spec.contains("target: single-vm"));
-    assert!(spec.contains("name: acme-ops-"));
-    assert!(spec.contains("source: 'file://"));
-
-    let deployments_dir = state_home.join("greentic").join("gtc").join("deployments");
-    let state_path = find_single_json_file(&deployments_dir).expect("deployment state file");
-    let state_raw = fs::read_to_string(&state_path).expect("read deployment state");
-    let state: serde_json::Value = serde_json::from_str(&state_raw).expect("deployment state json");
-    assert_eq!(
-        state.get("target").and_then(serde_json::Value::as_str),
-        Some("single-vm")
-    );
-    let artifact_path = state
-        .get("artifact_path")
-        .and_then(serde_json::Value::as_str)
-        .expect("artifact path");
-    assert!(
-        Path::new(artifact_path).exists(),
-        "artifact path should exist"
-    );
-}
-
-#[test]
-#[cfg(unix)]
-#[cfg_attr(target_os = "macos", ignore)]
-fn stop_single_vm_destroy_removes_saved_state() {
-    let sandbox = TestSandbox::new("stop_single_vm_destroy_removes_saved_state");
-    let bundle_dir = sandbox.path().join("bundle");
-    create_minimal_bundle_dir(&bundle_dir);
-
-    let setup_log = sandbox.path().join("setup.log");
-    let deployer_log = sandbox.path().join("deployer.log");
-    sandbox.write_exit_tool("greentic-dev", 0);
-    sandbox.write_setup_bundle_tool("greentic-setup", &setup_log);
-    sandbox.write_single_vm_deployer_tool("greentic-deployer", &deployer_log);
-
-    let state_home = sandbox.path().join("xdg-state");
-    let data_home = sandbox.path().join("xdg-data");
-    fs::create_dir_all(&state_home).expect("state home");
-    fs::create_dir_all(&data_home).expect("data home");
-
-    let mut extra = HashMap::new();
-    extra.insert(
-        "XDG_STATE_HOME".to_string(),
-        state_home.display().to_string(),
-    );
-    extra.insert("XDG_DATA_HOME".to_string(), data_home.display().to_string());
-
-    let start = sandbox.run_gtc_capture(
-        [
-            "start",
-            bundle_dir.to_str().expect("bundle utf8"),
-            "--target",
-            "single-vm",
-        ],
-        extra.clone(),
-    );
-    assert_eq!(
-        start.status.code(),
-        Some(0),
-        "start stderr: {}",
-        String::from_utf8_lossy(&start.stderr)
-    );
-
-    let deployments_dir = state_home.join("greentic").join("gtc").join("deployments");
-    let state_path =
-        find_single_json_file(&deployments_dir).expect("deployment state file after start");
-    assert!(
-        state_path.exists(),
-        "deployment state should exist after start"
-    );
-
-    let stop = sandbox.run_gtc_capture(
-        [
-            "stop",
-            bundle_dir.to_str().expect("bundle utf8"),
-            "--target",
-            "single-vm",
-            "--destroy",
-        ],
-        extra,
-    );
-    assert_eq!(
-        stop.status.code(),
-        Some(0),
-        "stop stderr: {}",
-        String::from_utf8_lossy(&stop.stderr)
-    );
-
-    let deployer_logged = fs::read_to_string(&deployer_log).expect("read deployer log");
-    assert!(deployer_logged.contains("single-vm destroy"));
-    assert!(
-        !state_path.exists(),
-        "deployment state should be removed after single-vm destroy"
-    );
-}
-
 fn create_minimal_bundle_dir(path: &Path) {
     fs::create_dir_all(path.join("packs")).expect("packs dir");
     fs::write(path.join("bundle.yaml"), "bundle_id: demo\n").expect("bundle.yaml");
     fs::write(path.join("packs").join("default.gtpack"), b"fixture-pack").expect("default pack");
-}
-
-#[cfg(unix)]
-fn find_file_named(root: &Path, file_name: &str) -> Option<PathBuf> {
-    if root.is_file() {
-        return root
-            .file_name()
-            .filter(|name| *name == file_name)
-            .map(|_| root.to_path_buf());
-    }
-    let entries = fs::read_dir(root).ok()?;
-    for entry in entries {
-        let path = entry.ok()?.path();
-        if path.is_dir() {
-            if let Some(found) = find_file_named(&path, file_name) {
-                return Some(found);
-            }
-        } else if path.file_name().is_some_and(|name| name == file_name) {
-            return Some(path);
-        }
-    }
-    None
-}
-
-#[cfg(unix)]
-fn find_single_json_file(root: &Path) -> Option<PathBuf> {
-    let mut matches = Vec::new();
-    let entries = fs::read_dir(root).ok()?;
-    for entry in entries {
-        let path = entry.ok()?.path();
-        if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
-            matches.push(path);
-        }
-    }
-    if matches.len() == 1 {
-        matches.pop()
-    } else {
-        None
-    }
 }
 
 struct TestSandbox {
@@ -2506,15 +2313,15 @@ impl TestSandbox {
     }
 
     #[cfg(unix)]
+    #[allow(dead_code)]
     fn write_setup_bundle_tool(&self, name: &str, log_file: &Path) {
         let path = self.binary_path(name);
         self.compile_rust_tool_at(&path, &rust_setup_bundle_tool_program(log_file));
     }
 
-    #[cfg(unix)]
-    fn write_single_vm_deployer_tool(&self, name: &str, log_file: &Path) {
+    fn write_bundle_build_tool(&self, name: &str, log_file: &Path) {
         let path = self.binary_path(name);
-        self.compile_rust_tool_at(&path, &rust_single_vm_deployer_tool_program(log_file));
+        self.compile_rust_tool_at(&path, &rust_bundle_build_tool_program(log_file));
     }
 
     fn write_contract_deployer_tool(&self, name: &str) {
@@ -3349,6 +3156,7 @@ fn main() {{
 }
 
 #[cfg(unix)]
+#[allow(dead_code)]
 fn rust_setup_bundle_tool_program(log_file: &Path) -> String {
     let log_literal = rust_string_literal(&log_file.display().to_string());
     format!(
@@ -3385,8 +3193,7 @@ fn main() {{
     )
 }
 
-#[cfg(unix)]
-fn rust_single_vm_deployer_tool_program(log_file: &Path) -> String {
+fn rust_bundle_build_tool_program(log_file: &Path) -> String {
     let log_literal = rust_string_literal(&log_file.display().to_string());
     format!(
         r#"
@@ -3403,34 +3210,20 @@ fn main() {{
         .expect("open log");
     writeln!(file, "{{}}", joined).expect("write log");
 
-    match (args.first().map(String::as_str), args.get(1).map(String::as_str)) {{
-        (Some("single-vm"), Some("render-spec")) => {{
-            let mut out = None::<String>;
-            let mut name = None::<String>;
-            let mut bundle_source = None::<String>;
-            let mut idx = 2usize;
-            while idx + 1 < args.len() {{
-                match args[idx].as_str() {{
-                    "--out" => out = args.get(idx + 1).cloned(),
-                    "--name" => name = args.get(idx + 1).cloned(),
-                    "--bundle-source" => bundle_source = args.get(idx + 1).cloned(),
-                    _ => {{}}
-                }}
-                idx += 2;
-            }}
-            let out_path = out.expect("out");
-            let spec = format!(
-                "apiVersion: greentic.ai/v1alpha1\nkind: Deployment\nmetadata:\n  name: {{}}\nspec:\n  target: single-vm\n  bundle:\n    source: '{{}}'\n    format: squashfs\n",
-                name.expect("name"),
-                bundle_source.expect("bundle_source"),
-            );
-            std::fs::write(out_path, spec).expect("write spec");
+    let mut output = None::<String>;
+    let mut idx = 0usize;
+    while idx < args.len() {{
+        if args[idx] == "--output" {{
+            output = args.get(idx + 1).cloned();
+            break;
         }}
-        (Some("single-vm"), Some("status")) => {{
-            println!("{{{{\"status\":\"missing\"}}}}");
-        }}
-        (Some("single-vm"), Some("apply")) | (Some("single-vm"), Some("destroy")) | _ => {{}}
+        idx += 1;
     }}
+    let Some(output_path) = output else {{
+        eprintln!("missing --output");
+        std::process::exit(9);
+    }};
+    std::fs::write(output_path, b"prepared bundle fixture").expect("write prepared bundle");
 }}
 "#
     )

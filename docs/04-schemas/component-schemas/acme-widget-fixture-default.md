@@ -17,7 +17,7 @@ one of this repo's real canonical production components.
 
 ```bash
 greentic-flow component-schema oci://acme/widget:1 \
-  --resolver fixture:///Users/maarten/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/greentic-flow-0.6.24888858655/tests/fixtures/registry \
+  --resolver fixture:///Users/maarten/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/greentic-flow-1.1.0-dev.25540621195/tests/fixtures/registry \
   --format json
 ```
 

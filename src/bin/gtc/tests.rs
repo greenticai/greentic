@@ -14,10 +14,7 @@ use super::{
     verify_sha256_digest,
 };
 #[cfg(unix)]
-use super::{
-    StartBundleResolution, apply_default_deploy_env_for_target, extract_zip_bytes,
-    validate_cloud_deploy_inputs, write_single_vm_spec,
-};
+use super::{apply_default_deploy_env_for_target, extract_zip_bytes, validate_cloud_deploy_inputs};
 use clap::{Arg, ArgMatches, Command};
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -772,7 +769,11 @@ impl Drop for EnvVarGuard {
 #[cfg(unix)]
 pub(crate) fn write_fake_deployer_contract_script(script: &Path, log_path: Option<&Path>) {
     let log_snippet = log_path.map_or_else(String::new, |path| {
-        format!("printf '%s\\n' \"$*\" >> '{}'\n", path.display())
+        format!(
+            "printf '%s\\n' \"$*\" >> '{}'\nprintf 'GREENTIC_DEV_SECRETS_PATH=%s\\n' \"${{GREENTIC_DEV_SECRETS_PATH:-}}\" >> '{}'\n",
+            path.display(),
+            path.display()
+        )
     });
     let body_template = r#"#!/bin/sh
 __LOG_SNIPPET__if [ "$1" = "target-requirements" ] && [ "$2" = "--provider" ]; then
@@ -811,64 +812,6 @@ __LOG_SNIPPET__if [ "$1" = "target-requirements" ] && [ "$2" = "--provider" ]; t
       ;;
   esac
   printf '%s\n' "{\"target\":\"$provider\",\"target_label\":\"$label\",\"provider_pack_filename\":\"terraform.gtpack\",\"remote_bundle_source_required\":true,\"remote_bundle_source_help\":\"$help\",\"informational_notes\":[],\"credential_requirements\":$creds,\"variable_requirements\":$vars}"
-  exit 0
-fi
-if [ "$1" = "single-vm" ] && [ "$2" = "render-spec" ]; then
-  shift 2
-  while [ $# -gt 0 ]; do
-    case "$1" in
-      --out) out="$2"; shift 2 ;;
-      --name) name="$2"; shift 2 ;;
-      --bundle-source) bundle_source="$2"; shift 2 ;;
-      --state-dir) state_dir="$2"; shift 2 ;;
-      --cache-dir) cache_dir="$2"; shift 2 ;;
-      --log-dir) log_dir="$2"; shift 2 ;;
-      --temp-dir) temp_dir="$2"; shift 2 ;;
-      --admin-bind) admin_bind="$2"; shift 2 ;;
-      --admin-ca-file) admin_ca_file="$2"; shift 2 ;;
-      --admin-cert-file) admin_cert_file="$2"; shift 2 ;;
-      --admin-key-file) admin_key_file="$2"; shift 2 ;;
-      --image) image="$2"; shift 2 ;;
-      *) shift ;;
-    esac
-  done
-  : "${admin_bind:=127.0.0.1:8433}"
-  : "${image:=ghcr.io/greentic-ai/operator-distroless:0.1.0-distroless}"
-  {
-    printf '%s\n' "apiVersion: greentic.ai/v1alpha1"
-    printf '%s\n' "kind: Deployment"
-    printf '%s\n' "metadata:"
-    printf '%s\n' "  name: $name"
-    printf '%s\n' "spec:"
-    printf '%s\n' "  target: single-vm"
-    printf '%s\n' "  bundle:"
-    printf '%s\n' "    source: '$bundle_source'"
-    printf '%s\n' "    format: squashfs"
-    printf '%s\n' "  runtime:"
-    printf '%s\n' "    image: '$image'"
-    printf '%s\n' "    arch: x86_64"
-    printf '%s\n' "    admin:"
-    printf '%s\n' "      bind: $admin_bind"
-    printf '%s\n' "      mtls:"
-    printf '%s\n' "        caFile: '$admin_ca_file'"
-    printf '%s\n' "        certFile: '$admin_cert_file'"
-    printf '%s\n' "        keyFile: '$admin_key_file'"
-    printf '%s\n' "  storage:"
-    printf '%s\n' "    stateDir: '$state_dir'"
-    printf '%s\n' "    cacheDir: '$cache_dir'"
-    printf '%s\n' "    logDir: '$log_dir'"
-    printf '%s\n' "    tempDir: '$temp_dir'"
-    printf '%s\n' "  service:"
-    printf '%s\n' "    manager: systemd"
-    printf '%s\n' "    user: greentic"
-    printf '%s\n' "    group: greentic"
-    printf '%s\n' "  health:"
-    printf '%s\n' "    readinessPath: /ready"
-    printf '%s\n' "    livenessPath: /health"
-    printf '%s\n' "    startupTimeoutSeconds: 120"
-    printf '%s\n' "  rollout:"
-    printf '%s\n' "    strategy: recreate"
-  } > "$out"
   exit 0
 fi
 exit 0
@@ -1090,69 +1033,6 @@ fn ensure_admin_certs_ready_preserves_explicit_dir() {
 
     let resolved = ensure_admin_certs_ready(dir.path(), Some(&certs)).expect("certs");
     assert_eq!(resolved, certs);
-}
-
-#[cfg(unix)]
-#[test]
-fn write_single_vm_spec_uses_bundle_local_server_certs() {
-    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
-    let _deployer_guard = fake_deployer_contract(None);
-    let dir = tempfile::tempdir().expect("tempdir");
-    let state_home = dir.path().join("xdg-state");
-    std::fs::create_dir_all(&state_home).expect("mkdir state home");
-    unsafe {
-        env::set_var("XDG_STATE_HOME", &state_home);
-    }
-    let bundle_dir = dir.path().join("bundle");
-    let certs = bundle_dir.join(".greentic").join("admin").join("certs");
-    std::fs::create_dir_all(&certs).expect("mkdir certs");
-    std::fs::write(certs.join("ca.crt"), b"ca").expect("ca");
-    std::fs::write(certs.join("server.crt"), b"server cert").expect("server cert");
-    std::fs::write(certs.join("server.key"), b"server key").expect("server key");
-
-    let artifact_path = dir.path().join("bundle.gtbundle");
-    std::fs::write(&artifact_path, b"fixture").expect("artifact");
-
-    let resolved = StartBundleResolution {
-        bundle_dir: bundle_dir.clone(),
-        deployment_key: "demo-deploy".to_string(),
-        deploy_artifact: Some(artifact_path.clone()),
-        _hold: None,
-    };
-    let request = parse_start_request(
-        &[
-            "--tenant".to_string(),
-            "demo".to_string(),
-            "--team".to_string(),
-            "default".to_string(),
-        ],
-        bundle_dir.clone(),
-    )
-    .expect("request");
-
-    let spec_path = write_single_vm_spec(
-        "demo-bundle",
-        &resolved,
-        &request,
-        &artifact_path,
-        false,
-        "en",
-    )
-    .expect("spec");
-    let spec = std::fs::read_to_string(&spec_path).expect("read spec");
-
-    assert!(spec.contains("source: 'file://"));
-    assert!(spec.contains(&artifact_path.display().to_string()));
-    assert!(spec.contains("certFile: '"));
-    assert!(spec.contains(".greentic/admin/certs/server.crt"));
-    assert!(spec.contains("keyFile: '"));
-    assert!(spec.contains(".greentic/admin/certs/server.key"));
-    assert!(!spec.contains("client.crt"));
-    assert!(!spec.contains("client.key"));
-
-    unsafe {
-        env::remove_var("XDG_STATE_HOME");
-    }
 }
 
 #[cfg(unix)]

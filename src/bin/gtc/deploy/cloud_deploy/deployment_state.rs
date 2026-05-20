@@ -5,39 +5,38 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use directories::BaseDirs;
 use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
-use gtc::perf_targets;
 use gtc::start_stop_parsing::{StartRequest, StopRequest};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use super::super::bundle_resolution::{fingerprint_bundle_dir, normalize_bundle_fingerprint};
-use super::super::{StartBundleResolution, StartCliOptions, StartTarget, StopCliOptions};
-use super::provider_packs::{resolve_deploy_app_pack_path, resolve_target_provider_pack};
-use super::single_vm::{
-    load_or_prepare_single_vm_artifact, read_single_vm_status, run_single_vm_apply,
-    run_single_vm_destroy, stop_request_to_start_request, write_single_vm_spec,
+use super::super::bundle_resolution::fingerprint_bundle_dir;
+use super::super::{
+    ChildProcessEnv, PreparedBundle, StartBundleResolution, StartCliOptions, StartTarget,
+    StopCliOptions,
 };
+use super::provider_packs::{resolve_deploy_app_pack_path, resolve_target_provider_pack};
 use super::{
     append_bundle_registry_args, describe_cloud_target_requirements_for_gtc,
     validate_cloud_deploy_inputs,
 };
-use crate::process::{
-    run_binary_checked, run_binary_checked_with_target, run_binary_checked_with_target_and_env,
-};
-use crate::{DEPLOYER_BIN, SETUP_BIN};
+use crate::DEPLOYER_BIN;
+use crate::process::{run_binary_checked_with_target, run_binary_checked_with_target_and_env};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(super) struct StartDeploymentState {
     target: String,
     bundle_fingerprint: String,
+    #[serde(default)]
+    prepared_bundle_digest: Option<String>,
     bundle_ref: String,
     deployed_at_epoch_s: u64,
     pub(super) artifact_path: Option<String>,
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn ensure_started_or_deployed(
     bundle_ref: &str,
     resolved: &StartBundleResolution,
+    prepared: &PreparedBundle,
     request: &StartRequest,
     cli_options: &StartCliOptions,
     target: StartTarget,
@@ -47,6 +46,7 @@ pub(crate) fn ensure_started_or_deployed(
     ensure_bundle_deployed(
         bundle_ref,
         resolved,
+        prepared,
         request,
         cli_options,
         target,
@@ -56,7 +56,7 @@ pub(crate) fn ensure_started_or_deployed(
 }
 
 pub(crate) fn destroy_deployment(
-    bundle_ref: &str,
+    _bundle_ref: &str,
     resolved: &StartBundleResolution,
     request: &StopRequest,
     cli_options: &StopCliOptions,
@@ -65,22 +65,6 @@ pub(crate) fn destroy_deployment(
     locale: &str,
 ) -> GtcResult<()> {
     match target {
-        StartTarget::SingleVm => {
-            let artifact_path =
-                load_or_prepare_single_vm_artifact(resolved, request, debug, locale)?;
-            let start_request = stop_request_to_start_request(request, resolved, &artifact_path);
-            let spec_path = write_single_vm_spec(
-                bundle_ref,
-                resolved,
-                &start_request,
-                &artifact_path,
-                debug,
-                locale,
-            )?;
-            run_single_vm_destroy(&spec_path, debug, locale)?;
-            remove_deployment_state_file(&resolved.deployment_key, target)?;
-            Ok(())
-        }
         StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
             run_multi_target_deployer_destroy(
                 resolved,
@@ -99,61 +83,26 @@ pub(crate) fn destroy_deployment(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn ensure_bundle_deployed(
     bundle_ref: &str,
     resolved: &StartBundleResolution,
+    prepared: &PreparedBundle,
     request: &StartRequest,
     cli_options: &StartCliOptions,
     target: StartTarget,
     debug: bool,
     locale: &str,
 ) -> GtcResult<()> {
-    let fingerprint = fingerprint_bundle_dir(&resolved.bundle_dir)?;
+    let fingerprint = fingerprint_bundle_dir(&prepared.prepared_root)?;
     let state_path = deployment_state_path(&resolved.deployment_key, target)?;
-    let previous_state = load_deployment_state(&state_path)?;
-    let deploy_needed = previous_state
-        .as_ref()
-        .map(|state| normalize_bundle_fingerprint(&state.bundle_fingerprint) != fingerprint)
-        .unwrap_or(true);
     match target {
-        StartTarget::SingleVm => {
-            println!("Preparing deployable artifact for target: single-vm");
-            let artifact_path = prepare_deployable_bundle_artifact(resolved, debug, locale)?;
-            println!("Deployable artifact: {}", artifact_path.display());
-            let spec_path =
-                write_single_vm_spec(bundle_ref, resolved, request, &artifact_path, debug, locale)?;
-            println!("Single-vm deployment spec: {}", spec_path.display());
-            let current_status = read_single_vm_status(&spec_path, debug, locale)?;
-            let status_applied = current_status
-                .as_ref()
-                .and_then(|value| value.get("status"))
-                .and_then(Value::as_str)
-                .map(|value| value == "applied")
-                .unwrap_or(false);
-            if status_applied && !deploy_needed {
-                println!("single-vm deployment already up-to-date");
-                return Ok(());
-            }
-            println!("Applying single-vm deployment...");
-            run_single_vm_apply(&spec_path, debug, locale)?;
-            let state = StartDeploymentState {
-                target: target.as_str().to_string(),
-                bundle_fingerprint: fingerprint,
-                bundle_ref: bundle_ref.to_string(),
-                deployed_at_epoch_s: SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map_err(|err| GtcError::message(err.to_string()))?
-                    .as_secs(),
-                artifact_path: Some(artifact_path.display().to_string()),
-            };
-            save_deployment_state(&state_path, &state)?;
-            Ok(())
-        }
         StartTarget::Aws | StartTarget::Gcp | StartTarget::Azure => {
             println!("Applying cloud deployment target: {}", target.as_str());
             run_multi_target_deployer_apply(
                 bundle_ref,
                 resolved,
+                prepared,
                 request,
                 cli_options,
                 target,
@@ -163,6 +112,7 @@ fn ensure_bundle_deployed(
             let state = StartDeploymentState {
                 target: target.as_str().to_string(),
                 bundle_fingerprint: fingerprint,
+                prepared_bundle_digest: Some(prepared.digest.clone()),
                 bundle_ref: bundle_ref.to_string(),
                 deployed_at_epoch_s: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -177,51 +127,8 @@ fn ensure_bundle_deployed(
     }
 }
 
-pub(super) fn prepare_deployable_bundle_artifact(
-    resolved: &StartBundleResolution,
-    debug: bool,
-    locale: &str,
-) -> GtcResult<PathBuf> {
-    if let Some(path) = resolved.deploy_artifact.as_ref() {
-        return Ok(path.clone());
-    }
-
-    let artifact_root = deployment_artifacts_root()?;
-    fs::create_dir_all(&artifact_root).map_err(|err| {
-        GtcError::io(
-            format!(
-                "failed to create deployment artifact root {}",
-                artifact_root.display()
-            ),
-            err,
-        )
-    })?;
-    let out_path = artifact_root.join(format!("{}.gtbundle", resolved.deployment_key));
-    let args = vec![
-        "bundle".to_string(),
-        "build".to_string(),
-        "--bundle".to_string(),
-        resolved.bundle_dir.display().to_string(),
-        "--out".to_string(),
-        out_path.display().to_string(),
-    ];
-    run_binary_checked(SETUP_BIN, &args, debug, locale, "bundle build")?;
-    Ok(out_path)
-}
-
 fn resolve_remote_deploy_bundle_source_override() -> Option<String> {
     GtcConfig::from_env().deploy_bundle_source_override()
-}
-
-fn deployment_artifacts_root() -> GtcResult<PathBuf> {
-    let base = BaseDirs::new().ok_or_else(|| {
-        GtcError::message("failed to resolve base directories for deployment artifacts")
-    })?;
-    Ok(base
-        .data_local_dir()
-        .join("greentic")
-        .join("gtc")
-        .join("bundles"))
 }
 
 pub(super) fn deployment_state_path(
@@ -240,6 +147,7 @@ pub(super) fn deployment_state_path(
         .join(format!("{deployment_key}-{}.json", target.as_str())))
 }
 
+#[cfg(test)]
 pub(super) fn load_deployment_state(path: &Path) -> GtcResult<Option<StartDeploymentState>> {
     if !path.exists() {
         return Ok(None);
@@ -281,43 +189,28 @@ fn save_deployment_state(path: &Path, state: &StartDeploymentState) -> GtcResult
     })
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_multi_target_deployer_apply(
     _bundle_ref: &str,
     resolved: &StartBundleResolution,
+    prepared: &PreparedBundle,
     request: &StartRequest,
     cli_options: &StartCliOptions,
     target: StartTarget,
     debug: bool,
     locale: &str,
 ) -> GtcResult<()> {
-    // If --upload-bundle is set, run warmup + deployer upload and synthesize
-    // --deploy-bundle-source + --bundle-digest from the result. In this path
-    // prepare_warmed_bundle (inside resolve_upload_bundle) already builds the
-    // bundle, so we must NOT also call prepare_deployable_bundle_artifact which
-    // would run a redundant greentic-setup bundle build beforehand.
     let synthesized_source: Option<(String, String)> =
         if let Some(upload_target) = cli_options.upload_bundle.as_deref() {
             let presign = cli_options.upload_bundle_presign_expires.unwrap_or(604800);
             let (url, digest) =
-                super::resolve_upload_bundle(&resolved.bundle_dir, upload_target, presign)?;
+                super::resolve_upload_bundle(&prepared.artifact_path, upload_target, presign)?;
             Some((url, digest))
         } else {
             None
         };
 
-    // Only build the portable .gtbundle artifact when we are NOT uploading a
-    // warmed bundle. When upload_bundle is set the warmed path returned by
-    // resolve_upload_bundle is the canonical artifact; there is no need to run
-    // the greentic-setup pre-build.
-    let bundle_artifact = if synthesized_source.is_some() {
-        // Use the bundle dir itself as a sentinel path; the actual artifact is
-        // the warmed bundle that was already uploaded. The path is only used
-        // for informational prints and digest computation when
-        // synthesized_source is None, so this branch is safe.
-        resolved.bundle_dir.clone()
-    } else {
-        prepare_deployable_bundle_artifact(resolved, debug, locale)?
-    };
+    let bundle_artifact = prepared.artifact_path.clone();
 
     let remote_override = synthesized_source
         .as_ref()
@@ -325,28 +218,34 @@ fn run_multi_target_deployer_apply(
         .or_else(|| cli_options.deploy_bundle_source.clone())
         .or_else(resolve_remote_deploy_bundle_source_override);
 
-    let child_env = validate_cloud_deploy_inputs(
+    let mut child_env = validate_cloud_deploy_inputs(
         target,
         remote_override.as_deref(),
-        &resolved.bundle_dir,
+        &prepared.prepared_root,
         locale,
     )?;
+    if let Some(secret_env) = local_deployer_secret_env(&resolved.bundle_dir) {
+        child_env.extend(secret_env);
+    }
 
     let deploy_bundle_source = remote_override
         .clone()
         .unwrap_or_else(|| bundle_artifact.display().to_string());
 
-    // Use the synthesized digest when available (from upload); otherwise compute from artifact.
-    let bundle_digest = if let Some((_, digest)) = synthesized_source.as_ref() {
-        digest.clone()
-    } else {
-        perf_targets::sha256_file(&bundle_artifact).map_err(GtcError::message)?
-    };
+    if let Some((_, uploaded_digest)) = synthesized_source.as_ref()
+        && uploaded_digest != &prepared.digest
+    {
+        eprintln!(
+            "warning: uploaded bundle digest {uploaded_digest} differs from prepared digest {}",
+            prepared.digest
+        );
+    }
+    let bundle_digest = prepared.digest.clone();
 
     let app_pack =
-        resolve_deploy_app_pack_path(&resolved.bundle_dir, cli_options.app_pack.as_ref())?;
+        resolve_deploy_app_pack_path(&prepared.prepared_root, cli_options.app_pack.as_ref())?;
     let provider_pack = resolve_target_provider_pack(
-        &resolved.bundle_dir,
+        &prepared.prepared_root,
         target,
         cli_options.provider_pack.as_ref(),
     )?;
@@ -371,7 +270,7 @@ fn run_multi_target_deployer_apply(
         "--provider-pack".to_string(),
         provider_pack.display().to_string(),
         "--bundle-root".to_string(),
-        resolved.bundle_dir.display().to_string(),
+        prepared.prepared_root.display().to_string(),
         "--bundle-source".to_string(),
         deploy_bundle_source.clone(),
         "--bundle-digest".to_string(),
@@ -395,6 +294,22 @@ fn run_multi_target_deployer_apply(
         Some(&child_env),
     )
     .map_err(|e| GtcError::message(e.to_string()))
+}
+
+fn local_deployer_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
+    let dev_secrets = bundle_dir
+        .join(".greentic")
+        .join("dev")
+        .join(".dev.secrets.env");
+    if !dev_secrets.is_file() {
+        return None;
+    }
+    let mut env = ChildProcessEnv::new();
+    env.set(
+        "GREENTIC_DEV_SECRETS_PATH",
+        dev_secrets.display().to_string(),
+    );
+    Some(env)
 }
 
 fn print_cloud_deploy_contract_hint(target: StartTarget, locale: &str) -> GtcResult<()> {
@@ -507,17 +422,16 @@ fn remove_deployment_state_file(deployment_key: &str, target: StartTarget) -> Gt
 mod tests {
     use super::{
         StartDeploymentState, deployment_state_path, load_deployment_state,
-        prepare_deployable_bundle_artifact, remove_deployment_state_file,
-        resolve_remote_deploy_bundle_source_override, save_deployment_state,
+        remove_deployment_state_file, resolve_remote_deploy_bundle_source_override,
+        save_deployment_state,
     };
     #[cfg(unix)]
-    use super::{
-        deployment_artifacts_root, run_multi_target_deployer_apply,
-        run_multi_target_deployer_destroy,
+    use super::{run_multi_target_deployer_apply, run_multi_target_deployer_destroy};
+    #[cfg(unix)]
+    use crate::deploy::{
+        PreparedBundle, PreparedBundleSourceKind, StartCliOptions, StopCliOptions,
     };
     use crate::deploy::{StartBundleResolution, StartTarget};
-    #[cfg(unix)]
-    use crate::deploy::{StartCliOptions, StopCliOptions};
     use crate::tests::env_test_lock;
     #[cfg(unix)]
     use crate::tests::fake_deployer_contract;
@@ -563,7 +477,6 @@ mod tests {
         }
 
         let state_path = deployment_state_path("demo", StartTarget::Aws).expect("state path");
-        let artifact_root = deployment_artifacts_root().expect("artifact root");
 
         unsafe {
             env::remove_var("XDG_STATE_HOME");
@@ -571,7 +484,6 @@ mod tests {
         }
 
         assert!(state_path.starts_with(&state_home));
-        assert!(artifact_root.starts_with(&data_home));
     }
 
     #[test]
@@ -581,6 +493,7 @@ mod tests {
         let state = StartDeploymentState {
             target: "aws".to_string(),
             bundle_fingerprint: "fp".to_string(),
+            prepared_bundle_digest: Some("sha256:demo".to_string()),
             bundle_ref: "demo".to_string(),
             deployed_at_epoch_s: 1,
             artifact_path: Some("/tmp/demo.gtbundle".to_string()),
@@ -599,23 +512,6 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let path = dir.path().join("missing.json");
         assert!(load_deployment_state(&path).expect("load").is_none());
-    }
-
-    #[test]
-    fn prepare_deployable_bundle_artifact_reuses_existing_artifact() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let artifact = dir.path().join("bundle.gtbundle");
-        fs::write(&artifact, b"fixture").expect("write");
-        let resolved = StartBundleResolution {
-            bundle_dir: dir.path().join("bundle"),
-            deployment_key: "demo".to_string(),
-            deploy_artifact: Some(artifact.clone()),
-            _hold: None,
-        };
-
-        let prepared =
-            prepare_deployable_bundle_artifact(&resolved, false, "en").expect("artifact");
-        assert_eq!(prepared, artifact);
     }
 
     #[test]
@@ -644,7 +540,9 @@ mod tests {
         let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
         let dir = tempfile::tempdir().expect("tempdir");
         let bundle_dir = dir.path().join("bundle");
-        fs::create_dir_all(&bundle_dir).expect("mkdir");
+        fs::create_dir_all(bundle_dir.join(".greentic/dev")).expect("mkdir");
+        let dev_secrets = bundle_dir.join(".greentic/dev/.dev.secrets.env");
+        fs::write(&dev_secrets, "SECRET=value\n").expect("secrets");
         let app_pack = dir.path().join("app.gtpack");
         let provider_pack = dir.path().join("terraform.gtpack");
         fs::write(&app_pack, b"app").expect("write");
@@ -699,8 +597,19 @@ mod tests {
         let resolved = StartBundleResolution {
             bundle_dir: bundle_dir.clone(),
             deployment_key: "demo".to_string(),
-            deploy_artifact: Some(artifact),
+            deploy_artifact: Some(artifact.clone()),
             _hold: None,
+        };
+        let prepared_hold = tempfile::tempdir().expect("prepared tempdir");
+        let prepared = PreparedBundle {
+            input_ref: "bundle-ref".to_string(),
+            prepared_root: bundle_dir.clone(),
+            artifact_path: artifact,
+            digest: "sha256:prepared".to_string(),
+            source_kind: PreparedBundleSourceKind::LocalDirectory,
+            was_rebuilt: true,
+            included_asset_config_count: 0,
+            _hold: prepared_hold,
         };
 
         let original_path = env::var_os("PATH");
@@ -715,6 +624,7 @@ mod tests {
         run_multi_target_deployer_apply(
             "bundle-ref",
             &resolved,
+            &prepared,
             &request,
             &cli_options,
             StartTarget::Gcp,
@@ -739,6 +649,10 @@ mod tests {
         assert!(logged.contains(&format!("--bundle-root {}", bundle_dir.display())));
         assert!(logged.contains("--bundle-source https://example.com/demo.gtbundle"));
         assert!(logged.contains("--environment prod"));
+        assert!(logged.contains(&format!(
+            "GREENTIC_DEV_SECRETS_PATH={}",
+            dev_secrets.display()
+        )));
     }
 
     #[cfg(unix)]
