@@ -907,13 +907,6 @@ mod tests {
         assert_eq!(target, None);
     }
 
-    // PR-08 Phase 5: regression coverage. Local `gtc start` reads the dev
-    // envelope from `<bundle>/.greentic/dev/.dev.secrets.env` via
-    // `GREENTIC_DEV_SECRETS_PATH`. The bake-into-bundle change must not
-    // disturb that contract — the envelope still lives in the source bundle
-    // directory, and `local_runtime_secret_env` still points the runner
-    // subprocess at it.
-
     #[test]
     fn local_runtime_secret_env_points_at_bundle_envelope_when_present() {
         let dir = tempfile::tempdir().expect("tempdir");
