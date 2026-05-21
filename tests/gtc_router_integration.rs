@@ -675,7 +675,70 @@ fn op_help_passthrough_routes_to_greentic_operator() {
     assert_eq!(status.code(), Some(0));
 
     let logged = fs::read_to_string(log_file).expect("read op log");
-    assert!(logged.contains("--help"));
+    assert!(
+        logged.split_whitespace().eq(["op", "--help"]),
+        "expected greentic-operator to receive `op --help`, got: {logged}"
+    );
+}
+
+// `gtc op env init` must forward as `greentic-operator op env init` — `env` is
+// a noun under `OpCommand`, not a top-level operator subcommand. Regression
+// guard for the routing bug where the leading `op` was stripped before
+// forwarding, leaving `greentic-operator env init` and "unrecognized
+// subcommand 'env'".
+#[test]
+fn op_deploy_spec_noun_routes_under_op() {
+    let sandbox = TestSandbox::new("op_deploy_spec_noun_routes_under_op");
+    let log_file = sandbox.path().join("op.log");
+    sandbox.write_arg_logger_tool("greentic-operator", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+
+    let status = sandbox.run_gtc(["op", "env", "init"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read op log");
+    assert!(
+        logged.split_whitespace().eq(["op", "env", "init"]),
+        "expected greentic-operator to receive `op env init`, got: {logged}"
+    );
+}
+
+// Legacy `gtc op demo build` must still forward as-is (the operator's `Demo`
+// top-level subcommand handles it directly).
+#[test]
+fn op_demo_subcommand_passes_through_unchanged() {
+    let sandbox = TestSandbox::new("op_demo_subcommand_passes_through_unchanged");
+    let log_file = sandbox.path().join("op.log");
+    sandbox.write_arg_logger_tool("greentic-operator", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+
+    let status = sandbox.run_gtc(["op", "demo", "build"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read op log");
+    assert!(
+        logged.split_whitespace().eq(["demo", "build"]),
+        "expected greentic-operator to receive `demo build`, got: {logged}"
+    );
+}
+
+// Documented `gtc op op env init` double-op workaround must keep working — the
+// leading `op` is the user-typed explicit selector, not a strip target.
+#[test]
+fn op_double_op_workaround_passes_through_unchanged() {
+    let sandbox = TestSandbox::new("op_double_op_workaround_passes_through_unchanged");
+    let log_file = sandbox.path().join("op.log");
+    sandbox.write_arg_logger_tool("greentic-operator", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+
+    let status = sandbox.run_gtc(["op", "op", "env", "init"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read op log");
+    assert!(
+        logged.split_whitespace().eq(["op", "env", "init"]),
+        "expected greentic-operator to receive `op env init`, got: {logged}"
+    );
 }
 
 #[test]
