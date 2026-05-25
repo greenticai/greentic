@@ -32,6 +32,8 @@ OpenTelemetry Collector listen out of the box.
 | `OTLP_COMPRESSION`             | High-volume shipping over WAN where bandwidth matters. Local collectors don't need it. Value: `gzip`.                                                      | unset                                                  |
 | `TELEMETRY_SAMPLING`           | Production with high event rates where you don't want every span exported. Values: `always_on`, `always_off`, `parent`, `traceidratio:0.5`.                | `always_on`                                            |
 | `GREENTIC_TELEMETRY_FILE_LINE` | When tight `Trace`-level loops flood the log with `file:line` suffixes. Values: `on`, `off` (also `0/1`, `true/false`, `yes/no`).                          | `on`                                                   |
+| `GREENTIC_TELEMETRY_LEVEL`     | Cut emission at the source (in the component, before any stdout write). Values: `trace`, `debug`, `info`, `warn`, `error`.                                 | `trace` (no filtering)                                 |
+| `RUST_LOG`                     | Cut emission at the host (`tracing-subscriber::EnvFilter`, after the component line is parsed). Standard `tracing` directive syntax.                       | `info`                                                 |
 
 The component identity (`[messaging.webchat-gui]` prefix on every line) is
 registered automatically by `provider_common::telemetry` on the first
@@ -50,6 +52,37 @@ through the host tracing pipeline in this shape:
 With `TELEMETRY_EXPORT=otlp-grpc` plus a collector at the default endpoint,
 the same events become OTLP spans/log records with the `provider`,
 `source`, and `fields` attributes attached.
+
+## Two level filters, two stages
+
+There are two level filters, in series. Either one can drop an event.
+
+1. **Component-side** (`GREENTIC_TELEMETRY_LEVEL`): the cheapest. Events
+   below the floor never get formatted into a stdout line. Use this when a
+   tight `Trace` loop is burning CPU on `println!` alone. Per-component
+   (each provider's wasi env can be different).
+2. **Host-side** (`RUST_LOG`): runs after the component line is parsed and
+   re-emitted as a `tracing` event. Use this for per-target precision
+   (e.g. `RUST_LOG="warn,messaging_webchat_gui=debug"` keeps everything
+   quiet except the gui provider at Debug+).
+
+If you need component-side speed plus host-side precision, set both. They
+compose: an event has to pass both to reach the exporter.
+
+Examples:
+
+```sh
+# Quiet a noisy component without touching the rest.
+GREENTIC_TELEMETRY_LEVEL=info gtc start ./mybundle
+
+# Keep components loud, but mute the runner's own framework spans.
+RUST_LOG="info,greentic_runner_host=warn" gtc start ./mybundle
+
+# Both: components only emit Info+, host then filters further by target.
+GREENTIC_TELEMETRY_LEVEL=info \
+RUST_LOG="warn,messaging_webchat_gui=info" \
+gtc start ./mybundle
+```
 
 ## Troubleshooting
 
