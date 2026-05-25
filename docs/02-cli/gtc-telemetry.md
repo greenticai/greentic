@@ -4,6 +4,23 @@ Implementation owner: `gtc` for env passthrough; `greentic-runner-host` for the 
 
 # `gtc` telemetry env vars
 
+> **Companion components.** This page assumes the operator is running:
+>
+> - `greentic-runner` **>= 0.5.18** (adds `TelemetryStream` that parses guest
+>   stdout lines and re-emits them through the host `tracing` pipeline; see
+>   `crates/greentic-runner-host/src/telemetry_scan.rs`).
+> - `greentic-telemetry` **>= 0.5.4** (adds the structured fallback line
+>   format used below: RFC3339 timestamp, `[component]` prefix from
+>   `set_component_name`, `file:line` via `#[track_caller]`,
+>   `span-start` / `span-end` lifecycle with `id` and `duration_ms`,
+>   `set_min_level` floor, and the explicit-`Location` `_at` variants that
+>   keep span-end attribution symmetric with span-start).
+>
+> Older runner / telemetry versions still work, but lines will lack the
+> timestamp prefix and `[component]` tag, and `span-end` lines will be
+> missing entirely or attributed to the wrapper. Upgrade both pieces
+> together for the full table below to apply.
+
 The runner and every provider component see your shell environment, so any
 of the variables below set before `gtc start` flow through. Defaults are
 chosen so the common case (local dev, console logs) needs **zero env
