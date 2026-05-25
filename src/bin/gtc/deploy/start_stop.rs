@@ -906,4 +906,31 @@ mod tests {
         let target = load_default_deployment_target(dir.path()).expect("target");
         assert_eq!(target, None);
     }
+
+    #[test]
+    fn local_runtime_secret_env_points_at_bundle_envelope_when_present() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let envelope = dir
+            .path()
+            .join(".greentic")
+            .join("dev")
+            .join(".dev.secrets.env");
+        fs::create_dir_all(envelope.parent().expect("parent")).expect("mkdir");
+        fs::write(&envelope, "SECRET=value\n").expect("envelope");
+
+        let env = super::local_runtime_secret_env(dir.path()).expect("env present");
+        let entry = env
+            .vars
+            .iter()
+            .find(|(key, _)| key == "GREENTIC_DEV_SECRETS_PATH")
+            .expect("GREENTIC_DEV_SECRETS_PATH must be set");
+        assert_eq!(entry.1.as_str(), envelope.display().to_string());
+    }
+
+    #[test]
+    fn local_runtime_secret_env_returns_none_when_envelope_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // No `.greentic/dev/.dev.secrets.env` file created on purpose.
+        assert!(super::local_runtime_secret_env(dir.path()).is_none());
+    }
 }
