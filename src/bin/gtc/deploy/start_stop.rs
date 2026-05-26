@@ -189,6 +189,12 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
         request.tenant.as_deref().unwrap_or("demo"),
         request.team.as_deref().unwrap_or("default")
     );
+    // The prepared bundle lives under a tempdir that gets cleaned on shutdown,
+    // so default operator.log/flow.log into the source bundle dir where users
+    // can actually find them.
+    if request.log_dir.is_none() {
+        request.log_dir = Some(resolved.bundle_dir.join("logs"));
+    }
     let args = request.to_runtime_start_args(locale);
     let runtime_env = local_runtime_secret_env(&resolved.bundle_dir);
     match run_binary_checked_with_target_and_env(

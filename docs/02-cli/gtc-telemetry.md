@@ -48,9 +48,9 @@ OpenTelemetry Collector listen out of the box.
 | `OTLP_HEADERS`                 | Only when shipping to a **managed** collector that gates on a token (Honeycomb, Grafana Cloud, Datadog, ...). Format: `key=value,key=value`, URL-decoded.  | unset                                                  |
 | `OTLP_COMPRESSION`             | High-volume shipping over WAN where bandwidth matters. Local collectors don't need it. Value: `gzip`.                                                      | unset                                                  |
 | `TELEMETRY_SAMPLING`           | Production with high event rates where you don't want every span exported. Values: `always_on`, `always_off`, `parent`, `traceidratio:0.5`.                | `always_on`                                            |
-| `GREENTIC_TELEMETRY_FILE_LINE` | When tight `Trace`-level loops flood the log with `file:line` suffixes. Values: `on`, `off` (also `0/1`, `true/false`, `yes/no`).                          | `on`                                                   |
-| `GREENTIC_TELEMETRY_LEVEL`     | Cut emission at the source (in the component, before any stdout write). Values: `trace`, `debug`, `info`, `warn`, `error`.                                 | `trace` (no filtering)                                 |
-| `RUST_LOG`                     | Cut emission at the host (`tracing-subscriber::EnvFilter`, after the component line is parsed). Standard `tracing` directive syntax.                       | `info`                                                 |
+| `GREENTIC_TELEMETRY_FILE_LINE` | Drop the `file:line` suffix from guest fallback lines when a tight loop is flooding the log. Values: `on` / `off`.                                         | `on`                                                   |
+| `GREENTIC_TELEMETRY_LEVEL`     | Verbosity floor inside each component, before any stdout write. Values: `trace` `debug` `info` `warn` `error`.                                             | `trace`                                                |
+| `RUST_LOG`                     | Verbosity floor at the host, applied after a guest line is parsed. Standard `tracing-subscriber` directive syntax.                                         | `info`                                                 |
 
 The component identity (`[messaging.webchat-gui]` prefix on every line) is
 registered automatically by `provider_common::telemetry` on the first
@@ -59,8 +59,15 @@ provider's canonical id.
 
 ## What you should see
 
-Without any env vars, guest fallback lines land at the runner's stdout
-through the host tracing pipeline in this shape:
+Without any env vars, three files land in `<bundle>/logs/`:
+
+| File           | What                                                                |
+| -------------- | ------------------------------------------------------------------- |
+| `operator.log` | Host-side structured log; every line carries `src/<file>:<line>`.   |
+| `trace.log`    | `tracing` subscriber output (guest fallback + native host spans).   |
+| `flow.log`     | One `[NODE]` line per flow step (`Ok` / `Error` / `Wait`).          |
+
+Sample `trace.log` line for a guest fallback event:
 
 ```text
 2026-05-25T10:30:42.123Z DEBUG components/foo/src/lib.rs:160 span-start: send_payload provider=messaging.webchat-gui fields={"id":"1","event_kind":"send_payload"}
@@ -70,36 +77,38 @@ With `TELEMETRY_EXPORT=otlp-grpc` plus a collector at the default endpoint,
 the same events become OTLP spans/log records with the `provider`,
 `source`, and `fields` attributes attached.
 
-## Two level filters, two stages
+## Levels
 
-There are two level filters, in series. Either one can drop an event.
+Two knobs, applied in series. An event has to pass both to reach the
+exporter:
 
-1. **Component-side** (`GREENTIC_TELEMETRY_LEVEL`): the cheapest. Events
-   below the floor never get formatted into a stdout line. Use this when a
-   tight `Trace` loop is burning CPU on `println!` alone. Per-component
-   (each provider's wasi env can be different).
-2. **Host-side** (`RUST_LOG`): runs after the component line is parsed and
-   re-emitted as a `tracing` event. Use this for per-target precision
-   (e.g. `RUST_LOG="warn,messaging_webchat_gui=debug"` keeps everything
-   quiet except the gui provider at Debug+).
-
-If you need component-side speed plus host-side precision, set both. They
-compose: an event has to pass both to reach the exporter.
-
-Examples:
+- `GREENTIC_TELEMETRY_LEVEL` — floor **inside the component**. Cheapest;
+  the line is never formatted. Reach for it first when a tight loop is
+  hot.
+- `RUST_LOG` — floor **at the host**, after the line is parsed. Use it
+  when you want per-target precision (e.g.
+  `RUST_LOG="warn,messaging_webchat_gui=debug"`).
 
 ```sh
-# Quiet a noisy component without touching the rest.
+# Quiet one component; keep the rest at defaults.
 GREENTIC_TELEMETRY_LEVEL=info gtc start ./mybundle
 
-# Keep components loud, but mute the runner's own framework spans.
-RUST_LOG="info,greentic_runner_host=warn" gtc start ./mybundle
-
-# Both: components only emit Info+, host then filters further by target.
-GREENTIC_TELEMETRY_LEVEL=info \
-RUST_LOG="warn,messaging_webchat_gui=info" \
-gtc start ./mybundle
+# Quiet everything except one target.
+RUST_LOG="warn,messaging_webchat_gui=debug" gtc start ./mybundle
 ```
+
+### Always-silenced crates
+
+Regardless of `RUST_LOG`, the host clamps these noisy upstream crates to
+`warn` (raising them is intentionally not supported — they drown the log):
+
+```
+wasmtime, wasmtime_wasi, wasi_common, cranelift_codegen, cranelift_wasm,
+regalloc2, h2, hyper, hyper_util, rustls, tokio_util, want, mio, tower
+```
+
+If you genuinely need wasmtime-level traces, edit `NOISY_TRACE_TARGETS` in
+`greentic-start::build_trace_filter` rather than reaching for `RUST_LOG`.
 
 ## Troubleshooting
 
