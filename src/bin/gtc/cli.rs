@@ -851,9 +851,11 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "Start a bundle from local or remote reference.",
                 ))
                 .arg(
+                    // Optional: with no bundle ref (and no extension handoff),
+                    // `gtc start` boots greentic-start against the operator-
+                    // materialized runtime-config for the active env.
                     Arg::new("bundle-ref")
                         .value_name("BUNDLE_REF")
-                        .required_unless_present("extension-start-handoff")
                         .help_heading(arguments_heading)
                         .help(t_or(
                             locale,
