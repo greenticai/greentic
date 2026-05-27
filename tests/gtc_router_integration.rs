@@ -944,7 +944,12 @@ fn runtime_start_routes_to_greentic_start_cli() {
     let logged = fs::read_to_string(log_file).expect("read start log");
     assert!(logged.contains("--locale en start"));
     assert!(logged.contains("--bundle"));
-    assert!(!logged.contains(bundle_dir.to_str().expect("bundle utf8")));
+    // `--bundle` must rewrite to prepared-root; source dir may appear under `--log-dir`.
+    let bundle_str = bundle_dir.to_str().expect("bundle utf8");
+    assert!(
+        !logged.contains(&format!("--bundle {bundle_str}")),
+        "--bundle should be rewritten to prepared-root, not the source dir; got: {logged}"
+    );
     assert!(logged.contains("--tenant demo"));
     assert!(logged.contains("--team ops"));
     assert!(logged.contains("--cloudflared off"));
