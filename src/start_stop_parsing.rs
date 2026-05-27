@@ -182,6 +182,16 @@ impl StopRequest {
     }
 }
 
+/// Build a [`StartRequest`] for the no-bundle runtime-config model: identical
+/// flag parsing to [`parse_start_request`], but with `bundle: None` so
+/// greentic-start boots from the active env's materialized `runtime-config.json`
+/// instead of a bundle dir.
+pub fn parse_runtime_config_start_request(tail: &[String]) -> GtcResult<StartRequest> {
+    let mut request = parse_start_request(tail, PathBuf::new())?;
+    request.bundle = None;
+    Ok(request)
+}
+
 pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<StartRequest> {
     let mut request = StartRequest {
         bundle: Some(bundle_dir.display().to_string()),

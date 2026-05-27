@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use gtc::error::{GtcError, GtcResult};
-use gtc::start_stop_parsing::{parse_start_request, parse_stop_request};
+use gtc::start_stop_parsing::{
+    parse_runtime_config_start_request, parse_start_request, parse_stop_request,
+};
 use serde::Deserialize;
 
 use super::bundle_resolution::resolve_bundle_reference;
@@ -17,19 +19,66 @@ use crate::process::run_binary_checked;
 use crate::router::collect_tail;
 
 pub(crate) fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
-    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
-        eprintln!(
-            "{}",
-            t_or(
-                locale,
-                "gtc.start.err.bundle_required",
-                "bundle ref is required"
-            )
-        );
-        return 2;
-    };
     let tail = collect_tail(sub_matches);
-    run_start_with_bundle_ref_and_tail(bundle_ref, &tail, debug, locale)
+    match sub_matches.get_one::<String>("bundle-ref") {
+        Some(bundle_ref) => run_start_with_bundle_ref_and_tail(bundle_ref, &tail, debug, locale),
+        // No bundle ref: boot greentic-start against the operator-materialized
+        // runtime-config for the active env (`GREENTIC_ENV`, default `local`).
+        None => run_start_runtime_config(&tail, debug, locale),
+    }
+}
+
+/// Start with no bundle ref: hand off to greentic-start with no `--bundle` so it
+/// boots from the active env's materialized `runtime-config.json` and serves the
+/// deployed revisions. The runtime-config model has no bundle dir, deploy target,
+/// or admin certs to resolve — those are bundle-only concerns handled by
+/// [`run_start_with_bundle_ref_and_tail`].
+fn run_start_runtime_config(tail: &[String], debug: bool, locale: &str) -> i32 {
+    let cli_options = match parse_start_cli_options(tail) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.start.err.invalid_args",
+                    "invalid start arguments"
+                )
+            );
+            return 2;
+        }
+    };
+    let request = match parse_runtime_config_start_request(&cli_options.start_args) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.start.err.invalid_args",
+                    "invalid start arguments"
+                )
+            );
+            return 2;
+        }
+    };
+    println!("Deployment mode: local runtime (no bundle — env runtime-config)");
+    println!(
+        "Starting tenant={} team={}",
+        request.tenant.as_deref().unwrap_or("demo"),
+        request.team.as_deref().unwrap_or("default")
+    );
+    let args = request.to_runtime_start_args(locale);
+    match run_binary_checked(START_BIN, &args, debug, locale, "start runtime-config") {
+        Ok(()) => 0,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                t_or(locale, "gtc.start.err.run_failed", "failed to start bundle")
+            );
+            1
+        }
+    }
 }
 
 pub(crate) fn run_start_with_bundle_ref_and_tail(
@@ -596,9 +645,9 @@ fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> 
 #[cfg(test)]
 mod tests {
     use super::{
-        load_default_deployment_target, parse_start_cli_options, parse_start_request,
-        parse_stop_cli_options, parse_stop_request, select_start_target,
-        select_start_target_with_mode,
+        load_default_deployment_target, parse_runtime_config_start_request,
+        parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
+        select_start_target, select_start_target_with_mode,
     };
     use crate::deploy::StartTarget;
     use gtc::start_stop_parsing::{
@@ -668,6 +717,30 @@ mod tests {
         assert_eq!(
             request.admin_allowed_clients,
             vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    #[test]
+    fn parse_runtime_config_start_request_has_no_bundle_but_keeps_flags() {
+        // No-bundle path: same flag parsing as the bundle path, but `bundle` is
+        // None so the args emitted to greentic-start omit `--bundle`, letting it
+        // boot from the env's materialized runtime-config.
+        let request = parse_runtime_config_start_request(&[
+            "--tenant=demo".to_string(),
+            "--team=ops".to_string(),
+            "--no-nats".to_string(),
+        ])
+        .expect("request");
+
+        assert_eq!(request.bundle, None);
+        assert_eq!(request.tenant.as_deref(), Some("demo"));
+        assert_eq!(request.team.as_deref(), Some("ops"));
+        assert!(request.no_nats);
+
+        let args = request.to_runtime_start_args("en");
+        assert!(
+            !args.iter().any(|a| a == "--bundle"),
+            "no-bundle start must not pass --bundle: {args:?}"
         );
     }
 
