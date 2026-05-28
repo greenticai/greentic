@@ -1995,7 +1995,7 @@ mod tests {
                 None => env::remove_var("GTC_RELEASE_ARTIFACT_MOCK_ROOT"),
             }
         }
-        assert_eq!(resolved, target.display().to_string());
+        assert_eq!(PathBuf::from(&resolved), target);
         assert!(missing.is_err());
     }
 

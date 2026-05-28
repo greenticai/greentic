@@ -25,6 +25,7 @@ pub struct UploadedBundle {
 /// `--warmup` triggers an internal `greentic-start warmup` pass, embedding
 /// `.cache/v1/<engine_profile_id>/...` into the produced .gtbundle so the
 /// operator's `adopt_bundle_cache_dir` picks it up on cold start.
+#[allow(dead_code)]
 fn run_bundle_build(bundle_dir: &Path, output_file: &Path) -> GtcResult<()> {
     let bundle_bin = resolve_companion_command(BUNDLE_BIN);
     let status = ProcessCommand::new(&bundle_bin)
@@ -57,6 +58,7 @@ fn run_bundle_build(bundle_dir: &Path, output_file: &Path) -> GtcResult<()> {
 
 /// Build a warmed `.gtbundle` from the source bundle directory and return its path
 /// in a temp location. `bundle_dir` must contain `bundle.yaml`.
+#[allow(dead_code)]
 pub fn prepare_warmed_bundle(bundle_dir: &Path) -> GtcResult<PathBuf> {
     if !bundle_dir.is_dir() {
         return Err(GtcError::message(format!(

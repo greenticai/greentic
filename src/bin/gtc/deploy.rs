@@ -4,6 +4,8 @@ mod bundle_resolution;
 pub(crate) mod bundle_upload_orchestrator;
 #[path = "deploy/cloud_deploy.rs"]
 mod cloud_deploy;
+#[path = "deploy/prepared_bundle.rs"]
+mod prepared_bundle;
 #[path = "deploy/refresh.rs"]
 mod refresh;
 #[path = "deploy/start_stop.rs"]
@@ -24,10 +26,13 @@ pub(super) use bundle_resolution::{
 pub(super) use cloud_deploy::{
     canonical_provider_pack_filename_for_gtc, resolve_canonical_target_provider_pack_from,
     resolve_deploy_app_pack_path, resolve_target_provider_pack, validate_cloud_deploy_inputs,
-    write_single_vm_spec,
 };
 #[allow(unused_imports)]
 pub(super) use gtc::start_stop_parsing::{parse_start_request, parse_stop_request};
+#[allow(unused_imports)]
+pub(super) use prepared_bundle::{
+    PreparedBundle, PreparedBundleSourceKind, prepare_bundle_for_start,
+};
 #[allow(unused_imports)]
 pub(super) use refresh::{RefreshArgs, run_refresh};
 #[allow(unused_imports)]
@@ -47,7 +52,6 @@ pub(super) struct StartBundleResolution {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum StartTarget {
     Runtime,
-    SingleVm,
     Aws,
     Gcp,
     Azure,
@@ -57,7 +61,6 @@ impl StartTarget {
     pub(super) fn as_str(self) -> &'static str {
         match self {
             StartTarget::Runtime => "runtime",
-            StartTarget::SingleVm => "single-vm",
             StartTarget::Aws => "aws",
             StartTarget::Gcp => "gcp",
             StartTarget::Azure => "azure",

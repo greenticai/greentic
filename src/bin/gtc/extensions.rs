@@ -1171,14 +1171,21 @@ mod tests {
     fn resolve_descriptor_path_returns_absolute_unchanged() {
         let root = tempfile::tempdir().expect("tempdir");
         let registry_path = root.path().join("registry.json");
+        let absolute = if cfg!(windows) {
+            "C:/abs/path.json"
+        } else {
+            "/abs/path.json"
+        };
         fs::write(
             &registry_path,
-            r#"{"schema_version":"1","extensions":[{"id":"alpha","descriptor":"/abs/path.json"}]}"#,
+            format!(
+                r#"{{"schema_version":"1","extensions":[{{"id":"alpha","descriptor":"{absolute}"}}]}}"#
+            ),
         )
         .expect("write");
         let registry = load_registry(&registry_path).expect("registry");
         let resolved = resolve_descriptor_path(&registry, &registry_path, "alpha").expect("path");
-        assert_eq!(resolved, std::path::PathBuf::from("/abs/path.json"));
+        assert_eq!(resolved, std::path::PathBuf::from(absolute));
     }
 
     #[cfg(unix)]

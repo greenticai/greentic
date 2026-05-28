@@ -141,7 +141,7 @@ Add new integration tests for:
 2. `stop --destroy` with mocked deployer behavior
 3. admin add/remove against a real temp bundle
 4. provider/app-pack selection from `.greentic/deployment-targets.json` and `bundle.yaml`
-5. deployment state creation/removal for single-vm and cloud destroy flows
+5. deployment state creation/removal for cloud destroy flows
 
 Done condition:
 
@@ -386,8 +386,7 @@ Current state:
 
 PR changes:
 
-1. Add `insta` snapshot tests for single-vm spec rendering
-2. Add `proptest` coverage for:
+1. Add `proptest` coverage for:
    - passthrough parsing
    - identifier sanitization
    - bundle fingerprint normalization invariants

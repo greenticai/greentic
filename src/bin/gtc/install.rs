@@ -786,6 +786,7 @@ fn install_store_asset_item(
     artifacts_root: &Path,
     locale: &str,
 ) -> GtcResult<PathBuf> {
+    let pull_failed = t(locale, "gtc.err.pull_failed");
     save_store_login(tenant, key)?;
     let client = DistClient::new(DistOptions::default());
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -794,7 +795,7 @@ fn install_store_asset_item(
         .map_err(|e| GtcError::message(format!("failed to build tokio runtime: {e}")))?;
     let artifact = rt
         .block_on(client.download_store_artifact(store_url))
-        .map_err(|e| GtcError::message(format!("{}: {e}", t(locale, "gtc.err.pull_failed"))))?;
+        .map_err(|e| GtcError::message(format!("{pull_failed}: {e}")))?;
     let file_name = store_asset_file_name(store_url)
         .ok_or_else(|| GtcError::message(format!("unable to derive filename from {store_url}")))?;
     let target = store_asset_target_path(artifacts_root, &file_name)?;

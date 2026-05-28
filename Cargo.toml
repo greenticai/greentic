@@ -35,6 +35,7 @@ pkg-fmt = "zip"
 pkg-fmt = "zip"
 
 [dependencies]
+backhand = "0.25"
 directories = "6"
 flate2 = "1.1"
 greentic-i18n-lib = ">=1.1.0-dev, <1.2.0-0"
