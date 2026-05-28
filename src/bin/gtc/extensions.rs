@@ -551,6 +551,7 @@ mod tests {
     use std::fs;
     #[cfg(unix)]
     use std::os::unix::fs::PermissionsExt;
+    use std::path::PathBuf;
 
     #[test]
     fn extension_flags_are_detected() {
@@ -798,6 +799,39 @@ mod tests {
     }
 
     #[test]
+    fn setup_args_include_optional_fields_and_tail() {
+        let handoff = load_setup_handoff_from_str(
+            r#"{
+  "schema_id": "gtc.extension.setup.handoff",
+  "schema_version": "1.0.0",
+  "bundle_ref": "/tmp/demo-bundle",
+  "answers_path": "/tmp/answers.json",
+  "tenant": "demo",
+  "team": "default",
+  "env": "dev",
+  "setup_args": ["--dry-run"]
+}"#,
+        );
+        let args = build_setup_args_from_handoff(&handoff, &["--verbose".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "--dry-run".to_string(),
+                "--answers".to_string(),
+                "/tmp/answers.json".to_string(),
+                "--tenant".to_string(),
+                "demo".to_string(),
+                "--team".to_string(),
+                "default".to_string(),
+                "--env".to_string(),
+                "dev".to_string(),
+                "--verbose".to_string(),
+                "/tmp/demo-bundle".to_string()
+            ]
+        );
+    }
+
+    #[test]
     fn start_handoff_loader_accepts_generic_contract() {
         let root = tempfile::tempdir().expect("tempdir");
         let path = root.path().join("start.json");
@@ -853,8 +887,57 @@ mod tests {
         );
     }
 
+    #[test]
+    fn start_tail_appends_cli_tail() {
+        let handoff = load_start_handoff_from_str(
+            r#"{
+  "schema_id": "gtc.extension.start.handoff",
+  "schema_version": "1.0.0",
+  "bundle_ref": "/tmp/demo-bundle",
+  "start_args": ["--tenant", "demo"]
+}"#,
+        );
+        let args = build_start_tail_from_handoff(&handoff, &["--tail".to_string()]);
+        assert_eq!(
+            args,
+            vec![
+                "--tenant".to_string(),
+                "demo".to_string(),
+                "--tail".to_string()
+            ]
+        );
+    }
+
+    #[test]
+    fn descriptor_working_directory_returns_absolute_path_as_is() {
+        let descriptor = load_descriptor_from_str(
+            r#"{
+  "schema_version": "1",
+  "extension_id": "telco-x",
+  "family": "solution-x",
+  "wizard": {
+    "binary": "greentic-x",
+    "working_directory": "/tmp/telco-x"
+  }
+}"#,
+        );
+        let path = PathBuf::from("/tmp/registry/telco-x.json");
+        assert_eq!(
+            resolve_descriptor_working_directory(&descriptor, &path),
+            Some(PathBuf::from("/tmp/telco-x"))
+        );
+    }
+
     fn load_descriptor_from_str(raw: &str) -> super::ExtensionDescriptor {
         serde_json::from_str(raw).expect("descriptor")
+    }
+
+    fn load_setup_handoff_from_str(raw: &str) -> super::ExtensionSetupHandoff {
+        serde_json::from_str(raw).expect("setup handoff")
+    }
+
+    fn load_start_handoff_from_str(raw: &str) -> super::ExtensionStartHandoff {
+        serde_json::from_str(raw).expect("start handoff")
     }
 
     fn build_wizard_matches(args: &[&str]) -> clap::ArgMatches {

@@ -329,10 +329,10 @@ pub(super) fn run_admin_tunnel(sub_matches: &ArgMatches, _locale: &str) -> i32 {
         eprintln!("missing bundle ref");
         return 2;
     };
-    let target = sub_matches
-        .get_one::<String>("target")
-        .map(String::as_str)
-        .unwrap_or("aws");
+    let Some(target) = sub_matches.get_one::<String>("target").map(String::as_str) else {
+        eprintln!("missing --target (only --target aws is supported for admin tunnel)");
+        return 2;
+    };
     let local_port = sub_matches
         .get_one::<String>("local-port")
         .expect("defaulted by clap");
@@ -396,10 +396,10 @@ pub(super) fn run_admin_token(sub_matches: &ArgMatches, _locale: &str) -> i32 {
 }
 
 pub(super) fn run_admin_health(sub_matches: &ArgMatches, _locale: &str) -> i32 {
-    let target = sub_matches
-        .get_one::<String>("target")
-        .map(String::as_str)
-        .unwrap_or("aws");
+    let Some(target) = sub_matches.get_one::<String>("target").map(String::as_str) else {
+        eprintln!("missing --target (one of: aws, azure, gcp)");
+        return 2;
+    };
     if target == "aws" {
         return run_remote_admin_request(sub_matches, reqwest::Method::GET, "/health", None);
     }
@@ -495,10 +495,10 @@ fn run_admin_deployer_command(sub_matches: &ArgMatches, admin_subcommand: &str) 
         eprintln!("missing bundle ref");
         return 2;
     };
-    let target = sub_matches
-        .get_one::<String>("target")
-        .map(String::as_str)
-        .unwrap_or("aws");
+    let Some(target) = sub_matches.get_one::<String>("target").map(String::as_str) else {
+        eprintln!("missing --target (one of: aws, azure, gcp)");
+        return 2;
+    };
     let output = sub_matches
         .get_one::<String>("output")
         .map(String::as_str)
@@ -657,10 +657,10 @@ fn run_remote_admin_request(
         eprintln!("missing bundle ref");
         return 2;
     };
-    let target = sub_matches
-        .get_one::<String>("target")
-        .map(String::as_str)
-        .unwrap_or("aws");
+    let Some(target) = sub_matches.get_one::<String>("target").map(String::as_str) else {
+        eprintln!("missing --target (one of: aws, azure, gcp)");
+        return 2;
+    };
     let output = sub_matches
         .get_one::<String>("output")
         .map(String::as_str)

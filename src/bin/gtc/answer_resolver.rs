@@ -223,11 +223,10 @@ fn map_registry_target(source: &str, target: &str, base: Option<&str>) -> GtcRes
 }
 
 fn validate_oci_reference(source: &str, reference: &str) -> GtcResult<()> {
-    let source_label = source.to_string();
     Reference::try_from(reference).map(|_| ()).map_err(|err| {
         GtcError::invalid_data(
             "answers source",
-            format!("{source_label} is not a valid OCI reference: {err}"),
+            format!("{source} is not a valid OCI reference: {err}"),
         )
     })
 }
