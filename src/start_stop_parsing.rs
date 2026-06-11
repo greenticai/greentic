@@ -35,6 +35,9 @@ pub enum RestartTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StartRequest {
     pub bundle: Option<String>,
+    /// Environment id forwarded to greentic-start's bundle-less boot
+    /// (flag > `$GREENTIC_ENV` > `local` — precedence lives there).
+    pub env: Option<String>,
     pub tenant: Option<String>,
     pub team: Option<String>,
     pub no_nats: bool,
@@ -62,6 +65,8 @@ pub struct StartRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StopRequest {
     pub bundle: Option<String>,
+    /// Environment id forwarded to greentic-start's bundle-less stop.
+    pub env: Option<String>,
     pub state_dir: Option<PathBuf>,
     pub tenant: String,
     pub team: String,
@@ -77,6 +82,10 @@ impl StartRequest {
         if let Some(bundle) = self.bundle.as_deref() {
             args.push("--bundle".to_string());
             args.push(bundle.to_string());
+        }
+        if let Some(env) = self.env.as_deref() {
+            args.push("--env".to_string());
+            args.push(env.to_string());
         }
         if let Some(tenant) = self.tenant.as_deref() {
             args.push("--tenant".to_string());
@@ -170,6 +179,10 @@ impl StopRequest {
             args.push("--bundle".to_string());
             args.push(bundle.to_string());
         }
+        if let Some(env) = self.env.as_deref() {
+            args.push("--env".to_string());
+            args.push(env.to_string());
+        }
         if let Some(state_dir) = self.state_dir.as_deref() {
             args.push("--state-dir".to_string());
             args.push(state_dir.display().to_string());
@@ -195,6 +208,7 @@ pub fn parse_runtime_config_start_request(tail: &[String]) -> GtcResult<StartReq
 pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<StartRequest> {
     let mut request = StartRequest {
         bundle: Some(bundle_dir.display().to_string()),
+        env: None,
         tenant: None,
         team: None,
         no_nats: false,
@@ -222,6 +236,10 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
     while idx < tail.len() {
         let arg = &tail[idx];
         match arg.as_str() {
+            "--env" => {
+                idx += 1;
+                request.env = Some(required_value(tail, idx, "--env")?);
+            }
             "--tenant" => {
                 idx += 1;
                 request.tenant = Some(required_value(tail, idx, "--tenant")?);
@@ -317,7 +335,9 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
                 ));
             }
             other => {
-                if let Some(value) = other.strip_prefix("--tenant=") {
+                if let Some(value) = other.strip_prefix("--env=") {
+                    request.env = Some(value.to_string());
+                } else if let Some(value) = other.strip_prefix("--tenant=") {
                     request.tenant = Some(value.to_string());
                 } else if let Some(value) = other.strip_prefix("--team=") {
                     request.team = Some(value.to_string());
@@ -379,9 +399,20 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
     Ok(request)
 }
 
+/// Build a [`StopRequest`] for the no-bundle runtime-config model: identical
+/// flag parsing to [`parse_stop_request`], but with `bundle: None` so
+/// greentic-start stops the active env's serving runtime instead of a
+/// bundle-rooted one.
+pub fn parse_runtime_config_stop_request(tail: &[String]) -> GtcResult<StopRequest> {
+    let mut request = parse_stop_request(tail, PathBuf::new())?;
+    request.bundle = None;
+    Ok(request)
+}
+
 pub fn parse_stop_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<StopRequest> {
     let mut request = StopRequest {
         bundle: Some(bundle_dir.display().to_string()),
+        env: None,
         state_dir: None,
         tenant: "demo".to_string(),
         team: "default".to_string(),
@@ -391,6 +422,10 @@ pub fn parse_stop_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<Sto
     while idx < tail.len() {
         let arg = &tail[idx];
         match arg.as_str() {
+            "--env" => {
+                idx += 1;
+                request.env = Some(required_value(tail, idx, "--env")?);
+            }
             "--tenant" => {
                 idx += 1;
                 request.tenant = required_value(tail, idx, "--tenant")?;
@@ -409,7 +444,9 @@ pub fn parse_stop_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<Sto
                 ));
             }
             other => {
-                if let Some(value) = other.strip_prefix("--tenant=") {
+                if let Some(value) = other.strip_prefix("--env=") {
+                    request.env = Some(value.to_string());
+                } else if let Some(value) = other.strip_prefix("--tenant=") {
                     request.tenant = value.to_string();
                 } else if let Some(value) = other.strip_prefix("--team=") {
                     request.team = value.to_string();
@@ -432,7 +469,45 @@ pub fn parse_stop_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<Sto
     Ok(request)
 }
 
-fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
+/// Does this spaced-form `start`/`restart` flag consume the next token as
+/// its value? The single source of arity truth for hand parsers that walk
+/// a raw tail (gtc's `parse_start_cli_options` uses it to tell a flag
+/// value apart from the positional bundle ref). Must stay in lockstep with
+/// [`parse_start_request`]'s allowlist — pinned by a test.
+pub fn start_flag_takes_value(flag: &str) -> bool {
+    matches!(
+        flag,
+        "--env"
+            | "--tenant"
+            | "--team"
+            | "--nats"
+            | "--nats-url"
+            | "--config"
+            | "--cloudflared"
+            | "--cloudflared-binary"
+            | "--ngrok"
+            | "--ngrok-binary"
+            | "--runner-binary"
+            | "--restart"
+            | "--log-dir"
+            | "--admin-port"
+            | "--admin-certs-dir"
+            | "--admin-allowed-clients"
+            | "--bundle"
+    )
+}
+
+/// [`start_flag_takes_value`] for the `stop` allowlist
+/// ([`parse_stop_request`]).
+pub fn stop_flag_takes_value(flag: &str) -> bool {
+    matches!(
+        flag,
+        "--env" | "--tenant" | "--team" | "--state-dir" | "--bundle"
+    )
+}
+
+/// Return `args[idx]` or a "missing value for {flag}" error.
+pub fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
     let flag_name = flag.to_string();
     args.get(idx)
         .cloned()

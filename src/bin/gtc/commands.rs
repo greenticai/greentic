@@ -22,7 +22,9 @@ use crate::deploy::{
     RefreshArgs, resolve_local_mutable_bundle_dir, run_refresh, run_start, run_stop,
 };
 use crate::docs_cmd::run_docs;
-use crate::extensions::{run_extension_setup, run_extension_start, run_extension_wizard};
+use crate::extensions::{
+    run_extension_setup, run_extension_start, run_extension_wizard, take_extension_start_handoff,
+};
 use crate::i18n_support::i18n;
 use crate::install::{run_install, run_update};
 use crate::process::{passthrough, run_binary_capture, run_doctor};
@@ -101,17 +103,23 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
             }
         },
         Some(("start", sub_matches)) => {
-            if sub_matches
-                .get_one::<String>("extension-start-handoff")
-                .is_some()
-            {
-                let tail = collect_tail(sub_matches);
-                run_extension_start(sub_matches, &tail, debug, &locale)
-            } else {
-                run_start(sub_matches, debug, &locale)
+            // `start` is a pure catch-all at the clap layer — every flag
+            // (including gtc-internal ones) is parsed from the tail by one
+            // parser, so any greentic-start flag works with or without a
+            // bundle ref.
+            let tail = collect_tail(sub_matches);
+            match take_extension_start_handoff(&tail) {
+                Ok(Some((handoff_path, rest))) => {
+                    run_extension_start(&handoff_path, &rest, debug, &locale)
+                }
+                Ok(None) => run_start(&tail, debug, &locale),
+                Err(err) => {
+                    eprintln!("{err}");
+                    2
+                }
             }
         }
-        Some(("stop", sub_matches)) => run_stop(sub_matches, debug, &locale),
+        Some(("stop", sub_matches)) => run_stop(&collect_tail(sub_matches), debug, &locale),
         Some(("deploy", deploy_matches)) => match deploy_matches.subcommand() {
             Some(("refresh-bundle-url", m)) => {
                 let args = RefreshArgs {

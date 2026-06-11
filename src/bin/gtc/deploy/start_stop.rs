@@ -2,10 +2,10 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use clap::ArgMatches;
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{
-    parse_runtime_config_start_request, parse_start_request, parse_stop_request,
+    parse_runtime_config_start_request, parse_runtime_config_stop_request, parse_start_request,
+    parse_stop_request, required_value, start_flag_takes_value, stop_flag_takes_value,
 };
 use serde::Deserialize;
 
@@ -17,16 +17,52 @@ use crate::START_BIN;
 use crate::admin::ensure_admin_certs_ready;
 use crate::i18n_support::t_or;
 use crate::process::{run_binary_checked, run_binary_checked_with_target_and_env};
-use crate::router::collect_tail;
 
-pub(crate) fn run_start(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
-    let tail = collect_tail(sub_matches);
-    match sub_matches.get_one::<String>("bundle-ref") {
-        Some(bundle_ref) => run_start_with_bundle_ref_and_tail(bundle_ref, &tail, debug, locale),
-        // No bundle ref: boot greentic-start against the operator-materialized
-        // runtime-config for the active env (`GREENTIC_ENV`, default `local`).
-        None => run_start_runtime_config(&tail, debug, locale),
+const START_USAGE: &str = "usage: gtc start [BUNDLE_REF] [start flags...]\n\
+  BUNDLE_REF: local path, file://, oci://, repo://, store:// (omit to serve the active env's deployed revisions)\n\
+  gtc flags:  --target <runtime|aws|gcp|azure> --environment <id> --provider-pack <path> --app-pack <path>\n\
+              --deploy-bundle-source <src> --upload-bundle <url> --upload-bundle-presign-expires <secs>\n\
+              --extension-start-handoff <path>\n\
+  runtime flags are forwarded to greentic-start (e.g. --env, --tenant, --team, --nats, --cloudflared, --ngrok,\n\
+  --admin, --restart, --verbose, --quiet); see `greentic-start start --help` for the full list";
+
+const STOP_USAGE: &str = "usage: gtc stop [BUNDLE_REF] [stop flags...]\n\
+  BUNDLE_REF: bundle to stop (omit to stop the active env's serving runtime)\n\
+  gtc flags:  --target <runtime|aws|gcp|azure> --destroy --environment <id> --provider-pack <path> --app-pack <path>\n\
+  runtime flags are forwarded to greentic-start (--env, --tenant, --team, --state-dir)";
+
+pub(crate) fn run_start(tail: &[String], debug: bool, locale: &str) -> i32 {
+    if wants_help(tail) {
+        println!("{START_USAGE}");
+        return 0;
     }
+    // One tail parser owns the whole surface (the clap layer is a pure
+    // catch-all): the positional bundle ref only routes here — the
+    // downstream functions re-parse the same tail.
+    let bundle_ref = match parse_start_cli_options(tail) {
+        Ok(value) => value.bundle_ref,
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.start.err.invalid_args",
+                    "invalid start arguments"
+                )
+            );
+            return 2;
+        }
+    };
+    match bundle_ref {
+        Some(bundle_ref) => run_start_with_bundle_ref_and_tail(&bundle_ref, tail, debug, locale),
+        // No bundle ref: boot greentic-start against the operator-materialized
+        // runtime-config for the active env (`--env` > `GREENTIC_ENV` > `local`).
+        None => run_start_runtime_config(tail, debug, locale),
+    }
+}
+
+fn wants_help(tail: &[String]) -> bool {
+    tail.iter().any(|arg| arg == "--help" || arg == "-h")
 }
 
 /// Start with no bundle ref: hand off to greentic-start with no `--bundle` so it
@@ -282,20 +318,12 @@ fn local_runtime_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
     Some(env)
 }
 
-pub(crate) fn run_stop(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i32 {
-    let Some(bundle_ref) = sub_matches.get_one::<String>("bundle-ref") else {
-        eprintln!(
-            "{}",
-            t_or(
-                locale,
-                "gtc.stop.err.bundle_required",
-                "bundle ref is required"
-            )
-        );
-        return 2;
-    };
-    let tail = collect_tail(sub_matches);
-    let cli_options = match parse_stop_cli_options(&tail) {
+pub(crate) fn run_stop(tail: &[String], debug: bool, locale: &str) -> i32 {
+    if wants_help(tail) {
+        println!("{STOP_USAGE}");
+        return 0;
+    }
+    let cli_options = match parse_stop_cli_options(tail) {
         Ok(value) => value,
         Err(err) => {
             eprintln!(
@@ -309,6 +337,59 @@ pub(crate) fn run_stop(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i
             return 2;
         }
     };
+    let Some(bundle_ref) = cli_options.bundle_ref.clone() else {
+        // No bundle ref: stop the active env's serving runtime through
+        // greentic-start's bundle-less stop. Deploy-target concerns are
+        // bundle-only.
+        if cli_options.destroy {
+            eprintln!(
+                "{}",
+                t_or(
+                    locale,
+                    "gtc.stop.err.destroy_needs_bundle",
+                    "--destroy requires a bundle ref"
+                )
+            );
+            return 2;
+        }
+        if cli_options.explicit_target.is_some() {
+            eprintln!(
+                "{}",
+                t_or(
+                    locale,
+                    "gtc.stop.err.target_needs_bundle",
+                    "--target requires a bundle ref"
+                )
+            );
+            return 2;
+        }
+        let request = match parse_runtime_config_stop_request(&cli_options.stop_args) {
+            Ok(value) => value,
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(
+                        locale,
+                        "gtc.stop.err.invalid_args",
+                        "invalid stop arguments"
+                    )
+                );
+                return 2;
+            }
+        };
+        let args = request.to_runtime_stop_args(locale);
+        return match run_binary_checked(START_BIN, &args, debug, locale, "stop runtime") {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(locale, "gtc.stop.err.run_failed", "failed to stop bundle")
+                );
+                1
+            }
+        };
+    };
+    let bundle_ref = bundle_ref.as_str();
     let resolved = match resolve_bundle_reference(bundle_ref, locale) {
         Ok(value) => value,
         Err(err) => {
@@ -415,7 +496,19 @@ pub(crate) fn run_stop(sub_matches: &ArgMatches, debug: bool, locale: &str) -> i
     }
 }
 
+fn accept_positional(bundle_ref: &mut Option<String>, arg: &str) -> GtcResult<()> {
+    if let Some(existing) = bundle_ref {
+        return Err(GtcError::message(format!(
+            "unexpected positional argument `{arg}` (bundle ref already \
+             given as `{existing}`)"
+        )));
+    }
+    *bundle_ref = Some(arg.to_string());
+    Ok(())
+}
+
 pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOptions> {
+    let mut bundle_ref: Option<String> = None;
     let mut start_args = Vec::new();
     let mut explicit_target = None;
     let mut environment = None;
@@ -477,8 +570,17 @@ pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOpti
                     upload_bundle_presign_expires = Some(value.parse::<u64>().map_err(|e| {
                         GtcError::message(format!("invalid --upload-bundle-presign-expires: {e}"))
                     })?);
+                } else if !arg.starts_with('-') {
+                    // Bare token = the positional bundle ref. Values of
+                    // greentic-start flags never land here: the arity
+                    // branch below consumes them with their flag.
+                    accept_positional(&mut bundle_ref, arg)?;
                 } else {
                     start_args.push(arg.clone());
+                    if start_flag_takes_value(arg.as_str()) {
+                        idx += 1;
+                        start_args.push(required_value(tail, idx, arg)?);
+                    }
                 }
             }
         }
@@ -491,6 +593,7 @@ pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOpti
         ));
     }
     Ok(StartCliOptions {
+        bundle_ref,
         start_args,
         explicit_target,
         environment,
@@ -503,6 +606,7 @@ pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOpti
 }
 
 pub(crate) fn parse_stop_cli_options(tail: &[String]) -> GtcResult<StopCliOptions> {
+    let mut bundle_ref: Option<String> = None;
     let mut stop_args = Vec::new();
     let mut explicit_target = None;
     let mut environment = None;
@@ -540,14 +644,21 @@ pub(crate) fn parse_stop_cli_options(tail: &[String]) -> GtcResult<StopCliOption
                     provider_pack = Some(PathBuf::from(value));
                 } else if let Some(value) = arg.strip_prefix("--app-pack=") {
                     app_pack = Some(PathBuf::from(value));
+                } else if !arg.starts_with('-') {
+                    accept_positional(&mut bundle_ref, arg)?;
                 } else {
                     stop_args.push(arg.clone());
+                    if stop_flag_takes_value(arg.as_str()) {
+                        idx += 1;
+                        stop_args.push(required_value(tail, idx, arg)?);
+                    }
                 }
             }
         }
         idx += 1;
     }
     Ok(StopCliOptions {
+        bundle_ref,
         stop_args,
         explicit_target,
         environment,
@@ -707,13 +818,6 @@ fn prompt_start_target(targets: &[StartTarget], locale: &str) -> GtcResult<Start
         .ok_or_else(|| GtcError::message("invalid target selection"))
 }
 
-fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
-    let flag_name = flag.to_string();
-    args.get(idx)
-        .cloned()
-        .ok_or_else(|| GtcError::message(format!("missing value for {flag_name}")))
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
@@ -724,9 +828,14 @@ mod tests {
     use crate::deploy::StartTarget;
     use gtc::start_stop_parsing::{
         CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
+        parse_runtime_config_stop_request, start_flag_takes_value, stop_flag_takes_value,
     };
     use std::fs;
     use std::path::PathBuf;
+
+    fn args(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
 
     #[test]
     fn parse_start_cli_options_extracts_deploy_specific_flags() {
@@ -837,6 +946,7 @@ mod tests {
     fn build_runtime_start_args_serializes_request() {
         let request = StartRequest {
             bundle: Some("/tmp/bundle".to_string()),
+            env: Some("staging".to_string()),
             tenant: Some("demo".to_string()),
             team: Some("ops".to_string()),
             no_nats: false,
@@ -866,6 +976,8 @@ mod tests {
         assert_eq!(args[2], "start");
         assert!(args.contains(&"--bundle".to_string()));
         assert!(args.contains(&"/tmp/bundle".to_string()));
+        assert!(args.contains(&"--env".to_string()));
+        assert!(args.contains(&"staging".to_string()));
         assert!(args.contains(&"--nats".to_string()));
         assert!(args.contains(&"external".to_string()));
         assert!(args.contains(&"--cloudflared".to_string()));
@@ -883,6 +995,7 @@ mod tests {
     fn build_runtime_stop_args_serializes_request() {
         let request = StopRequest {
             bundle: Some("/tmp/bundle".to_string()),
+            env: Some("staging".to_string()),
             state_dir: Some(PathBuf::from("/tmp/state")),
             tenant: "demo".to_string(),
             team: "ops".to_string(),
@@ -897,6 +1010,8 @@ mod tests {
                 "stop".to_string(),
                 "--bundle".to_string(),
                 "/tmp/bundle".to_string(),
+                "--env".to_string(),
+                "staging".to_string(),
                 "--state-dir".to_string(),
                 "/tmp/state".to_string(),
                 "--tenant".to_string(),
@@ -935,6 +1050,215 @@ mod tests {
 
         let target = select_start_target(dir.path(), Some(StartTarget::Aws), "en").expect("target");
         assert_eq!(target, StartTarget::Aws);
+    }
+
+    // --- operator-surface PR-3: one tail parser owns the start/stop surface ---
+
+    #[test]
+    fn parse_start_cli_options_extracts_positional_in_any_position() {
+        // Positional first (the historical clap shape)…
+        let opts =
+            parse_start_cli_options(&args(&["bundle.gtbundle", "--tenant", "demo"])).expect("opts");
+        assert_eq!(opts.bundle_ref.as_deref(), Some("bundle.gtbundle"));
+        assert_eq!(opts.start_args, args(&["--tenant", "demo"]));
+
+        // …and positional after flags: `demo` is `--tenant`'s VALUE, never
+        // the bundle ref.
+        let opts =
+            parse_start_cli_options(&args(&["--tenant", "demo", "bundle.gtbundle"])).expect("opts");
+        assert_eq!(opts.bundle_ref.as_deref(), Some("bundle.gtbundle"));
+        assert_eq!(opts.start_args, args(&["--tenant", "demo"]));
+    }
+
+    #[test]
+    fn parse_start_cli_options_rejects_second_positional() {
+        let err = parse_start_cli_options(&args(&["a.gtbundle", "b.gtbundle"])).unwrap_err();
+        assert!(err.contains("unexpected positional"), "{err}");
+    }
+
+    #[test]
+    fn leading_flag_without_bundle_ref_parses_runtime_config_request() {
+        // The 2026-06-10 repro: `gtc start --cloudflared on` used to die at
+        // the clap layer (trailing_var_arg only activates after the
+        // positional). One tail parser owns the surface now.
+        let opts = parse_start_cli_options(&args(&["--cloudflared", "on"])).expect("opts");
+        assert_eq!(opts.bundle_ref, None);
+        let request = parse_runtime_config_start_request(&opts.start_args).expect("request");
+        assert_eq!(request.cloudflared, CloudflaredModeArg::On);
+        assert!(request.tunnel_explicit);
+        assert_eq!(request.bundle, None);
+    }
+
+    #[test]
+    fn parse_start_cli_options_extracts_gtc_flags_after_positional() {
+        // Pre-collapse these only worked in this position because the tail
+        // parser duplicated the clap layer; pin the single-parser behavior.
+        let opts = parse_start_cli_options(&args(&[
+            "bundle.gtbundle",
+            "--deploy-bundle-source",
+            "https://example.com/b.gtbundle",
+            "--target=aws",
+        ]))
+        .expect("opts");
+        assert_eq!(opts.bundle_ref.as_deref(), Some("bundle.gtbundle"));
+        assert_eq!(
+            opts.deploy_bundle_source.as_deref(),
+            Some("https://example.com/b.gtbundle")
+        );
+        assert_eq!(opts.explicit_target, Some(StartTarget::Aws));
+        assert!(opts.start_args.is_empty());
+    }
+
+    #[test]
+    fn parse_start_request_maps_env_flag() {
+        let request =
+            parse_start_request(&args(&["--env", "staging"]), PathBuf::from("/tmp/bundle"))
+                .expect("request");
+        assert_eq!(request.env.as_deref(), Some("staging"));
+
+        let request = parse_start_request(&args(&["--env=demo2"]), PathBuf::from("/tmp/bundle"))
+            .expect("request");
+        assert_eq!(request.env.as_deref(), Some("demo2"));
+    }
+
+    #[test]
+    fn stop_without_bundle_ref_builds_runtime_stop_request() {
+        let opts = parse_stop_cli_options(&args(&["--env", "demo2"])).expect("opts");
+        assert_eq!(opts.bundle_ref, None);
+        assert!(!opts.destroy);
+        let request = parse_runtime_config_stop_request(&opts.stop_args).expect("request");
+        assert_eq!(request.bundle, None);
+        assert_eq!(request.env.as_deref(), Some("demo2"));
+
+        let stop_args = request.to_runtime_stop_args("en");
+        assert!(
+            !stop_args.contains(&"--bundle".to_string()),
+            "{stop_args:?}"
+        );
+        assert!(stop_args.contains(&"--env".to_string()), "{stop_args:?}");
+        assert!(stop_args.contains(&"demo2".to_string()), "{stop_args:?}");
+    }
+
+    #[test]
+    fn parse_stop_cli_options_extracts_positional_after_value_flag() {
+        let opts =
+            parse_stop_cli_options(&args(&["--tenant", "demo", "bundle.gtbundle"])).expect("opts");
+        assert_eq!(opts.bundle_ref.as_deref(), Some("bundle.gtbundle"));
+        assert_eq!(opts.stop_args, args(&["--tenant", "demo"]));
+    }
+
+    #[test]
+    fn flag_arity_helpers_stay_in_lockstep_with_the_allowlists() {
+        // Every spaced-form flag the start parser accepts with a value must
+        // be classified as value-taking — otherwise the cli-options walker
+        // mistakes the value for the positional bundle ref. Boolean flags
+        // must NOT consume a value. Update BOTH the parser allowlist and
+        // `start_flag_takes_value` when adding a flag.
+        for flag in [
+            "--env",
+            "--tenant",
+            "--team",
+            "--nats",
+            "--nats-url",
+            "--config",
+            "--cloudflared",
+            "--cloudflared-binary",
+            "--ngrok",
+            "--ngrok-binary",
+            "--runner-binary",
+            "--restart",
+            "--log-dir",
+            "--admin-port",
+            "--admin-certs-dir",
+            "--admin-allowed-clients",
+            "--bundle",
+        ] {
+            assert!(start_flag_takes_value(flag), "{flag} takes a value");
+        }
+        for flag in [
+            "--no-nats",
+            "--no-browser",
+            "--verbose",
+            "--quiet",
+            "--admin",
+        ] {
+            assert!(!start_flag_takes_value(flag), "{flag} is boolean");
+        }
+        for flag in ["--env", "--tenant", "--team", "--state-dir", "--bundle"] {
+            assert!(stop_flag_takes_value(flag), "{flag} takes a value");
+        }
+    }
+
+    #[test]
+    fn flag_arity_helpers_match_parser_behavior() {
+        // Behavioral probe: for every value-taking flag, passing it as the
+        // final token (no value after) must produce a parser error; for
+        // every boolean flag, the same invocation must NOT fail with the
+        // missing-value error. This closes the chain parser-arms →
+        // arity-helper → hardcoded-list that the lockstep test above pins.
+        let bundle = PathBuf::from("/tmp/probe");
+
+        let start_value_flags: &[&str] = &[
+            "--env",
+            "--tenant",
+            "--team",
+            "--nats",
+            "--nats-url",
+            "--config",
+            "--cloudflared",
+            "--cloudflared-binary",
+            "--ngrok",
+            "--ngrok-binary",
+            "--runner-binary",
+            "--restart",
+            "--log-dir",
+            "--admin-port",
+            "--admin-certs-dir",
+            "--admin-allowed-clients",
+            "--bundle",
+        ];
+        for flag in start_value_flags {
+            let err = parse_start_request(&args(&[flag]), bundle.clone())
+                .expect_err(&format!("bare {flag} should fail"));
+            // --bundle rejects with a different message but is still Err.
+            if *flag != "--bundle" {
+                assert!(
+                    err.contains("missing value for"),
+                    "{flag}: expected missing-value error, got: {err}"
+                );
+            }
+        }
+        let start_bool_flags: &[&str] = &[
+            "--no-nats",
+            "--no-browser",
+            "--verbose",
+            "--quiet",
+            "--admin",
+        ];
+        for flag in start_bool_flags {
+            let result = parse_start_request(&args(&[flag]), bundle.clone());
+            match &result {
+                Ok(_) => {}
+                Err(e) => {
+                    assert!(
+                        !e.contains("missing value for"),
+                        "{flag}: boolean flag produced missing-value error: {e}"
+                    );
+                }
+            }
+        }
+
+        let stop_value_flags: &[&str] = &["--env", "--tenant", "--team", "--state-dir", "--bundle"];
+        for flag in stop_value_flags {
+            let err = parse_stop_request(&args(&[flag]), bundle.clone())
+                .expect_err(&format!("bare {flag} should fail"));
+            if *flag != "--bundle" {
+                assert!(
+                    err.contains("missing value for"),
+                    "{flag}: expected missing-value error, got: {err}"
+                );
+            }
+        }
     }
 
     #[test]
