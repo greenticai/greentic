@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{
     parse_runtime_config_start_request, parse_runtime_config_stop_request, parse_start_request,
-    parse_stop_request, start_flag_takes_value, stop_flag_takes_value,
+    parse_stop_request, required_value, start_flag_takes_value, stop_flag_takes_value,
 };
 use serde::Deserialize;
 
@@ -496,6 +496,17 @@ pub(crate) fn run_stop(tail: &[String], debug: bool, locale: &str) -> i32 {
     }
 }
 
+fn accept_positional(bundle_ref: &mut Option<String>, arg: &str) -> GtcResult<()> {
+    if let Some(existing) = bundle_ref {
+        return Err(GtcError::message(format!(
+            "unexpected positional argument `{arg}` (bundle ref already \
+             given as `{existing}`)"
+        )));
+    }
+    *bundle_ref = Some(arg.to_string());
+    Ok(())
+}
+
 pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOptions> {
     let mut bundle_ref: Option<String> = None;
     let mut start_args = Vec::new();
@@ -563,13 +574,7 @@ pub(crate) fn parse_start_cli_options(tail: &[String]) -> GtcResult<StartCliOpti
                     // Bare token = the positional bundle ref. Values of
                     // greentic-start flags never land here: the arity
                     // branch below consumes them with their flag.
-                    if let Some(existing) = &bundle_ref {
-                        return Err(GtcError::message(format!(
-                            "unexpected positional argument `{arg}` (bundle ref already \
-                             given as `{existing}`)"
-                        )));
-                    }
-                    bundle_ref = Some(arg.clone());
+                    accept_positional(&mut bundle_ref, arg)?;
                 } else {
                     start_args.push(arg.clone());
                     if start_flag_takes_value(arg.as_str()) {
@@ -640,13 +645,7 @@ pub(crate) fn parse_stop_cli_options(tail: &[String]) -> GtcResult<StopCliOption
                 } else if let Some(value) = arg.strip_prefix("--app-pack=") {
                     app_pack = Some(PathBuf::from(value));
                 } else if !arg.starts_with('-') {
-                    if let Some(existing) = &bundle_ref {
-                        return Err(GtcError::message(format!(
-                            "unexpected positional argument `{arg}` (bundle ref already \
-                             given as `{existing}`)"
-                        )));
-                    }
-                    bundle_ref = Some(arg.clone());
+                    accept_positional(&mut bundle_ref, arg)?;
                 } else {
                     stop_args.push(arg.clone());
                     if stop_flag_takes_value(arg.as_str()) {
@@ -817,13 +816,6 @@ fn prompt_start_target(targets: &[StartTarget], locale: &str) -> GtcResult<Start
         .get(choice.saturating_sub(1))
         .copied()
         .ok_or_else(|| GtcError::message("invalid target selection"))
-}
-
-fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
-    let flag_name = flag.to_string();
-    args.get(idx)
-        .cloned()
-        .ok_or_else(|| GtcError::message(format!("missing value for {flag_name}")))
 }
 
 #[cfg(test)]
@@ -1194,6 +1186,78 @@ mod tests {
         }
         for flag in ["--env", "--tenant", "--team", "--state-dir", "--bundle"] {
             assert!(stop_flag_takes_value(flag), "{flag} takes a value");
+        }
+    }
+
+    #[test]
+    fn flag_arity_helpers_match_parser_behavior() {
+        // Behavioral probe: for every value-taking flag, passing it as the
+        // final token (no value after) must produce a parser error; for
+        // every boolean flag, the same invocation must NOT fail with the
+        // missing-value error. This closes the chain parser-arms →
+        // arity-helper → hardcoded-list that the lockstep test above pins.
+        let bundle = PathBuf::from("/tmp/probe");
+
+        let start_value_flags: &[&str] = &[
+            "--env",
+            "--tenant",
+            "--team",
+            "--nats",
+            "--nats-url",
+            "--config",
+            "--cloudflared",
+            "--cloudflared-binary",
+            "--ngrok",
+            "--ngrok-binary",
+            "--runner-binary",
+            "--restart",
+            "--log-dir",
+            "--admin-port",
+            "--admin-certs-dir",
+            "--admin-allowed-clients",
+            "--bundle",
+        ];
+        for flag in start_value_flags {
+            let err = parse_start_request(&args(&[flag]), bundle.clone())
+                .expect_err(&format!("bare {flag} should fail"));
+            // --bundle rejects with a different message but is still Err.
+            if *flag != "--bundle" {
+                assert!(
+                    err.contains("missing value for"),
+                    "{flag}: expected missing-value error, got: {err}"
+                );
+            }
+        }
+        let start_bool_flags: &[&str] = &[
+            "--no-nats",
+            "--no-browser",
+            "--verbose",
+            "--quiet",
+            "--admin",
+        ];
+        for flag in start_bool_flags {
+            let result = parse_start_request(&args(&[flag]), bundle.clone());
+            match &result {
+                Ok(_) => {}
+                Err(e) => {
+                    assert!(
+                        !e.contains("missing value for"),
+                        "{flag}: boolean flag produced missing-value error: {e}"
+                    );
+                }
+            }
+        }
+
+        let stop_value_flags: &[&str] = &["--env", "--tenant", "--team", "--state-dir", "--bundle"];
+        for flag in stop_value_flags {
+            let err = parse_stop_request(&args(&[flag]), bundle.clone())
+                .expect_err(&format!("bare {flag} should fail"));
+            if *flag != "--bundle" {
+                assert!(
+                    err.contains("missing value for"),
+                    "{flag}: expected missing-value error, got: {err}"
+                );
+            }
         }
     }
 

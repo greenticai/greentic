@@ -506,7 +506,8 @@ pub fn stop_flag_takes_value(flag: &str) -> bool {
     )
 }
 
-fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
+/// Return `args[idx]` or a "missing value for {flag}" error.
+pub fn required_value(args: &[String], idx: usize, flag: &str) -> GtcResult<String> {
     let flag_name = flag.to_string();
     args.get(idx)
         .cloned()
