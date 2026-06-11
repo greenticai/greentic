@@ -214,16 +214,12 @@ pub(super) fn run_extension_setup(
 }
 
 pub(super) fn run_extension_start(
-    sub_matches: &ArgMatches,
+    handoff_path: &str,
     tail: &[String],
     debug: bool,
     locale: &str,
 ) -> i32 {
-    let Some(path) = sub_matches.get_one::<String>("extension-start-handoff") else {
-        eprintln!("missing --extension-start-handoff");
-        return 2;
-    };
-    let handoff = match load_extension_start_handoff(Path::new(path)) {
+    let handoff = match load_extension_start_handoff(Path::new(handoff_path)) {
         Ok(value) => value,
         Err(err) => {
             eprintln!("{err}");
@@ -232,6 +228,34 @@ pub(super) fn run_extension_start(
     };
     let merged_tail = build_start_tail_from_handoff(&handoff, tail);
     run_start_with_bundle_ref_and_tail(&handoff.bundle_ref, &merged_tail, debug, locale)
+}
+
+/// Pull `--extension-start-handoff <path>` (or `=path`) out of a raw start
+/// tail. Returns the path plus the tail with the flag removed, so the
+/// downstream start parsing never sees a gtc-internal flag. The clap layer
+/// no longer declares it — `start` is a pure catch-all.
+pub(super) fn take_extension_start_handoff(
+    tail: &[String],
+) -> Result<Option<(String, Vec<String>)>, String> {
+    let mut path = None;
+    let mut rest = Vec::with_capacity(tail.len());
+    let mut idx = 0usize;
+    while idx < tail.len() {
+        let arg = &tail[idx];
+        if arg == "--extension-start-handoff" {
+            idx += 1;
+            let value = tail
+                .get(idx)
+                .ok_or_else(|| "missing value for --extension-start-handoff".to_string())?;
+            path = Some(value.clone());
+        } else if let Some(value) = arg.strip_prefix("--extension-start-handoff=") {
+            path = Some(value.to_string());
+        } else {
+            rest.push(arg.clone());
+        }
+        idx += 1;
+    }
+    Ok(path.map(|path| (path, rest)))
 }
 
 fn collect_extension_ids(sub_matches: &ArgMatches) -> Vec<String> {
@@ -543,7 +567,8 @@ mod tests {
         collect_extension_ids, has_extension_flags, load_descriptor, load_extension_setup_handoff,
         load_extension_start_handoff, load_registry, resolve_descriptor_path,
         resolve_descriptor_working_directory, resolve_handoff_output_path, resolve_registry_path,
-        run_extension_setup, run_extension_start, run_extension_wizard, write_launcher_handoff,
+        run_extension_setup, run_extension_start, run_extension_wizard,
+        take_extension_start_handoff, write_launcher_handoff,
     };
     use crate::tests::env_test_lock;
     use clap::{Arg, ArgAction, Command};
@@ -1043,33 +1068,42 @@ mod tests {
     }
 
     #[test]
-    fn run_extension_start_errors_when_handoff_flag_missing() {
-        let matches = Command::new("extension-start")
-            .arg(
-                Arg::new("extension-start-handoff")
-                    .long("extension-start-handoff")
-                    .num_args(1),
-            )
-            .try_get_matches_from(["extension-start"])
-            .expect("matches");
-        assert_eq!(run_extension_start(&matches, &[], false, "en"), 2);
+    fn take_extension_start_handoff_extracts_both_forms_and_strips_flag() {
+        let tail = vec![
+            "bundle.gtbundle".to_string(),
+            "--extension-start-handoff".to_string(),
+            "/tmp/handoff.json".to_string(),
+            "--tenant".to_string(),
+            "demo".to_string(),
+        ];
+        let (path, rest) = take_extension_start_handoff(&tail)
+            .expect("extraction succeeds")
+            .expect("flag present");
+        assert_eq!(path, "/tmp/handoff.json");
+        assert_eq!(rest, vec!["bundle.gtbundle", "--tenant", "demo"]);
+
+        let tail = vec!["--extension-start-handoff=/tmp/h.json".to_string()];
+        let (path, rest) = take_extension_start_handoff(&tail)
+            .expect("extraction succeeds")
+            .expect("flag present");
+        assert_eq!(path, "/tmp/h.json");
+        assert!(rest.is_empty());
+
+        assert!(
+            take_extension_start_handoff(&["--tenant".to_string(), "demo".to_string()])
+                .expect("extraction succeeds")
+                .is_none()
+        );
+        take_extension_start_handoff(&["--extension-start-handoff".to_string()])
+            .expect_err("missing value must error");
     }
 
     #[test]
     fn run_extension_start_errors_when_handoff_path_invalid() {
-        let matches = Command::new("extension-start")
-            .arg(
-                Arg::new("extension-start-handoff")
-                    .long("extension-start-handoff")
-                    .num_args(1),
-            )
-            .try_get_matches_from([
-                "extension-start",
-                "--extension-start-handoff",
-                "/definitely/missing/start.json",
-            ])
-            .expect("matches");
-        assert_eq!(run_extension_start(&matches, &[], false, "en"), 1);
+        assert_eq!(
+            run_extension_start("/definitely/missing/start.json", &[], false, "en"),
+            1
+        );
     }
 
     #[test]

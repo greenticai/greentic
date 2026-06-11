@@ -562,6 +562,7 @@ mod tests {
 
         let request = StartRequest {
             bundle: Some(bundle_dir.display().to_string()),
+            env: None,
             tenant: Some("demo".to_string()),
             team: Some("ops".to_string()),
             no_nats: false,
@@ -585,6 +586,7 @@ mod tests {
             tunnel_explicit: true,
         };
         let cli_options = StartCliOptions {
+            bundle_ref: None,
             start_args: Vec::new(),
             explicit_target: Some(StartTarget::Gcp),
             environment: Some("prod".to_string()),
@@ -685,11 +687,13 @@ mod tests {
 
         let request = StopRequest {
             bundle: Some(bundle_dir.display().to_string()),
+            env: None,
             state_dir: None,
             tenant: "demo".to_string(),
             team: "ops".to_string(),
         };
         let cli_options = StopCliOptions {
+            bundle_ref: None,
             stop_args: Vec::new(),
             explicit_target: Some(StartTarget::Aws),
             environment: Some("prod".to_string()),

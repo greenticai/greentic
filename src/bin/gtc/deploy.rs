@@ -70,6 +70,9 @@ impl StartTarget {
 
 #[derive(Debug)]
 pub(super) struct StartCliOptions {
+    /// Positional bundle ref extracted from the tail (the clap layer no
+    /// longer declares it — the tail parser owns the whole start surface).
+    pub(super) bundle_ref: Option<String>,
     pub(super) start_args: Vec<String>,
     pub(super) explicit_target: Option<StartTarget>,
     pub(super) environment: Option<String>,
@@ -82,6 +85,10 @@ pub(super) struct StartCliOptions {
 
 #[derive(Debug)]
 pub(super) struct StopCliOptions {
+    /// Positional bundle ref extracted from the tail; `None` targets the
+    /// bundle-less env runtime (forwarded to greentic-start's new-model
+    /// stop).
+    pub(super) bundle_ref: Option<String>,
     pub(super) stop_args: Vec<String>,
     pub(super) explicit_target: Option<StartTarget>,
     pub(super) environment: Option<String>,
