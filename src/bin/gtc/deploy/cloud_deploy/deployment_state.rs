@@ -200,12 +200,12 @@ fn run_multi_target_deployer_apply(
     debug: bool,
     locale: &str,
 ) -> GtcResult<()> {
-    let synthesized_source: Option<(String, String)> =
+    let synthesized_source: Option<(String, String, String)> =
         if let Some(upload_target) = cli_options.upload_bundle.as_deref() {
             let presign = cli_options.upload_bundle_presign_expires.unwrap_or(604800);
-            let (url, digest) =
+            let uploaded =
                 super::resolve_upload_bundle(&prepared.artifact_path, upload_target, presign)?;
-            Some((url, digest))
+            Some((uploaded.url, uploaded.digest, uploaded.object_ref))
         } else {
             None
         };
@@ -214,7 +214,7 @@ fn run_multi_target_deployer_apply(
 
     let remote_override = synthesized_source
         .as_ref()
-        .map(|(url, _)| url.clone())
+        .map(|(url, _, _)| url.clone())
         .or_else(|| cli_options.deploy_bundle_source.clone())
         .or_else(resolve_remote_deploy_bundle_source_override);
 
@@ -227,12 +227,24 @@ fn run_multi_target_deployer_apply(
     if let Some(secret_env) = local_deployer_secret_env(&resolved.bundle_dir) {
         child_env.extend(secret_env);
     }
+    if target == StartTarget::Aws
+        && let Some((_, _, object_ref)) = synthesized_source.as_ref()
+        && object_ref.starts_with("s3://")
+    {
+        child_env.set(
+            "GREENTIC_DEPLOY_TERRAFORM_VAR_BUNDLE_S3_OBJECT_REF",
+            object_ref.clone(),
+        );
+        if let Some(arn) = s3_object_arn(object_ref) {
+            child_env.set("GREENTIC_DEPLOY_TERRAFORM_VAR_BUNDLE_S3_OBJECT_ARN", arn);
+        }
+    }
 
     let deploy_bundle_source = remote_override
         .clone()
         .unwrap_or_else(|| bundle_artifact.display().to_string());
 
-    if let Some((_, uploaded_digest)) = synthesized_source.as_ref()
+    if let Some((_, _, uploaded_digest)) = synthesized_source.as_ref()
         && uploaded_digest != &prepared.digest
     {
         eprintln!(
@@ -294,6 +306,16 @@ fn run_multi_target_deployer_apply(
         Some(&child_env),
     )
     .map_err(|e| GtcError::message(e.to_string()))
+}
+
+fn s3_object_arn(object_ref: &str) -> Option<String> {
+    let rest = object_ref.trim().strip_prefix("s3://")?;
+    let (bucket, key) = rest.split_once('/')?;
+    let key = key.trim_start_matches('/');
+    if bucket.is_empty() || key.is_empty() {
+        return None;
+    }
+    Some(format!("arn:aws:s3:::{bucket}/{key}"))
 }
 
 fn local_deployer_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
