@@ -128,11 +128,7 @@ fn resolve_target_provider_pack_from_metadata(
             "aws" => StartTarget::Aws,
             "gcp" => StartTarget::Gcp,
             "azure" => StartTarget::Azure,
-            other => {
-                return Err(GtcError::message(format!(
-                    "unsupported --target value {other}; expected runtime, aws, gcp, or azure"
-                )));
-            }
+            _ => continue,
         };
         if parsed_target != target {
             continue;
