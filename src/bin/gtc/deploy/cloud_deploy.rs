@@ -554,13 +554,12 @@ fn binary_in_path(binary: &str) -> bool {
 }
 
 /// If `--upload-bundle` is set, upload the already prepared bundle artifact and
-/// return the URL + digest to be injected into the standard deploy flow.
-/// Returns `(remote_url, digest)`.
+/// return the uploaded object metadata to be injected into the standard deploy flow.
 pub(crate) fn resolve_upload_bundle(
     prepared_artifact: &Path,
     upload_bundle: &str,
     presign_expires: u64,
-) -> GtcResult<(String, String)> {
+) -> GtcResult<super::bundle_upload_orchestrator::UploadedBundle> {
     use super::bundle_upload_orchestrator;
 
     let result = bundle_upload_orchestrator::upload_bundle(
@@ -578,7 +577,7 @@ pub(crate) fn resolve_upload_bundle(
     eprintln!("  object ref:  {}", result.object_ref);
     eprintln!("To refresh URL without re-uploading: gtc deploy refresh-bundle-url <BUNDLE_REF>");
 
-    Ok((result.url, result.digest))
+    Ok(result)
 }
 
 #[cfg(test)]
