@@ -196,6 +196,7 @@ struct UploadedBundleSource {
     object_ref: String,
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_multi_target_deployer_apply(
     _bundle_ref: &str,
     resolved: &StartBundleResolution,
