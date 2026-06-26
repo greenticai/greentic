@@ -128,11 +128,7 @@ fn resolve_target_provider_pack_from_metadata(
             "aws" => StartTarget::Aws,
             "gcp" => StartTarget::Gcp,
             "azure" => StartTarget::Azure,
-            other => {
-                return Err(GtcError::message(format!(
-                    "unsupported --target value {other}; expected runtime, aws, gcp, or azure"
-                )));
-            }
+            _ => continue,
         };
         if parsed_target != target {
             continue;
@@ -318,19 +314,19 @@ mod tests {
     }
 
     #[test]
-    fn resolve_target_provider_pack_from_metadata_errors_on_unknown_target() {
+    fn resolve_target_provider_pack_from_metadata_skips_unknown_target() {
         let dir = tempfile::tempdir().expect("tempdir");
         let greentic = dir.path().join(".greentic");
         fs::create_dir_all(&greentic).expect("mkdir");
         fs::write(
             greentic.join("deployment-targets.json"),
-            r#"{"targets":[{"target":"weird","provider_pack":"packs/demo.gtpack"}]}"#,
+            r#"{"targets":[{"target":"single-vm","provider_pack":"packs/demo.gtpack"}]}"#,
         )
         .expect("write");
 
-        let err =
-            resolve_target_provider_pack_from_metadata(dir.path(), StartTarget::Aws).unwrap_err();
-        assert!(err.contains("unsupported --target value"));
+        let resolved =
+            resolve_target_provider_pack_from_metadata(dir.path(), StartTarget::Aws).unwrap();
+        assert!(resolved.is_none());
     }
 
     #[test]
