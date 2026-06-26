@@ -6,7 +6,7 @@ Implementation owner: repo-local schema sync tooling
 
 ## Generated Status Docs Changed
 
-- `/Users/maarten/Documents/GitHub/agentic/greentic/docs/04-schemas/setup-schema.md`
+- `/projects/ai/greentic-ng/greentic/docs/04-schemas/setup-schema.md`
 
 ## Docs Likely Needing Manual Review
 

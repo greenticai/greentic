@@ -1468,6 +1468,7 @@ struct BearerTokenResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tests::env_test_lock;
     use tempfile::tempdir;
 
     fn pinned_manifest() -> ToolchainManifest {
@@ -1632,6 +1633,55 @@ mod tests {
                 .starts_with("sha256:")
         );
         assert_eq!(resolved.source_kind, "local");
+    }
+
+    #[test]
+    fn validate_toolchain_manifest_rejects_missing_bins_and_empty_bin_names() {
+        let mut missing_bins = pinned_manifest();
+        missing_bins.packages[0].bins.clear();
+        assert!(validate_toolchain_manifest(&missing_bins).is_err());
+
+        let mut empty_bin = pinned_manifest();
+        empty_bin.packages[0].bins = vec!["".to_string()];
+        assert!(validate_toolchain_manifest(&empty_bin).is_err());
+    }
+
+    #[test]
+    fn resolve_toolchain_manifest_uses_env_override_for_channel_sources() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("manifest.json");
+        fs::write(
+            &path,
+            serde_json::to_vec(&pinned_manifest()).expect("encode manifest"),
+        )
+        .expect("write manifest");
+
+        unsafe {
+            env::set_var("GTC_TOOLCHAIN_MANIFEST_PATH", &path);
+        }
+        let resolved = resolve_toolchain_manifest(
+            &ToolchainSource::Channel("stable".to_string()),
+            false,
+            "en",
+        )
+        .expect("resolve");
+        unsafe {
+            env::remove_var("GTC_TOOLCHAIN_MANIFEST_PATH");
+        }
+
+        assert_eq!(resolved.source_kind, "channel");
+        assert_eq!(
+            resolved.source,
+            "ghcr.io/greenticai/greentic-versions/gtc:stable"
+        );
+        assert!(
+            resolved
+                .digest
+                .as_deref()
+                .unwrap_or("")
+                .starts_with("sha256:")
+        );
     }
 
     #[test]
