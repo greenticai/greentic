@@ -3,25 +3,6 @@ use clap::{Arg, ArgAction, Command};
 use crate::i18n_support::{leak_str, t, t_or};
 use crate::router::passthrough_args;
 
-fn upload_bundle_args(options_heading: &'static str, locale: &str) -> Vec<Arg> {
-    vec![
-        Arg::new("upload-bundle")
-            .long("upload-bundle")
-            .value_name("URL")
-            .num_args(1)
-            .help_heading(options_heading)
-            .help(t(locale, "gtc.arg.upload_bundle.help").into_owned())
-            .conflicts_with("deploy-bundle-source"),
-        Arg::new("upload-bundle-presign-expires")
-            .long("upload-bundle-presign-expires")
-            .value_name("SECONDS")
-            .num_args(1)
-            .default_value("604800")
-            .help_heading(options_heading)
-            .help(t(locale, "gtc.arg.upload_bundle_presign_expires.help").into_owned()),
-    ]
-}
-
 pub(super) fn build_cli(locale: &str) -> Command {
     let cmd_args = passthrough_args();
     let options_heading = leak_str(t(locale, "gtc.help.options.heading").into_owned());
@@ -386,7 +367,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -423,7 +403,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -458,7 +437,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -493,7 +471,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -537,7 +514,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -581,7 +557,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -625,7 +600,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -669,7 +643,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -722,7 +695,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -775,7 +747,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws", "azure", "gcp"])
                                 .help_heading(options_heading)
                                 .help("Deployment target provider."),
@@ -821,7 +792,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .long("target")
                                 .value_name("PROVIDER")
                                 .num_args(1)
-                                .default_value("aws")
                                 .value_parser(["aws"])
                                 .help_heading(options_heading)
                                 .help(t(locale, "gtc.arg.admin.tunnel.target.help").into_owned()),
@@ -851,6 +821,11 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 ),
         )
         .subcommand(
+            // Pure catch-all (the `op` pattern): ONE tail parser owns the
+            // whole start surface — positional bundle ref, gtc-specific
+            // flags, and every forwarded greentic-start flag — so a leading
+            // flag with no bundle ref (`gtc start --cloudflared on`) parses
+            // instead of dying at the clap layer.
             Command::new("start")
                 .help_template(help_template)
                 .subcommand_help_heading(commands_heading)
@@ -861,36 +836,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.start.about",
                     "Start a bundle from local or remote reference.",
                 ))
-                .arg(
-                    Arg::new("bundle-ref")
-                        .value_name("BUNDLE_REF")
-                        .required_unless_present("extension-start-handoff")
-                        .help_heading(arguments_heading)
-                        .help(t_or(
-                            locale,
-                            "gtc.arg.bundle_ref.help",
-                            "Bundle path/ref: local path, file://, oci://, repo://, store://",
-                        )),
-                )
-                .arg(
-                    Arg::new("extension-start-handoff")
-                        .long("extension-start-handoff")
-                        .value_name("PATH")
-                        .num_args(1)
-                        .help_heading(options_heading)
-                        .help(
-                            "Path to a normalized extension start handoff JSON document.",
-                        ),
-                )
-                .arg(
-                    Arg::new("deploy-bundle-source")
-                        .long("deploy-bundle-source")
-                        .value_name("BUNDLE_SOURCE")
-                        .num_args(1)
-                        .help_heading(options_heading)
-                        .help(t(locale, "gtc.arg.deploy_bundle_source.help").into_owned()),
-                )
-                .args(upload_bundle_args(options_heading, locale))
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -904,17 +849,6 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.stop.about",
                     "Stop a bundle runtime or destroy a deployed environment.",
                 ))
-                .arg(
-                    Arg::new("bundle-ref")
-                        .value_name("BUNDLE_REF")
-                        .required(true)
-                        .help_heading(arguments_heading)
-                        .help(t_or(
-                            locale,
-                            "gtc.arg.bundle_ref.help",
-                            "Bundle path/ref: local path, file://, oci://, repo://, store://",
-                        )),
-                )
                 .arg(cmd_args.clone()),
         )
         .subcommand(

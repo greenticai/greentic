@@ -45,6 +45,11 @@ pub fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
     };
 
     match first.as_str() {
+        // `demo` and `op` are real top-level subcommands of `greentic-operator`
+        // (`demo` is the legacy bundle workflow, `op` is the deploy-spec verb
+        // tree). Forward verbatim — `op` also serves as the documented
+        // double-op workaround.
+        "demo" | "op" => args.to_vec(),
         "setup" => {
             let mut has_tenant = false;
             let mut has_team = false;
@@ -115,7 +120,20 @@ pub fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
             }
             out
         }
-        _ => args.to_vec(),
+        _ => {
+            // Leading flag (e.g. `gtc op --help`, `gtc op --store-root …`) — the
+            // operator-level `Op` clap parser owns these globals, so prepend `op`
+            // to route them at the correct level.
+            //
+            // Bare noun (e.g. `gtc op env init`) — `env`, `env-packs`,
+            // `bundles`, `revisions`, `traffic`, `config`, `credentials`,
+            // `secrets` are nouns under `OpCommand`, not direct subcommands of
+            // `greentic-operator`. Prepending `op` makes them resolve.
+            let mut out = Vec::with_capacity(args.len() + 1);
+            out.push("op".to_string());
+            out.extend_from_slice(args);
+            out
+        }
     }
 }
 
@@ -327,6 +345,52 @@ mod tests {
         assert!(rewritten.iter().any(|arg| arg == "--tenant"));
         assert!(rewritten.iter().any(|arg| arg == "--team"));
         assert!(rewritten.iter().any(|arg| arg == "--cloudflared"));
+    }
+
+    #[test]
+    fn rewrite_legacy_op_args_prepends_op_for_deploy_spec_nouns() {
+        for noun in [
+            "env",
+            "env-packs",
+            "bundles",
+            "revisions",
+            "traffic",
+            "config",
+            "credentials",
+            "secrets",
+        ] {
+            let args = vec![noun.to_string(), "init".to_string()];
+            let rewritten = rewrite_legacy_op_args(&args);
+            assert_eq!(
+                rewritten,
+                vec!["op".to_string(), noun.to_string(), "init".to_string()],
+                "noun `{noun}` should be routed under `op`"
+            );
+        }
+    }
+
+    #[test]
+    fn rewrite_legacy_op_args_passes_demo_and_op_through() {
+        let demo = vec!["demo".to_string(), "build".to_string()];
+        assert_eq!(rewrite_legacy_op_args(&demo), demo);
+
+        let double_op = vec!["op".to_string(), "env".to_string(), "init".to_string()];
+        assert_eq!(rewrite_legacy_op_args(&double_op), double_op);
+    }
+
+    #[test]
+    fn rewrite_legacy_op_args_prepends_op_for_leading_flag() {
+        let args = vec!["--help".to_string()];
+        assert_eq!(
+            rewrite_legacy_op_args(&args),
+            vec!["op".to_string(), "--help".to_string()],
+        );
+    }
+
+    #[test]
+    fn rewrite_legacy_op_args_passes_empty_through() {
+        let empty: Vec<String> = Vec::new();
+        assert_eq!(rewrite_legacy_op_args(&empty), empty);
     }
 
     #[test]
