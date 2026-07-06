@@ -247,7 +247,15 @@ fn route_passthrough_subcommand_routes_worker_to_greentic_dw() {
     let (binary, args) = route_passthrough_subcommand("worker", &tail, "en").expect("worker route");
 
     assert_eq!(binary, DW_BIN);
-    assert_eq!(args, vec!["build".to_string(), "s.yaml".to_string()]);
+    // the `worker` token must be re-added so greentic-dw sees `worker build s.yaml`
+    assert_eq!(
+        args,
+        vec![
+            "worker".to_string(),
+            "build".to_string(),
+            "s.yaml".to_string()
+        ]
+    );
 }
 
 #[test]
