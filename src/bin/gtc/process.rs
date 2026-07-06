@@ -11,8 +11,8 @@ use super::toolchain::{
     InstalledReleaseArtifact, installed_release_artifacts, installed_toolchain_label,
 };
 use super::{
-    BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, FLOW_BIN, OP_BIN, PACK_BIN, RUNNER_BIN,
-    SECRETS_BIN, SETUP_BIN, START_BIN,
+    BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, DW_BIN, FLOW_BIN, OP_BIN, PACK_BIN,
+    RUNNER_BIN, SECRETS_BIN, SETUP_BIN, START_BIN,
 };
 use crate::i18n_support::{t, t_or};
 
@@ -479,6 +479,7 @@ fn is_greentic_companion_binary(binary: &str) -> bool {
             | SECRETS_BIN
             | SETUP_BIN
             | START_BIN
+            | DW_BIN
     )
 }
 
@@ -549,7 +550,7 @@ fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
 mod tests {
     #[cfg(unix)]
     use super::{apply_default_deploy_env_for_target, run_binary_capture, run_binary_checked};
-    use super::{first_non_empty_line, resolve_cargo_bin_dir};
+    use super::{first_non_empty_line, is_greentic_companion_binary, resolve_cargo_bin_dir};
     #[cfg(unix)]
     use crate::deploy::StartTarget;
     use crate::tests::env_test_lock;
@@ -637,5 +638,10 @@ mod tests {
             err.to_string()
                 .contains("demo operation failed via /bin/sh with status 7")
         );
+    }
+
+    #[test]
+    fn is_greentic_companion_binary_recognizes_greentic_dw() {
+        assert!(is_greentic_companion_binary("greentic-dw"));
     }
 }

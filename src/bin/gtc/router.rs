@@ -5,7 +5,7 @@ use gtc::perf_targets::{
     rewrite_legacy_op_args as perf_rewrite_legacy_op_args,
 };
 
-use super::{DEV_BIN, OP_BIN, SETUP_BIN};
+use super::{DEV_BIN, DW_BIN, OP_BIN, SETUP_BIN};
 use crate::extensions::has_extension_flags;
 use crate::i18n_support::i18n;
 
@@ -66,6 +66,7 @@ pub(super) fn route_passthrough_subcommand(
         "op" => Some((OP_BIN, rewrite_legacy_op_args(tail))),
         "setup" => Some((SETUP_BIN, tail.to_vec())),
         "wizard" => Some((DEV_BIN, build_wizard_args(tail, locale))),
+        "worker" => Some((DW_BIN, tail.to_vec())),
         _ => None,
     }
 }
