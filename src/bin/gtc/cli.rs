@@ -257,6 +257,13 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .action(ArgAction::SetTrue)
                         .help_heading(options_heading)
                         .help(t(locale, "gtc.arg.install.tenant_only.help").into_owned()),
+                )
+                .arg(
+                    Arg::new("skip-self-update")
+                        .long("skip-self-update")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help("Skip replacing the gtc binary itself; only install companion binaries and artifacts."),
                 ),
         )
         .subcommand(

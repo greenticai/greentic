@@ -4,6 +4,10 @@ use std::path::PathBuf;
 
 fn main() {
     println!("cargo:rerun-if-changed=assets/i18n");
+    println!(
+        "cargo:rustc-env=GTC_TARGET_TRIPLE={}",
+        env::var("TARGET").expect("TARGET")
+    );
 
     let manifest_dir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("manifest dir"));
     let i18n_dir = manifest_dir.join("assets").join("i18n");

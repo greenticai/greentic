@@ -127,6 +127,7 @@ pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
             force: true,
             dry_run: false,
             phases: super::toolchain::ToolchainInstallPhases::all(),
+            skip_self_update: false,
         },
         debug,
         locale,
