@@ -197,12 +197,28 @@ pub(crate) fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
     };
 
     if needs_binstall_install {
-        let install_binstall_args = vec![
-            "install".to_string(),
-            "cargo-binstall".to_string(),
+        let binstall_binstall_args = vec![
+            "binstall".to_string(),
+            "-y".to_string(),
             "--locked".to_string(),
+            "--force".to_string(),
+            "--maximum-resolution-timeout".to_string(),
+            "60".to_string(),
+            "cargo-binstall".to_string(),
         ];
-        let status = run_cargo(&install_binstall_args, debug, locale);
+        let mut status = if installed_binstall.is_some() {
+            run_cargo(&binstall_binstall_args, debug, locale)
+        } else {
+            1
+        };
+        if status != 0 {
+            let install_binstall_args = vec![
+                "install".to_string(),
+                "cargo-binstall".to_string(),
+                "--locked".to_string(),
+            ];
+            status = run_cargo(&install_binstall_args, debug, locale);
+        }
         if status != 0 {
             return status;
         }
@@ -216,6 +232,8 @@ pub(crate) fn ensure_install_prereqs(debug: bool, locale: &str) -> i32 {
                 "-y".to_string(),
                 "--locked".to_string(),
                 "--force".to_string(),
+                "--maximum-resolution-timeout".to_string(),
+                "60".to_string(),
                 "cargo-component".to_string(),
             ],
             debug,
@@ -431,6 +449,8 @@ fn companion_binstall_args(package: &str, version: Option<&str>, force: bool) ->
     if force {
         args.push("--force".to_string());
     }
+    args.push("--maximum-resolution-timeout".to_string());
+    args.push("60".to_string());
     args.push("--disable-strategies".to_string());
     args.push("compile".to_string());
     if let Some(version) = version {
@@ -2290,8 +2310,101 @@ mod tests {
         let logged = fs::read_to_string(log).expect("read log");
         assert!(logged.contains("search cargo-binstall --limit 1"));
         assert!(logged.contains("install cargo-binstall --locked"));
+        assert!(!logged.contains(
+            "binstall -y --locked --force --maximum-resolution-timeout 60 cargo-binstall"
+        ));
         assert!(!logged.contains("greentic-dev"));
         assert!(!logged.contains("greentic-operator"));
+
+        unsafe {
+            match original_path {
+                Some(value) => env::set_var("PATH", value),
+                None => env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_install_prereqs_updates_outdated_binstall_with_binstall() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = executable_tempdir();
+        let log = dir.path().join("cargo.log");
+        let cargo = dir.path().join("cargo");
+        write_executable(
+            &cargo,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nexit 0\n",
+                log.display()
+            ),
+        );
+        write_executable(
+            &dir.path().join("rustc"),
+            "#!/bin/sh\necho 'rustc 1.95.0'\n",
+        );
+        write_executable(
+            &dir.path().join("rustup"),
+            "#!/bin/sh\nif [ \"$1\" = \"target\" ] && [ \"$2\" = \"list\" ]; then\n  echo 'wasm32-wasip2 (installed)'\n  exit 0\nfi\nexit 0\n",
+        );
+        write_executable(&dir.path().join("cargo-component"), "#!/bin/sh\nexit 0\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", dir.path());
+        }
+
+        assert_eq!(ensure_install_prereqs(false, "en"), 0);
+
+        let logged = fs::read_to_string(log).expect("read log");
+        assert!(logged.contains(
+            "binstall -y --locked --force --maximum-resolution-timeout 60 cargo-binstall"
+        ));
+        assert!(!logged.contains("install cargo-binstall --locked"));
+
+        unsafe {
+            match original_path {
+                Some(value) => env::set_var("PATH", value),
+                None => env::remove_var("PATH"),
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_install_prereqs_falls_back_to_cargo_install_when_binstall_self_update_fails() {
+        let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+        let dir = executable_tempdir();
+        let log = dir.path().join("cargo.log");
+        let cargo = dir.path().join("cargo");
+        write_executable(
+            &cargo,
+            &format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.7.0'\n  exit 0\nfi\nif [ \"$1\" = \"search\" ] && [ \"$2\" = \"cargo-binstall\" ]; then\n  echo 'cargo-binstall = \"1.8.1\"'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$7\" = \"cargo-binstall\" ]; then\n  exit 9\nfi\nexit 0\n",
+                log.display()
+            ),
+        );
+        write_executable(
+            &dir.path().join("rustc"),
+            "#!/bin/sh\necho 'rustc 1.95.0'\n",
+        );
+        write_executable(
+            &dir.path().join("rustup"),
+            "#!/bin/sh\nif [ \"$1\" = \"target\" ] && [ \"$2\" = \"list\" ]; then\n  echo 'wasm32-wasip2 (installed)'\n  exit 0\nfi\nexit 0\n",
+        );
+        write_executable(&dir.path().join("cargo-component"), "#!/bin/sh\nexit 0\n");
+
+        let original_path = env::var_os("PATH");
+        unsafe {
+            env::set_var("PATH", dir.path());
+        }
+
+        assert_eq!(ensure_install_prereqs(false, "en"), 0);
+
+        let logged = fs::read_to_string(log).expect("read log");
+        assert!(logged.contains(
+            "binstall -y --locked --force --maximum-resolution-timeout 60 cargo-binstall"
+        ));
+        assert!(logged.contains("install cargo-binstall --locked"));
 
         unsafe {
             match original_path {
@@ -2340,7 +2453,9 @@ mod tests {
         let rustup_logged = fs::read_to_string(rustup_log).expect("read rustup log");
         assert!(rustup_logged.contains("target list"));
         assert!(rustup_logged.contains("target add wasm32-wasip2"));
-        assert!(cargo_logged.contains("binstall -y --locked --force cargo-component"));
+        assert!(cargo_logged.contains(
+            "binstall -y --locked --force --maximum-resolution-timeout 60 cargo-component"
+        ));
         assert!(!cargo_logged.contains("install cargo-component"));
 
         unsafe {
@@ -2361,7 +2476,7 @@ mod tests {
         write_executable(
             &cargo,
             &format!(
-                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.8.1'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$#\" -eq 5 ]; then\n  exit 9\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$5\" = \"--version\" ] && [ \"$6\" = \"0.4.72\" ] && [ \"$7\" = \"greentic-dev\" ]; then\n  exit 0\nfi\nexit 9\n",
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nif [ \"$1\" = \"binstall\" ] && [ \"$2\" = \"-V\" ]; then\n  echo 'cargo-binstall 1.8.1'\n  exit 0\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$#\" -eq 7 ]; then\n  exit 9\nfi\nif [ \"$1\" = \"binstall\" ] && [ \"$7\" = \"--version\" ] && [ \"$8\" = \"0.4.72\" ] && [ \"$9\" = \"greentic-dev\" ]; then\n  exit 0\nfi\nexit 9\n",
                 log.display()
             ),
         );
@@ -2382,10 +2497,13 @@ mod tests {
         );
 
         let logged = fs::read_to_string(log).expect("read log");
-        assert!(logged.contains("binstall -y --disable-strategies compile greentic-dev"));
+        assert!(logged.contains(
+            "binstall -y --maximum-resolution-timeout 60 --disable-strategies compile greentic-dev"
+        ));
         assert!(
-            logged
-                .contains("binstall -y --disable-strategies compile --version 0.4.72 greentic-dev")
+            logged.contains(
+                "binstall -y --maximum-resolution-timeout 60 --disable-strategies compile --version 0.4.72 greentic-dev"
+            )
         );
         assert!(!logged.contains("--version 0.4.73 greentic-dev"));
 

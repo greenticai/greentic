@@ -9,7 +9,7 @@ toolchain used during schema sync.
 
 ## Provenance
 
-- Tool version: `greentic-setup 0.5.12`
+- Tool version: `greentic-setup 1.1.7`
 - Command attempted:
 
 ```bash

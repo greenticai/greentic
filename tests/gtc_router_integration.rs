@@ -1063,14 +1063,14 @@ fn install_public_mode_installs_manifest_toolchain() {
     assert!(cargo_logged.contains("search cargo-binstall --limit 1"));
     assert!(
         cargo_logged.contains(
-            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+            "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-dev --version 0.5.9 --bin greentic-dev"
         )
     );
     assert!(cargo_logged.contains(
-        "binstall -y --locked --force greentic-runner --version 0.5.10 --bin greentic-runner"
+        "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-runner --version 0.5.10 --bin greentic-runner"
     ));
     assert!(cargo_logged.contains(
-        "binstall -y --locked --force greentic-runner --version 0.5.10 --bin greentic-runner-cli"
+        "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-runner --version 0.5.10 --bin greentic-runner-cli"
     ));
 }
 
@@ -1875,7 +1875,7 @@ fn install_latest_manifest_resolves_prerelease_before_binstall() {
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
     assert!(cargo_logged.contains("search greentic-flow --limit 1"));
     assert!(cargo_logged.contains(
-        "binstall -y --locked --force greentic-flow --version 0.6.0-dev.25001174716 --bin greentic-flow"
+        "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-flow --version 0.6.0-dev.25001174716 --bin greentic-flow"
     ));
 }
 
@@ -1942,7 +1942,7 @@ fn install_tenant_mode_delegates_to_greentic_dev_after_toolchain_success() {
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
     assert!(
         cargo_logged.contains(
-            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+            "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-dev --version 0.5.9 --bin greentic-dev"
         )
     );
 
@@ -2136,7 +2136,7 @@ fn update_installs_manifest_toolchain_with_force() {
     let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
     assert!(
         cargo_logged.contains(
-            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+            "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-dev --version 0.5.9 --bin greentic-dev"
         )
     );
 
@@ -3204,7 +3204,7 @@ fn main() {{
         return;
     }}
     if args.first().map(String::as_str) == Some("binstall")
-        && args.get(1).map(String::as_str) == Some("--version")
+        && matches!(args.get(1).map(String::as_str), Some("-V" | "--version"))
     {{
         println!("cargo-binstall 1.0.0");
         return;

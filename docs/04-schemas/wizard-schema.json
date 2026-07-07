@@ -258,6 +258,11 @@
           ],
           "type": "object"
         },
+        "env_id": {
+          "description": "Environment id the wizard ran under (C7). Absent for pre-C7 documents.",
+          "minLength": 1,
+          "type": "string"
+        },
         "locale": {
           "minLength": 1,
           "type": "string"
@@ -1537,6 +1542,13 @@
                 }
               ],
               "description": "Nested greentic-flow wizard answers. The generic plan contract is provided here, and the current greentic-flow runtime schema is embedded under #/$defs/greentic_flow_wizard_runtime_schema."
+            },
+            "langs": {
+              "description": "Target locale codes to translate the pack's Adaptive Card strings into during build (e.g. [\"id\",\"ja\"]). Requires greentic-i18n-translator on PATH; missing/failed languages are skipped with a warning.",
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
             },
             "mode": {
               "type": "string"

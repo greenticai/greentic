@@ -401,6 +401,8 @@ fn toolchain_binstall_args_for_version(
         "-y".to_string(),
         "--locked".to_string(),
         "--force".to_string(),
+        "--maximum-resolution-timeout".to_string(),
+        "60".to_string(),
         package.crate_name.clone(),
     ];
     if !is_latest_version(version) {
@@ -1585,6 +1587,8 @@ mod tests {
                 "-y",
                 "--locked",
                 "--force",
+                "--maximum-resolution-timeout",
+                "60",
                 "greentic-start",
                 "--version",
                 "0.5.8",
@@ -1608,6 +1612,8 @@ mod tests {
                 "-y",
                 "--locked",
                 "--force",
+                "--maximum-resolution-timeout",
+                "60",
                 "greentic-flow",
                 "--bin",
                 "greentic-flow"
