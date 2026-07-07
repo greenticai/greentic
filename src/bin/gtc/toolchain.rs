@@ -200,7 +200,12 @@ pub(crate) fn run_toolchain_install(
         println!("  digest: {digest}");
     }
 
-    let self_update_failed = if options.phases.binaries && !options.skip_self_update {
+    let self_update_failed = if options.phases.binaries
+        && !options.skip_self_update
+        && self_update_applies(
+            &options.source,
+            env::var_os("GTC_TOOLCHAIN_MANIFEST_PATH").is_some(),
+        ) {
         match try_self_update(&resolved, options.force, options.dry_run, debug, locale) {
             Ok(_) => false,
             Err(err) => {
@@ -1535,6 +1540,16 @@ pub(crate) fn should_self_update(running: &str, manifest_version: &str, force: b
     force || running != manifest_version
 }
 
+/// Whether self-update applies to this install/update at all. It runs ONLY for
+/// a genuine GHCR channel/release pull — never for a local `--manifest` source
+/// or a `GTC_TOOLCHAIN_MANIFEST_PATH` override, both of which supply a local
+/// manifest whose `version` is not a published GitHub release tag (so a
+/// self-update fetch would 404). `manifest_path_override` = whether
+/// `GTC_TOOLCHAIN_MANIFEST_PATH` is set.
+fn self_update_applies(source: &ToolchainSource, manifest_path_override: bool) -> bool {
+    !matches!(source, ToolchainSource::LocalManifest(_)) && !manifest_path_override
+}
+
 /// Atomically replace `current_exe` with `new_bytes`, keeping a `.prev`
 /// backup of the old binary.
 pub(crate) fn swap_running_binary(current_exe: &Path, new_bytes: &[u8]) -> GtcResult<()> {
@@ -2386,6 +2401,36 @@ mod tests {
     }
 
     // --- self-update helper tests ---
+
+    #[test]
+    fn self_update_applies_only_to_ghcr_pulls() {
+        // Genuine GHCR channel/release pull with no path override → applies.
+        assert!(self_update_applies(
+            &ToolchainSource::Channel("stable".to_string()),
+            false
+        ));
+        assert!(self_update_applies(
+            &ToolchainSource::Release {
+                release: "1.2.3".to_string(),
+                channel: "stable".to_string(),
+            },
+            false
+        ));
+        // GTC_TOOLCHAIN_MANIFEST_PATH override supplies a local manifest → skip.
+        assert!(!self_update_applies(
+            &ToolchainSource::Channel("stable".to_string()),
+            true
+        ));
+        // Local `--manifest` source → skip (with or without the env override).
+        assert!(!self_update_applies(
+            &ToolchainSource::LocalManifest(PathBuf::from("/tmp/m.json")),
+            false
+        ));
+        assert!(!self_update_applies(
+            &ToolchainSource::LocalManifest(PathBuf::from("/tmp/m.json")),
+            true
+        ));
+    }
 
     #[test]
     fn gtc_release_asset_url_builds_expected_url() {
