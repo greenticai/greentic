@@ -861,6 +861,19 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .arg(cmd_args.clone()),
         )
         .subcommand(
+            Command::new("worker")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.worker.about",
+                    "Author and build agentic workers (passthrough to greentic-dw).",
+                ))
+                .arg(cmd_args.clone()),
+        )
+        .subcommand(
             Command::new("op")
                 .help_template(help_template)
                 .subcommand_help_heading(commands_heading)

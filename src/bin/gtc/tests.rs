@@ -1,5 +1,5 @@
 use super::{
-    AdminRegistryDocument, DEV_BIN, FLOW_BIN, StartTarget, admin_registry_path, build_cli,
+    AdminRegistryDocument, DEV_BIN, DW_BIN, FLOW_BIN, StartTarget, admin_registry_path, build_cli,
     build_wizard_args, collect_tail, default_install_channel_for_invocation, detect_bundle_root,
     detect_locale, ensure_admin_certs_ready, extract_tar_archive, fingerprint_bundle_dir,
     locale_from_args, normalize_bundle_fingerprint, normalize_expected_sha256,
@@ -237,6 +237,23 @@ fn route_passthrough_subcommand_routes_wizard_to_greentic_dev() {
             "--locale".to_string(),
             "en".to_string(),
             "--help".to_string()
+        ]
+    );
+}
+
+#[test]
+fn route_passthrough_subcommand_routes_worker_to_greentic_dw() {
+    let tail = vec!["build".to_string(), "s.yaml".to_string()];
+    let (binary, args) = route_passthrough_subcommand("worker", &tail, "en").expect("worker route");
+
+    assert_eq!(binary, DW_BIN);
+    // the `worker` token must be re-added so greentic-dw sees `worker build s.yaml`
+    assert_eq!(
+        args,
+        vec![
+            "worker".to_string(),
+            "build".to_string(),
+            "s.yaml".to_string()
         ]
     );
 }
