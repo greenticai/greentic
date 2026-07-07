@@ -94,6 +94,7 @@ pub(crate) struct ToolchainInstallOptions {
     pub force: bool,
     pub dry_run: bool,
     pub phases: ToolchainInstallPhases,
+    pub skip_self_update: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -169,6 +170,7 @@ impl ToolchainInstallOptions {
             force: matches.get_flag("force"),
             dry_run: matches.get_flag("dry-run"),
             phases,
+            skip_self_update: matches.get_flag("skip-self-update"),
         })
     }
 }
@@ -197,6 +199,23 @@ pub(crate) fn run_toolchain_install(
     if let Some(digest) = resolved.digest.as_deref() {
         println!("  digest: {digest}");
     }
+
+    let self_update_failed = if options.phases.binaries
+        && !options.skip_self_update
+        && self_update_applies(
+            &options.source,
+            env::var_os("GTC_TOOLCHAIN_MANIFEST_PATH").is_some(),
+        ) {
+        match try_self_update(&resolved, options.force, options.dry_run, debug, locale) {
+            Ok(_) => false,
+            Err(err) => {
+                eprintln!("error: gtc self-update failed: {err}");
+                true
+            }
+        }
+    } else {
+        false
+    };
 
     if !options.force
         && !options.dry_run
@@ -272,7 +291,7 @@ pub(crate) fn run_toolchain_install(
         }
     }
 
-    if options.phases.binaries {
+    if options.phases.binaries && !self_update_failed {
         let state = installed_state_from_resolved(&resolved);
         if let Err(err) = write_installed_toolchain(&state) {
             eprintln!(
@@ -281,6 +300,17 @@ pub(crate) fn run_toolchain_install(
             );
             return 1;
         }
+    }
+
+    if self_update_failed {
+        eprintln!(
+            "gtc self-update to {} did not complete; gtc is still {}. Companion binaries/artifacts \
+             were installed on a best-effort basis. Re-run `gtc install` to retry, or pass \
+             --skip-self-update to install companions only.",
+            resolved.manifest.version,
+            env!("CARGO_PKG_VERSION"),
+        );
+        return 1;
     }
 
     0
@@ -1465,6 +1495,209 @@ struct BearerTokenResponse {
     access_token: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// gtc self-update helpers
+// ---------------------------------------------------------------------------
+
+/// Build the URL for a gtc release tarball.
+pub(crate) fn gtc_release_asset_url(version: &str, target: &str) -> String {
+    format!("https://github.com/greenticai/greentic/releases/download/v{version}/gtc-{target}.tgz")
+}
+
+/// Build the URL for the checksums manifest of a gtc release.
+pub(crate) fn gtc_checksums_url(version: &str) -> String {
+    format!(
+        "https://github.com/greenticai/greentic/releases/download/v{version}/gtc-{version}-checksums.txt"
+    )
+}
+
+/// Parse a GNU sha256sum-style checksums manifest and return the hex digest
+/// for the line whose basename matches `asset_filename`.  Returns `None` when
+/// no matching line is found or the line is malformed.
+pub(crate) fn parse_checksum_for_asset(manifest_txt: &str, asset_filename: &str) -> Option<String> {
+    for line in manifest_txt.lines() {
+        let line = line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        // Format: "<64-hex>  <filename>" (two spaces between hash and name).
+        // We split on whitespace generously.
+        let mut parts = line.splitn(2, char::is_whitespace);
+        let hash = parts.next()?.trim();
+        let name = parts.next()?.trim();
+        if hash.len() != 64 || !hash.chars().all(|ch| ch.is_ascii_hexdigit()) {
+            continue;
+        }
+        if name == asset_filename {
+            return Some(hash.to_lowercase());
+        }
+    }
+    None
+}
+
+/// Decide whether a self-update is needed.
+pub(crate) fn should_self_update(running: &str, manifest_version: &str, force: bool) -> bool {
+    force || running != manifest_version
+}
+
+/// Whether self-update applies to this install/update at all. It runs ONLY for
+/// a genuine GHCR channel/release pull — never for a local `--manifest` source
+/// or a `GTC_TOOLCHAIN_MANIFEST_PATH` override, both of which supply a local
+/// manifest whose `version` is not a published GitHub release tag (so a
+/// self-update fetch would 404). `manifest_path_override` = whether
+/// `GTC_TOOLCHAIN_MANIFEST_PATH` is set.
+fn self_update_applies(source: &ToolchainSource, manifest_path_override: bool) -> bool {
+    !matches!(source, ToolchainSource::LocalManifest(_)) && !manifest_path_override
+}
+
+/// Atomically replace `current_exe` with `new_bytes`, keeping a `.prev`
+/// backup of the old binary.
+pub(crate) fn swap_running_binary(current_exe: &Path, new_bytes: &[u8]) -> GtcResult<()> {
+    use std::io::Write;
+
+    // Best-effort backup.
+    let prev = current_exe.with_extension("prev");
+    let _ = fs::copy(current_exe, &prev);
+
+    // Write new bytes to a NamedTempFile in the SAME directory so the rename
+    // is guaranteed to be on the same filesystem (atomic).
+    let parent = current_exe.parent().ok_or_else(|| {
+        GtcError::message(format!(
+            "cannot determine parent directory of {}",
+            current_exe.display()
+        ))
+    })?;
+    let mut tmp = tempfile::NamedTempFile::new_in(parent).map_err(|err| {
+        GtcError::io(
+            format!("failed to create temp file in {}", parent.display()),
+            err,
+        )
+    })?;
+    tmp.write_all(new_bytes)
+        .map_err(|err| GtcError::io("failed to write new gtc binary to temp file", err))?;
+    tmp.as_file()
+        .sync_all()
+        .map_err(|err| GtcError::io("failed to fsync new gtc binary", err))?;
+
+    // Set executable on Unix.
+    super::archive::set_executable_if_unix(tmp.path())?;
+
+    // Persist (atomic rename) over current_exe.
+    tmp.persist(current_exe).map_err(|err| {
+        GtcError::message(format!(
+            "failed to replace {} with new gtc binary: {}",
+            current_exe.display(),
+            err
+        ))
+    })?;
+
+    Ok(())
+}
+
+/// Attempt to self-update the running gtc binary to the version named in the
+/// resolved toolchain manifest.
+///
+/// # Trust model caveat
+///
+/// The toolchain manifest is fetched from GHCR with OCI-digest trust only and
+/// is NOT signature-verified; there is no signed per-artifact pin (unlike the
+/// greentic-start/deployer binary self-update against a per-env trust root).
+/// This is acceptable because the blast radius is the dev CLI.
+pub(crate) fn try_self_update(
+    resolved: &ResolvedManifest,
+    force: bool,
+    dry_run: bool,
+    debug: bool,
+    locale: &str,
+) -> GtcResult<bool> {
+    let target = env!("GTC_TARGET_TRIPLE");
+    let running = env!("CARGO_PKG_VERSION");
+    let version = &resolved.manifest.version;
+
+    if !should_self_update(running, version, force) {
+        println!("gtc {running} is already current; skipping self-update");
+        return Ok(false);
+    }
+
+    #[cfg(windows)]
+    {
+        eprintln!("self-update is not supported on Windows yet; update gtc via cargo binstall");
+        return Ok(false);
+    }
+
+    #[cfg(not(windows))]
+    {
+        let tarball_url = gtc_release_asset_url(version, target);
+
+        if dry_run {
+            println!("would self-update gtc {running} -> {version} from {tarball_url}");
+            return Ok(false);
+        }
+
+        if debug {
+            eprintln!("self-update: fetching {tarball_url}");
+        }
+        let tarball_bytes = super::install::fetch_https_bytes(
+            &tarball_url,
+            "",
+            locale,
+            "application/octet-stream",
+        )?;
+
+        // Fetch checksums manifest and verify tarball integrity in memory
+        // (sha256_bytes lives in this module — no need to round-trip via disk).
+        let asset_filename = format!("gtc-{target}.tgz");
+        let checksums_url = gtc_checksums_url(version);
+        if debug {
+            eprintln!("self-update: fetching checksums from {checksums_url}");
+        }
+        let checksums_bytes =
+            super::install::fetch_https_bytes(&checksums_url, "", locale, "text/plain")?;
+        let checksums_txt = String::from_utf8_lossy(&checksums_bytes);
+        let expected_hash =
+            parse_checksum_for_asset(&checksums_txt, &asset_filename).ok_or_else(|| {
+                GtcError::message(format!(
+                    "no checksum found for {asset_filename} in release checksums"
+                ))
+            })?;
+        let actual_hash = sha256_bytes(&tarball_bytes);
+        let expected_prefixed = format!("sha256:{expected_hash}");
+        if actual_hash != expected_prefixed {
+            return Err(GtcError::invalid_data(
+                "self-update tarball integrity check",
+                format!("expected {expected_prefixed}, got {actual_hash}"),
+            ));
+        }
+
+        // Extract tarball into a temp dir.
+        let extract_dir = tempfile::tempdir()
+            .map_err(|err| GtcError::io("failed to create self-update extract directory", err))?;
+        super::archive::extract_targz_bytes(&tarball_bytes, extract_dir.path())?;
+
+        // Read the inner binary.
+        let inner_binary_path = extract_dir.path().join(format!("gtc-{target}")).join("gtc");
+        let binary_bytes = fs::read(&inner_binary_path).map_err(|err| {
+            GtcError::io(
+                format!(
+                    "failed to read extracted gtc binary at {}",
+                    inner_binary_path.display()
+                ),
+                err,
+            )
+        })?;
+
+        // Swap.
+        let current_exe = env::current_exe()
+            .map_err(|err| GtcError::io("failed to determine current executable path", err))?;
+        swap_running_binary(&current_exe, &binary_bytes)?;
+
+        println!(
+            "gtc updated {running} -> {version}; the change takes effect on the next invocation"
+        );
+        Ok(true)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2057,6 +2290,11 @@ mod tests {
                         .long("install-components-only")
                         .action(clap::ArgAction::SetTrue),
                 )
+                .arg(
+                    clap::Arg::new("skip-self-update")
+                        .long("skip-self-update")
+                        .action(clap::ArgAction::SetTrue),
+                )
         };
 
         let release_matches = cmd()
@@ -2160,5 +2398,131 @@ mod tests {
             channel: "ga".to_string(),
         };
         assert!(release_context_from_resolved(&source, &manifest).is_err());
+    }
+
+    // --- self-update helper tests ---
+
+    #[test]
+    fn self_update_applies_only_to_ghcr_pulls() {
+        // Genuine GHCR channel/release pull with no path override → applies.
+        assert!(self_update_applies(
+            &ToolchainSource::Channel("stable".to_string()),
+            false
+        ));
+        assert!(self_update_applies(
+            &ToolchainSource::Release {
+                release: "1.2.3".to_string(),
+                channel: "stable".to_string(),
+            },
+            false
+        ));
+        // GTC_TOOLCHAIN_MANIFEST_PATH override supplies a local manifest → skip.
+        assert!(!self_update_applies(
+            &ToolchainSource::Channel("stable".to_string()),
+            true
+        ));
+        // Local `--manifest` source → skip (with or without the env override).
+        assert!(!self_update_applies(
+            &ToolchainSource::LocalManifest(PathBuf::from("/tmp/m.json")),
+            false
+        ));
+        assert!(!self_update_applies(
+            &ToolchainSource::LocalManifest(PathBuf::from("/tmp/m.json")),
+            true
+        ));
+    }
+
+    #[test]
+    fn gtc_release_asset_url_builds_expected_url() {
+        assert_eq!(
+            gtc_release_asset_url("1.1.0", "x86_64-unknown-linux-gnu"),
+            "https://github.com/greenticai/greentic/releases/download/v1.1.0/gtc-x86_64-unknown-linux-gnu.tgz"
+        );
+    }
+
+    #[test]
+    fn gtc_checksums_url_builds_expected_url() {
+        assert_eq!(
+            gtc_checksums_url("1.1.0"),
+            "https://github.com/greenticai/greentic/releases/download/v1.1.0/gtc-1.1.0-checksums.txt"
+        );
+    }
+
+    #[test]
+    fn parse_checksum_for_asset_finds_matching_line() {
+        let manifest = "\
+abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  gtc-x86_64-unknown-linux-gnu.tgz\n\
+1111111111111111111111111111111111111111111111111111111111111111  gtc-aarch64-apple-darwin.tgz\n";
+        assert_eq!(
+            parse_checksum_for_asset(manifest, "gtc-x86_64-unknown-linux-gnu.tgz"),
+            Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string())
+        );
+        assert_eq!(
+            parse_checksum_for_asset(manifest, "gtc-aarch64-apple-darwin.tgz"),
+            Some("1111111111111111111111111111111111111111111111111111111111111111".to_string())
+        );
+    }
+
+    #[test]
+    fn parse_checksum_for_asset_returns_none_for_missing_asset() {
+        let manifest =
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  gtc-linux.tgz\n";
+        assert_eq!(parse_checksum_for_asset(manifest, "gtc-windows.zip"), None);
+    }
+
+    #[test]
+    fn parse_checksum_for_asset_returns_none_for_blank_or_garbage() {
+        assert_eq!(parse_checksum_for_asset("", "gtc-linux.tgz"), None);
+        assert_eq!(
+            parse_checksum_for_asset("not-a-checksum-line", "gtc-linux.tgz"),
+            None
+        );
+        assert_eq!(
+            parse_checksum_for_asset("short  gtc-linux.tgz", "gtc-linux.tgz"),
+            None
+        );
+    }
+
+    #[test]
+    fn should_self_update_returns_false_when_versions_equal() {
+        assert!(!should_self_update("1.1.0", "1.1.0", false));
+    }
+
+    #[test]
+    fn should_self_update_returns_true_when_versions_differ() {
+        assert!(should_self_update("1.1.0", "1.1.1", false));
+    }
+
+    #[test]
+    fn should_self_update_returns_true_when_force_on_equal() {
+        assert!(should_self_update("1.1.0", "1.1.0", true));
+    }
+
+    #[test]
+    fn swap_running_binary_replaces_content_and_keeps_prev() {
+        let dir = tempdir().expect("tempdir");
+        let exe = dir.path().join("gtc");
+        fs::write(&exe, b"OLD").expect("write old");
+
+        swap_running_binary(&exe, b"NEW").expect("swap");
+
+        assert_eq!(fs::read(&exe).expect("read new"), b"NEW");
+        let prev = dir.path().join("gtc.prev");
+        assert_eq!(fs::read(&prev).expect("read prev"), b"OLD");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn swap_running_binary_sets_executable_on_unix() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().expect("tempdir");
+        let exe = dir.path().join("gtc");
+        fs::write(&exe, b"OLD").expect("write old");
+
+        swap_running_binary(&exe, b"NEW").expect("swap");
+
+        let mode = fs::metadata(&exe).expect("metadata").permissions().mode();
+        assert_ne!(mode & 0o111, 0, "binary should be executable");
     }
 }
