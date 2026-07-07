@@ -200,14 +200,17 @@ pub(crate) fn run_toolchain_install(
         println!("  digest: {digest}");
     }
 
-    if options.phases.binaries && !options.skip_self_update {
+    let self_update_failed = if options.phases.binaries && !options.skip_self_update {
         match try_self_update(&resolved, options.force, options.dry_run, debug, locale) {
-            Ok(_) => {}
-            Err(err) => eprintln!(
-                "warning: gtc self-update failed: {err}; continuing with companion install"
-            ),
+            Ok(_) => false,
+            Err(err) => {
+                eprintln!("error: gtc self-update failed: {err}");
+                true
+            }
         }
-    }
+    } else {
+        false
+    };
 
     if !options.force
         && !options.dry_run
@@ -283,7 +286,7 @@ pub(crate) fn run_toolchain_install(
         }
     }
 
-    if options.phases.binaries {
+    if options.phases.binaries && !self_update_failed {
         let state = installed_state_from_resolved(&resolved);
         if let Err(err) = write_installed_toolchain(&state) {
             eprintln!(
@@ -292,6 +295,17 @@ pub(crate) fn run_toolchain_install(
             );
             return 1;
         }
+    }
+
+    if self_update_failed {
+        eprintln!(
+            "gtc self-update to {} did not complete; gtc is still {}. Companion binaries/artifacts \
+             were installed on a best-effort basis. Re-run `gtc install` to retry, or pass \
+             --skip-self-update to install companions only.",
+            resolved.manifest.version,
+            env!("CARGO_PKG_VERSION"),
+        );
+        return 1;
     }
 
     0
