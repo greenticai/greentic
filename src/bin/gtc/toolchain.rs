@@ -1629,19 +1629,9 @@ pub(crate) fn try_self_update(
             "application/octet-stream",
         )?;
 
-        // Write tarball to a temp file so we can verify its checksum.
-        let staging = tempfile::tempdir()
-            .map_err(|err| GtcError::io("failed to create self-update staging directory", err))?;
+        // Fetch checksums manifest and verify tarball integrity in memory
+        // (sha256_bytes lives in this module — no need to round-trip via disk).
         let asset_filename = format!("gtc-{target}.tgz");
-        let tarball_path = staging.path().join(&asset_filename);
-        fs::write(&tarball_path, &tarball_bytes).map_err(|err| {
-            GtcError::io(
-                format!("failed to write tarball to {}", tarball_path.display()),
-                err,
-            )
-        })?;
-
-        // Fetch and verify checksum.
         let checksums_url = gtc_checksums_url(version);
         if debug {
             eprintln!("self-update: fetching checksums from {checksums_url}");
@@ -1655,7 +1645,14 @@ pub(crate) fn try_self_update(
                     "no checksum found for {asset_filename} in release checksums"
                 ))
             })?;
-        super::install::verify_sha256_digest(&tarball_path, &expected_hash)?;
+        let actual_hash = sha256_bytes(&tarball_bytes);
+        let expected_prefixed = format!("sha256:{expected_hash}");
+        if actual_hash != expected_prefixed {
+            return Err(GtcError::invalid_data(
+                "self-update tarball integrity check",
+                format!("expected {expected_prefixed}, got {actual_hash}"),
+            ));
+        }
 
         // Extract tarball into a temp dir.
         let extract_dir = tempfile::tempdir()
