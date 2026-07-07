@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -296,7 +297,188 @@ pub(super) fn run_doctor(locale: &str) -> i32 {
         );
     }
 
+    print_knowledge_memory_readiness(locale);
+
     if failed { 1 } else { 0 }
+}
+
+/// Prints the "Knowledge & Memory readiness" section of `gtc doctor`.
+///
+/// These checks are informational only: absence of any of these env vars is
+/// perfectly fine for workers that don't use memory or knowledge (RAG), so a
+/// WARN here never flips the overall doctor exit code.
+fn print_knowledge_memory_readiness(locale: &str) {
+    println!();
+    println!(
+        "{}",
+        t_or(
+            locale,
+            "gtc.doctor.knowledge_memory.header",
+            "Knowledge & Memory readiness (for workers that use memory or knowledge, you also need):",
+        )
+    );
+
+    let env = EnvView::from_process_env();
+    for line in knowledge_memory_readiness(&env) {
+        let status_label = match line.status {
+            ReadinessStatus::Ok => t(locale, "gtc.doctor.ok"),
+            ReadinessStatus::Warn => t(locale, "gtc.doctor.warn"),
+        };
+        println!("  {}: {status_label} ({})", line.label, line.detail);
+    }
+}
+
+/// Readiness status for a single [`ReadinessLine`].
+///
+/// Deliberately has no "error"/"fail" variant: knowledge/memory capabilities
+/// are optional, so the worst outcome a missing env var can produce here is a
+/// WARN, never a doctor-exit-code failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ReadinessStatus {
+    Ok,
+    Warn,
+}
+
+/// One reported line of the knowledge/memory readiness section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct ReadinessLine {
+    pub(super) label: &'static str,
+    pub(super) status: ReadinessStatus,
+    pub(super) detail: String,
+}
+
+/// A minimal, injectable view over environment variables.
+///
+/// Keeps [`knowledge_memory_readiness`] pure and unit-testable: production
+/// code builds an [`EnvView`] from the real process environment once, and
+/// tests build one from an in-memory map without mutating `std::env`.
+pub(super) struct EnvView {
+    vars: HashMap<String, String>,
+}
+
+impl EnvView {
+    pub(super) fn from_process_env() -> Self {
+        Self {
+            vars: env::vars().collect(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_pairs<I, K, V>(pairs: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<String>,
+        V: Into<String>,
+    {
+        Self {
+            vars: pairs
+                .into_iter()
+                .map(|(k, v)| (k.into(), v.into()))
+                .collect(),
+        }
+    }
+
+    fn is_set(&self, key: &str) -> bool {
+        self.vars.get(key).is_some_and(|value| !value.is_empty())
+    }
+
+    fn has_prefix(&self, prefix: &str) -> bool {
+        self.vars
+            .iter()
+            .any(|(key, value)| key.starts_with(prefix) && !value.is_empty())
+    }
+}
+
+/// Pure readiness logic for the "Knowledge & Memory readiness" doctor section.
+///
+/// Reports on three independent runtime capabilities that only work on a
+/// knowledge-enabled runner build (`runner-full`, built with the
+/// `knowledge-chronicle` / `long-term-chronicle` cargo features):
+/// short-term agent state, RAG embedding config, and long-term (Chronicle)
+/// memory. None of these are required for workers that don't use memory or
+/// knowledge, so every line here is OK/WARN, never a hard failure.
+pub(super) fn knowledge_memory_readiness(env: &EnvView) -> Vec<ReadinessLine> {
+    vec![
+        short_term_memory_readiness(env),
+        knowledge_embedding_readiness(env),
+        long_term_memory_readiness(env),
+    ]
+}
+
+const AW_REDIS_URL_KEY: &str = "GREENTIC_AW_REDIS_URL";
+
+fn short_term_memory_readiness(env: &EnvView) -> ReadinessLine {
+    if env.is_set(AW_REDIS_URL_KEY) {
+        ReadinessLine {
+            label: "Short-term memory / agent state",
+            status: ReadinessStatus::Ok,
+            detail: format!(
+                "{AW_REDIS_URL_KEY} is set; dw.agent short-term state can persist on a server."
+            ),
+        }
+    } else {
+        ReadinessLine {
+            label: "Short-term memory / agent state",
+            status: ReadinessStatus::Warn,
+            detail: format!(
+                "{AW_REDIS_URL_KEY} is not set. Workers using dw.agent short-term state need \
+                 it on a server; for local runs, the desktop-agent-ephemeral no-infra \
+                 alternative works without it."
+            ),
+        }
+    }
+}
+
+const KNOWLEDGE_EMBED_KEYS: [&str; 3] = [
+    "GREENTIC_KNOWLEDGE_EMBED_BASE_URL",
+    "GREENTIC_KNOWLEDGE_EMBED_API_KEY",
+    "GREENTIC_KNOWLEDGE_EMBED_MODEL",
+];
+
+fn knowledge_embedding_readiness(env: &EnvView) -> ReadinessLine {
+    let missing: Vec<&str> = KNOWLEDGE_EMBED_KEYS
+        .into_iter()
+        .filter(|key| !env.is_set(key))
+        .collect();
+
+    if missing.is_empty() {
+        ReadinessLine {
+            label: "Knowledge / RAG (embedding)",
+            status: ReadinessStatus::Ok,
+            detail: "embedding configuration is complete.".to_string(),
+        }
+    } else {
+        ReadinessLine {
+            label: "Knowledge / RAG (embedding)",
+            status: ReadinessStatus::Warn,
+            detail: format!(
+                "missing {}. Knowledge retrieval will be inactive until these are set and the \
+                 runner is built with the knowledge-chronicle feature (runner-full).",
+                missing.join(", ")
+            ),
+        }
+    }
+}
+
+const CHRONICLE_PREFIX: &str = "GREENTIC_CHRONICLE_";
+
+fn long_term_memory_readiness(env: &EnvView) -> ReadinessLine {
+    if env.has_prefix(CHRONICLE_PREFIX) {
+        ReadinessLine {
+            label: "Long-term memory (Chronicle)",
+            status: ReadinessStatus::Ok,
+            detail: format!("{CHRONICLE_PREFIX}* configuration detected."),
+        }
+    } else {
+        ReadinessLine {
+            label: "Long-term memory (Chronicle)",
+            status: ReadinessStatus::Warn,
+            detail: format!(
+                "no {CHRONICLE_PREFIX}* variables set. Long-term memory needs a \
+                 long-term-chronicle-enabled runner build (runner-full) plus this environment."
+            ),
+        }
+    }
 }
 
 fn print_installed_release_artifacts() -> GtcResult<()> {
@@ -643,5 +825,122 @@ mod tests {
     #[test]
     fn is_greentic_companion_binary_recognizes_greentic_dw() {
         assert!(is_greentic_companion_binary("greentic-dw"));
+    }
+
+    use super::{EnvView, ReadinessStatus, knowledge_memory_readiness};
+
+    #[test]
+    fn knowledge_memory_readiness_all_set_reports_ok() {
+        let env = EnvView::from_pairs([
+            ("GREENTIC_AW_REDIS_URL", "redis://localhost:6379"),
+            (
+                "GREENTIC_KNOWLEDGE_EMBED_BASE_URL",
+                "https://embed.example.com",
+            ),
+            ("GREENTIC_KNOWLEDGE_EMBED_API_KEY", "secret"),
+            ("GREENTIC_KNOWLEDGE_EMBED_MODEL", "text-embedding-3-small"),
+            ("GREENTIC_CHRONICLE_URL", "https://chronicle.example.com"),
+        ]);
+
+        let lines = knowledge_memory_readiness(&env);
+
+        assert_eq!(lines.len(), 3);
+        assert!(
+            lines.iter().all(|line| line.status == ReadinessStatus::Ok),
+            "expected all lines OK, got: {lines:?}"
+        );
+    }
+
+    #[test]
+    fn knowledge_memory_readiness_missing_embedding_vars_warns_with_names_and_runner_full() {
+        let env =
+            EnvView::from_pairs([("GREENTIC_KNOWLEDGE_EMBED_MODEL", "text-embedding-3-small")]);
+
+        let lines = knowledge_memory_readiness(&env);
+
+        let embedding_line = lines
+            .iter()
+            .find(|line| line.label == "Knowledge / RAG (embedding)")
+            .expect("embedding readiness line present");
+
+        assert_eq!(embedding_line.status, ReadinessStatus::Warn);
+        assert!(
+            embedding_line
+                .detail
+                .contains("GREENTIC_KNOWLEDGE_EMBED_BASE_URL"),
+            "detail should name the missing base-url var: {}",
+            embedding_line.detail
+        );
+        assert!(
+            embedding_line
+                .detail
+                .contains("GREENTIC_KNOWLEDGE_EMBED_API_KEY"),
+            "detail should name the missing api-key var: {}",
+            embedding_line.detail
+        );
+        assert!(
+            !embedding_line
+                .detail
+                .contains("GREENTIC_KNOWLEDGE_EMBED_MODEL"),
+            "detail should not name a var that is set: {}",
+            embedding_line.detail
+        );
+        assert!(
+            embedding_line.detail.contains("runner-full"),
+            "detail should mention the runner-full build requirement: {}",
+            embedding_line.detail
+        );
+    }
+
+    #[test]
+    fn knowledge_memory_readiness_missing_redis_warns_with_ephemeral_alternative() {
+        let empty_pairs: [(&str, &str); 0] = [];
+        let env = EnvView::from_pairs(empty_pairs);
+
+        let lines = knowledge_memory_readiness(&env);
+
+        let short_term_line = lines
+            .iter()
+            .find(|line| line.label == "Short-term memory / agent state")
+            .expect("short-term readiness line present");
+
+        assert_eq!(short_term_line.status, ReadinessStatus::Warn);
+        assert!(
+            short_term_line.detail.contains("GREENTIC_AW_REDIS_URL"),
+            "detail should name the missing var: {}",
+            short_term_line.detail
+        );
+        assert!(
+            short_term_line.detail.contains("desktop-agent-ephemeral"),
+            "detail should mention the no-infra alternative: {}",
+            short_term_line.detail
+        );
+    }
+
+    #[test]
+    fn knowledge_memory_readiness_missing_chronicle_vars_warns_with_long_term_chronicle_build() {
+        let env = EnvView::from_pairs([
+            ("GREENTIC_AW_REDIS_URL", "redis://localhost:6379"),
+            (
+                "GREENTIC_KNOWLEDGE_EMBED_BASE_URL",
+                "https://embed.example.com",
+            ),
+            ("GREENTIC_KNOWLEDGE_EMBED_API_KEY", "secret"),
+            ("GREENTIC_KNOWLEDGE_EMBED_MODEL", "text-embedding-3-small"),
+        ]);
+
+        let lines = knowledge_memory_readiness(&env);
+
+        let chronicle_line = lines
+            .iter()
+            .find(|line| line.label == "Long-term memory (Chronicle)")
+            .expect("chronicle readiness line present");
+
+        assert_eq!(chronicle_line.status, ReadinessStatus::Warn);
+        assert!(
+            chronicle_line.detail.contains("long-term-chronicle"),
+            "detail should mention the long-term-chronicle build requirement: {}",
+            chronicle_line.detail
+        );
     }
 }
