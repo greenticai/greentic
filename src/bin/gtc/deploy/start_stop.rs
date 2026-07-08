@@ -24,7 +24,7 @@ const START_USAGE: &str = "usage: gtc start [BUNDLE_REF] [start flags...]\n\
               --deploy-bundle-source <src> --upload-bundle <url> --upload-bundle-presign-expires <secs>\n\
               --extension-start-handoff <path>\n\
   runtime flags are forwarded to greentic-start (e.g. --env, --tenant, --team, --nats, --cloudflared, --ngrok,\n\
-  --admin, --restart, --verbose, --quiet); see `greentic-start start --help` for the full list";
+  --admin, --restart, --verbose, --quiet, --no-updates); see `greentic-start start --help` for the full list";
 
 const STOP_USAGE: &str = "usage: gtc stop [BUNDLE_REF] [stop flags...]\n\
   BUNDLE_REF: bundle to stop (omit to stop the active env's serving runtime)\n\
@@ -951,6 +951,7 @@ mod tests {
             team: Some("ops".to_string()),
             no_nats: false,
             no_browser: true,
+            no_updates: false,
             nats: NatsModeArg::External,
             nats_url: Some("nats://demo".to_string()),
             config: Some(PathBuf::from("/tmp/config.yaml")),
@@ -989,6 +990,27 @@ mod tests {
         assert!(args.contains(&"--no-browser".to_string()));
         assert!(args.contains(&"ops,local".to_string()));
         assert!(args.contains(&"gateway,nats".to_string()));
+        assert!(
+            !args.contains(&"--no-updates".to_string()),
+            "the updater is on unless the operator opts out"
+        );
+    }
+
+    #[test]
+    fn no_updates_round_trips_through_parse_and_serialize() {
+        // `gtc start` re-parses its tail by hand — a flag that is not in both
+        // `parse_start_request` and `to_runtime_start_args` silently vanishes
+        // before greentic-start ever sees it.
+        let tail = vec!["--no-updates".to_string()];
+        let request =
+            parse_start_request(&tail, PathBuf::from("/tmp/bundle")).expect("--no-updates parses");
+        assert!(request.no_updates);
+        assert!(
+            request
+                .to_runtime_start_args("en")
+                .contains(&"--no-updates".to_string())
+        );
+        assert!(!start_flag_takes_value("--no-updates"));
     }
 
     #[test]
@@ -1178,6 +1200,7 @@ mod tests {
         for flag in [
             "--no-nats",
             "--no-browser",
+            "--no-updates",
             "--verbose",
             "--quiet",
             "--admin",
