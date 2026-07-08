@@ -42,6 +42,10 @@ pub struct StartRequest {
     pub team: Option<String>,
     pub no_nats: bool,
     pub no_browser: bool,
+    /// Forwarded as `--no-updates`: opts the runtime out of its environment's
+    /// update channel on this box. A kill switch, not a policy change — the
+    /// env's `update-channel.json` is untouched.
+    pub no_updates: bool,
     pub nats: NatsModeArg,
     pub nats_url: Option<String>,
     pub config: Option<PathBuf>,
@@ -100,6 +104,9 @@ impl StartRequest {
         }
         if self.no_browser {
             args.push("--no-browser".to_string());
+        }
+        if self.no_updates {
+            args.push("--no-updates".to_string());
         }
         args.push("--nats".to_string());
         args.push(self.nats.as_cli_value().to_string());
@@ -213,6 +220,7 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
         team: None,
         no_nats: false,
         no_browser: false,
+        no_updates: false,
         nats: NatsModeArg::Off,
         nats_url: None,
         config: None,
@@ -250,6 +258,7 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
             }
             "--no-nats" => request.no_nats = true,
             "--no-browser" => request.no_browser = true,
+            "--no-updates" => request.no_updates = true,
             "--nats" => {
                 idx += 1;
                 request.nats = parse_nats_mode(&required_value(tail, idx, "--nats")?)?;
