@@ -112,7 +112,10 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 Ok(Some((handoff_path, rest))) => {
                     run_extension_start(&handoff_path, &rest, debug, &locale)
                 }
-                Ok(None) => run_start(&tail, debug, &locale),
+                Ok(None) => match start_k8s_rewrite(&tail) {
+                    Some(args) => passthrough(super::OP_BIN, &args, debug, &locale),
+                    None => run_start(&tail, debug, &locale),
+                },
                 Err(err) => {
                     eprintln!("{err}");
                     2
@@ -585,6 +588,18 @@ fn json_pointer_path(path: &[String]) -> String {
 
 fn escape_json_pointer_segment(segment: &str) -> String {
     segment.replace('~', "~0").replace('/', "~1")
+}
+
+/// Detect a leading `k8s` token in a `start` tail and rewrite it into an
+/// operator `env up` invocation. Returns `None` when the tail does not begin
+/// with `k8s` (a flag-prefixed tail like `["--answers", "k8s"]` is not a match).
+pub(super) fn start_k8s_rewrite(tail: &[String]) -> Option<Vec<String>> {
+    if tail.first().map(String::as_str) != Some("k8s") {
+        return None;
+    }
+    let mut args = vec!["op".to_string(), "env".to_string(), "up".to_string()];
+    args.extend_from_slice(&tail[1..]);
+    Some(args)
 }
 
 fn run_help(sub_matches: &ArgMatches, locale: &str) -> i32 {
