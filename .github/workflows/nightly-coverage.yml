@@ -35,9 +35,15 @@ jobs:
 
       - name: Install coverage toolchain
         run: |
-          cargo binstall -y cargo-llvm-cov
-          cargo binstall -y cargo-nextest
-          cargo binstall -y greentic-dev
+          # rust-cache restores ~/.cargo/.crates.toml but prunes ~/.cargo/bin of
+          # binstall-installed binaries, so binstall says "already installed"
+          # while the binary is gone. --force sidesteps that.
+          cargo binstall -y --force cargo-llvm-cov
+          cargo binstall -y --force cargo-nextest
+          cargo binstall -y --force greentic-dev
+          command -v cargo-llvm-cov
+          command -v cargo-nextest
+          greentic-dev --version
 
       - name: Install llvm-tools-preview
         run: rustup component add llvm-tools-preview
