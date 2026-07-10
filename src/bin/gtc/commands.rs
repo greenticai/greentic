@@ -112,12 +112,10 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 Ok(Some((handoff_path, rest))) => {
                     run_extension_start(&handoff_path, &rest, debug, &locale)
                 }
-                Ok(None) => {
-                    if let Some(args) = start_k8s_rewrite(&tail) {
-                        return passthrough(super::OP_BIN, &args, debug, &locale);
-                    }
-                    run_start(&tail, debug, &locale)
-                }
+                Ok(None) => match start_k8s_rewrite(&tail) {
+                    Some(args) => passthrough(super::OP_BIN, &args, debug, &locale),
+                    None => run_start(&tail, debug, &locale),
+                },
                 Err(err) => {
                     eprintln!("{err}");
                     2
