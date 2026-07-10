@@ -1837,6 +1837,19 @@ fn start_k8s_rewrite_returns_none_without_k8s() {
     assert!(start_k8s_rewrite(&tail).is_none());
 }
 
+/// Only the exact token `k8s` is reserved. A bundle named `k8s` stays reachable
+/// through any path form, so the sugar cannot swallow a real bundle ref.
+#[test]
+fn start_k8s_rewrite_leaves_path_form_bundle_refs_to_run_start() {
+    for bundle_ref in ["./k8s", "k8s/", "k8s.gtbundle", "/opt/bundles/k8s", "K8s"] {
+        let tail = vec![bundle_ref.to_string()];
+        assert!(
+            start_k8s_rewrite(&tail).is_none(),
+            "`{bundle_ref}` must reach run_start as a bundle ref"
+        );
+    }
+}
+
 #[test]
 fn start_k8s_rewrite_returns_none_for_empty_tail() {
     let tail: Vec<String> = vec![];
