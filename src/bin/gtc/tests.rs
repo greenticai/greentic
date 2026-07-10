@@ -10,8 +10,8 @@ use super::{
     resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
     resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
     run_admin_access, run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry,
-    select_start_target, should_send_auth_header, tenant_env_var_name, upsert_admin_registry_entry,
-    verify_sha256_digest,
+    select_start_target, should_send_auth_header, start_k8s_rewrite, tenant_env_var_name,
+    upsert_admin_registry_entry, verify_sha256_digest,
 };
 #[cfg(unix)]
 use super::{apply_default_deploy_env_for_target, extract_zip_bytes, validate_cloud_deploy_inputs};
@@ -1813,6 +1813,56 @@ fn fingerprint_bundle_dir_skips_symlink_cycles() {
 
     assert!(fingerprint.contains("file:packs/cards-demo.gtpack"));
     assert!(!fingerprint.contains("loop"));
+}
+
+#[test]
+fn start_k8s_rewrite_rewrites_leading_k8s_token() {
+    let tail = vec!["k8s".to_string()];
+    let rewritten = start_k8s_rewrite(&tail).expect("should rewrite");
+    assert_eq!(
+        rewritten,
+        vec!["op".to_string(), "env".to_string(), "up".to_string()]
+    );
+}
+
+#[test]
+fn start_k8s_rewrite_does_not_rewrite_k8s_after_flag() {
+    let tail = vec!["--answers".to_string(), "k8s".to_string()];
+    assert!(start_k8s_rewrite(&tail).is_none());
+}
+
+#[test]
+fn start_k8s_rewrite_returns_none_without_k8s() {
+    let tail = vec!["my-bundle.gtbundle".to_string()];
+    assert!(start_k8s_rewrite(&tail).is_none());
+}
+
+#[test]
+fn start_k8s_rewrite_returns_none_for_empty_tail() {
+    let tail: Vec<String> = vec![];
+    assert!(start_k8s_rewrite(&tail).is_none());
+}
+
+#[test]
+fn start_k8s_rewrite_preserves_trailing_flags_in_order() {
+    let tail = vec![
+        "k8s".to_string(),
+        "--answers".to_string(),
+        "/tmp/answers.json".to_string(),
+        "--dry-run".to_string(),
+    ];
+    let rewritten = start_k8s_rewrite(&tail).expect("should rewrite");
+    assert_eq!(
+        rewritten,
+        vec![
+            "op".to_string(),
+            "env".to_string(),
+            "up".to_string(),
+            "--answers".to_string(),
+            "/tmp/answers.json".to_string(),
+            "--dry-run".to_string(),
+        ]
+    );
 }
 
 struct HttpRequest {

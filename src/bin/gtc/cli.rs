@@ -843,6 +843,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.start.about",
                     "Start a bundle from local or remote reference.",
                 ))
+                .after_help("Use `gtc start k8s [FLAGS]` to provision a local Kind cluster and deploy an environment via `op env up`. All flags (including --answers) are forwarded to the operator.")
                 .arg(cmd_args.clone()),
         )
         .subcommand(
