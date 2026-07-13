@@ -665,6 +665,40 @@ fn setup_help_passthrough_routes_to_greentic_setup() {
 }
 
 #[test]
+fn provider_passthrough_routes_to_greentic_setup_with_provider_token() {
+    let sandbox =
+        TestSandbox::new("provider_passthrough_routes_to_greentic_setup_with_provider_token");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(["provider", "add", "telegram"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    // greentic-setup must receive `provider add telegram` — the `provider`
+    // token is re-prepended by the router (same pattern as `worker`).
+    assert!(
+        logged
+            .split_whitespace()
+            .eq(["provider", "add", "telegram"]),
+        "expected greentic-setup to receive `provider add telegram`, got: {logged}"
+    );
+}
+
+#[test]
+fn provider_passthrough_preserves_exit_code() {
+    let sandbox = TestSandbox::new("provider_passthrough_preserves_exit_code");
+    sandbox.write_exit_tool("greentic-setup", 42);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(["provider", "list"], HashMap::new());
+    assert_eq!(status.code(), Some(42));
+}
+
+#[test]
 fn op_help_passthrough_routes_to_greentic_operator() {
     let sandbox = TestSandbox::new("op_help_passthrough_routes_to_greentic_operator");
     let log_file = sandbox.path().join("op.log");

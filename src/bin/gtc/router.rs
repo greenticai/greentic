@@ -67,6 +67,7 @@ pub(super) fn route_passthrough_subcommand(
         "setup" => Some((SETUP_BIN, tail.to_vec())),
         "wizard" => Some((DEV_BIN, build_wizard_args(tail, locale))),
         "worker" => Some((DW_BIN, build_worker_args(tail))),
+        "provider" => Some((SETUP_BIN, build_provider_args(tail))),
         _ => None,
     }
 }
@@ -76,6 +77,15 @@ pub(super) fn route_passthrough_subcommand(
 /// (mirrors `build_wizard_args`, which re-adds `wizard`).
 pub(super) fn build_worker_args(args: &[String]) -> Vec<String> {
     let mut forwarded = vec!["worker".to_string()];
+    forwarded.extend_from_slice(args);
+    forwarded
+}
+
+/// Forward `gtc provider <args>` to `greentic-setup provider <args>` — the
+/// `provider` token must be re-added because `route_passthrough_subcommand`
+/// strips it (mirrors `build_worker_args`).
+pub(super) fn build_provider_args(args: &[String]) -> Vec<String> {
+    let mut forwarded = vec!["provider".to_string()];
     forwarded.extend_from_slice(args);
     forwarded
 }

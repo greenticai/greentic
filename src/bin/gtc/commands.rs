@@ -147,7 +147,7 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 2
             }
         },
-        Some((name @ ("dev" | "op" | "wizard" | "setup" | "worker"), sub_matches)) => {
+        Some((name @ ("dev" | "op" | "wizard" | "setup" | "worker" | "provider"), sub_matches)) => {
             let tail = collect_tail(sub_matches);
             let tail = if matches!(name, "wizard" | "setup") {
                 let release_context =
