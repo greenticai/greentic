@@ -4,9 +4,8 @@ use std::path::{Path, PathBuf};
 
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{
-    StartRequest, parse_runtime_config_start_request, parse_runtime_config_stop_request,
-    parse_start_request, parse_stop_request, required_value, start_flag_takes_value,
-    stop_flag_takes_value,
+    parse_runtime_config_start_request, parse_runtime_config_stop_request, parse_start_request,
+    parse_stop_request, required_value, start_flag_takes_value, stop_flag_takes_value,
 };
 use serde::Deserialize;
 
@@ -279,7 +278,7 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     // which is where static assets, DirectLine, WebSocket and CORS live. The
     // env is created on demand (greentic-start bootstraps it), and the webchat
     // GUI is on by default for `local`.
-    let env_id = resolve_start_env(&request);
+    let env_id = resolve_env_id(request.env.as_deref());
     println!("Deployment mode: local runtime (environment `{env_id}`)");
     println!(
         "Starting tenant={} team={}",
@@ -303,6 +302,7 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     // processes must agree on the same env even if the variable changes
     // between them.
     request.bundle = None;
+    request.config = None;
     request.env = Some(env_id);
     // The prepared bundle lives under a tempdir that gets cleaned on shutdown,
     // so default operator.log/flow.log into the source bundle dir where users
@@ -332,14 +332,14 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     }
 }
 
-/// Resolve the environment a bundle is deployed into and served from.
+/// Resolve the environment id using greentic-start's precedence:
+/// explicit `--env` > `$GREENTIC_ENV` > `local`.
 ///
-/// Mirrors greentic-start's own precedence (`--env` > `$GREENTIC_ENV` >
-/// `local`) so that the env-deploy step and the serving process agree.
-fn resolve_start_env(request: &StartRequest) -> String {
-    request
-        .env
-        .clone()
+/// Used by both start and stop so the env-deploy/serve and stop paths
+/// agree on the same environment.
+fn resolve_env_id(explicit: Option<&str>) -> String {
+    explicit
+        .map(str::to_string)
         .or_else(|| {
             std::env::var("GREENTIC_ENV")
                 .ok()
@@ -509,6 +509,13 @@ pub(crate) fn run_stop(tail: &[String], debug: bool, locale: &str) -> i32 {
                 );
                 return 2;
             }
+            // B4b: start now launches a bundle-less env-backed runtime for
+            // bundle refs, so stop must target the same env rather than
+            // sending `--bundle` to a legacy path that no longer exists.
+            let mut request = request;
+            let env_id = resolve_env_id(request.env.as_deref());
+            request.bundle = None;
+            request.env = Some(env_id);
             let args = request.to_runtime_stop_args(locale);
             match run_binary_checked(START_BIN, &args, debug, locale, "stop bundle") {
                 Ok(()) => 0,
