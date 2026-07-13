@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -1004,16 +1005,27 @@ fn op_start_routes_to_demo_start_with_default_tenant_team_and_cloudflared_off() 
     assert!(logged.contains("--cloudflared off"));
 }
 
+/// B4b: `gtc start <bundle>` no longer boots the legacy bundle-scoped ingress.
+/// It deploys the bundle into the environment via `greentic-setup env-deploy`,
+/// then starts greentic-start *bundle-less* so the env/revision runtime serves
+/// it (static assets, DirectLine, WebSocket, CORS — none of which the legacy
+/// ingress has on the revision path).
+///
+/// The `--bundle` assertions here are inverted on purpose: a `--bundle` on the
+/// start argv means the reroute regressed and the runtime silently loses the
+/// webchat GUI's socket. That is the whole point of this test.
 #[test]
-fn runtime_start_routes_to_greentic_start_cli() {
-    let sandbox = TestSandbox::new("runtime_start_routes_to_greentic_start_cli");
+fn runtime_start_deploys_bundle_into_env_then_starts_bundle_less() {
+    let sandbox = TestSandbox::new("runtime_start_deploys_bundle_into_env_then_starts_bundle_less");
     let bundle_dir = sandbox.path().join("bundle");
     create_minimal_bundle_dir(&bundle_dir);
-    let log_file = sandbox.path().join("start.log");
+    let start_log = sandbox.path().join("start.log");
+    let setup_log = sandbox.path().join("setup.log");
 
     sandbox.write_exit_tool("greentic-dev", 0);
     sandbox.write_bundle_build_tool("greentic-bundle", &sandbox.path().join("bundle.log"));
-    sandbox.write_arg_logger_tool("greentic-start", &log_file, 0);
+    sandbox.write_arg_logger_tool("greentic-setup", &setup_log, 0);
+    sandbox.write_arg_logger_tool("greentic-start", &start_log, 0);
 
     let output = sandbox.run_gtc_capture(
         [
@@ -1038,19 +1050,74 @@ fn runtime_start_routes_to_greentic_start_cli() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let logged = fs::read_to_string(log_file).expect("read start log");
-    assert!(logged.contains("--locale en start"));
-    assert!(logged.contains("--bundle"));
-    // `--bundle` must rewrite to prepared-root; source dir may appear under `--log-dir`.
-    let bundle_str = bundle_dir.to_str().expect("bundle utf8");
+    // The bundle is deployed into the env before anything is served.
+    let deployed = fs::read_to_string(&setup_log).expect("read setup log");
     assert!(
-        !logged.contains(&format!("--bundle {bundle_str}")),
-        "--bundle should be rewritten to prepared-root, not the source dir; got: {logged}"
+        deployed.contains("env-deploy"),
+        "greentic-setup must be invoked with env-deploy; got: {deployed}"
+    );
+    assert!(
+        deployed.contains("--env local"),
+        "env-deploy must target the resolved env; got: {deployed}"
+    );
+
+    // greentic-start is then booted bundle-less against that same env.
+    let logged = fs::read_to_string(&start_log).expect("read start log");
+    assert!(logged.contains("--locale en start"));
+    assert!(
+        !logged.contains("--bundle"),
+        "start must be bundle-less so the env/revision runtime serves the \
+         revision (a --bundle here silently drops the webchat WebSocket); got: {logged}"
+    );
+    assert!(
+        logged.contains("--env local"),
+        "start must be pinned to the same env the bundle was deployed into; got: {logged}"
     );
     assert!(logged.contains("--tenant demo"));
     assert!(logged.contains("--team ops"));
     assert!(logged.contains("--cloudflared off"));
     assert!(logged.contains("--admin"));
+}
+
+/// The env-deploy step and the serving process must agree on one env, even if
+/// `$GREENTIC_ENV` changes between the two spawns — so `gtc` resolves it once
+/// and pins it explicitly on both.
+#[test]
+fn runtime_start_pins_explicit_env_on_both_deploy_and_serve() {
+    let sandbox = TestSandbox::new("runtime_start_pins_explicit_env_on_both_deploy_and_serve");
+    let bundle_dir = sandbox.path().join("bundle");
+    create_minimal_bundle_dir(&bundle_dir);
+    let start_log = sandbox.path().join("start.log");
+    let setup_log = sandbox.path().join("setup.log");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_bundle_build_tool("greentic-bundle", &sandbox.path().join("bundle.log"));
+    sandbox.write_arg_logger_tool("greentic-setup", &setup_log, 0);
+    sandbox.write_arg_logger_tool("greentic-start", &start_log, 0);
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "start",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "runtime",
+            "--env",
+            "staging",
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let deployed = fs::read_to_string(&setup_log).expect("read setup log");
+    let served = fs::read_to_string(&start_log).expect("read start log");
+    assert!(
+        deployed.contains("--env staging"),
+        "env-deploy must honor --env; got: {deployed}"
+    );
+    assert!(
+        served.contains("--env staging"),
+        "serve must honor --env; got: {served}"
+    );
 }
 
 #[test]
@@ -2499,7 +2566,22 @@ impl TestSandbox {
             cmd.env(k, v);
         }
 
-        cmd.output().expect("run gtc")
+        // ETXTBSY guard. These tests compile helper executables while other
+        // test threads are spawning processes. Between `fork()` and `execve()`
+        // a child transiently inherits the writable fd of an executable another
+        // thread is still creating, and exec'ing that file returns ETXTBSY.
+        // The window is short, so a bounded retry is enough; without it the
+        // suite fails roughly one run in four, on a different test each time.
+        for attempt in 0..10 {
+            match cmd.output() {
+                Ok(output) => return output,
+                Err(err) if err.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(20 * (attempt + 1)));
+                }
+                Err(err) => panic!("run gtc: {err:?}"),
+            }
+        }
+        panic!("run gtc: still ETXTBSY after retries");
     }
 }
 

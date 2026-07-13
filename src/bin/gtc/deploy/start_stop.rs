@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{
-    parse_runtime_config_start_request, parse_runtime_config_stop_request, parse_start_request,
-    parse_stop_request, required_value, start_flag_takes_value, stop_flag_takes_value,
+    StartRequest, parse_runtime_config_start_request, parse_runtime_config_stop_request,
+    parse_start_request, parse_stop_request, required_value, start_flag_takes_value,
+    stop_flag_takes_value,
 };
 use serde::Deserialize;
 
@@ -13,10 +14,14 @@ use super::bundle_resolution::resolve_bundle_reference;
 use super::cloud_deploy::{destroy_deployment, ensure_started_or_deployed};
 use super::prepared_bundle::{prepare_bundle_for_start, print_prepared_bundle_debug};
 use super::{ChildProcessEnv, StartCliOptions, StartTarget, StopCliOptions};
-use crate::START_BIN;
 use crate::admin::ensure_admin_certs_ready;
 use crate::i18n_support::t_or;
 use crate::process::{run_binary_checked, run_binary_checked_with_target_and_env};
+use crate::{SETUP_BIN, START_BIN};
+
+/// Environment served when neither `--env` nor `$GREENTIC_ENV` is set. Must
+/// match greentic-start's own default, which bootstraps this env on demand.
+const DEFAULT_ENV_ID: &str = "local";
 
 const START_USAGE: &str = "usage: gtc start [BUNDLE_REF] [start flags...]\n\
   BUNDLE_REF: local path, file://, oci://, repo://, store:// (omit to serve the active env's deployed revisions)\n\
@@ -268,12 +273,37 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
             }
         }
     }
-    println!("Deployment mode: local runtime");
+    // B4b: a bundle ref no longer boots the legacy bundle-scoped ingress.
+    // Deploy it into the environment, then start greentic-start *bundle-less*
+    // so it serves the deployed revision through the env/revision runtime —
+    // which is where static assets, DirectLine, WebSocket and CORS live. The
+    // env is created on demand (greentic-start bootstraps it), and the webchat
+    // GUI is on by default for `local`.
+    let env_id = resolve_start_env(&request);
+    println!("Deployment mode: local runtime (environment `{env_id}`)");
     println!(
         "Starting tenant={} team={}",
         request.tenant.as_deref().unwrap_or("demo"),
         request.team.as_deref().unwrap_or("default")
     );
+    if let Err(err) = deploy_bundle_into_env(&prepared.prepared_root, &env_id, debug, locale) {
+        eprintln!(
+            "{}: {err}",
+            t_or(
+                locale,
+                "gtc.start.err.env_deploy_failed",
+                "failed to deploy bundle into environment"
+            )
+        );
+        return 1;
+    }
+    // The env-apply engine has staged its own copy of the revision, so the
+    // prepared tempdir is no longer the serving root. Pin the env explicitly
+    // rather than letting greentic-start re-resolve $GREENTIC_ENV: the two
+    // processes must agree on the same env even if the variable changes
+    // between them.
+    request.bundle = None;
+    request.env = Some(env_id);
     // The prepared bundle lives under a tempdir that gets cleaned on shutdown,
     // so default operator.log/flow.log into the source bundle dir where users
     // can actually find them.
@@ -300,6 +330,39 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
             1
         }
     }
+}
+
+/// Resolve the environment a bundle is deployed into and served from.
+///
+/// Mirrors greentic-start's own precedence (`--env` > `$GREENTIC_ENV` >
+/// `local`) so that the env-deploy step and the serving process agree.
+fn resolve_start_env(request: &StartRequest) -> String {
+    request
+        .env
+        .clone()
+        .or_else(|| {
+            std::env::var("GREENTIC_ENV")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| DEFAULT_ENV_ID.to_string())
+}
+
+/// Deploy a prepared bundle into `env_id` via `greentic-setup env-deploy`.
+///
+/// `--env` and `--non-interactive` are global flags on the setup CLI, so they
+/// precede the subcommand.
+fn deploy_bundle_into_env(bundle: &Path, env_id: &str, debug: bool, locale: &str) -> GtcResult<()> {
+    let args = vec![
+        "--locale".to_string(),
+        locale.to_string(),
+        "--env".to_string(),
+        env_id.to_string(),
+        "--non-interactive".to_string(),
+        "env-deploy".to_string(),
+        bundle.display().to_string(),
+    ];
+    run_binary_checked(SETUP_BIN, &args, debug, locale, "env-deploy bundle")
 }
 
 fn local_runtime_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
