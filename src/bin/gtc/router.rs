@@ -72,22 +72,20 @@ pub(super) fn route_passthrough_subcommand(
     }
 }
 
-/// Forward `gtc worker <args>` to `greentic-dw worker <args>` — the `worker`
-/// token must be re-added because `route_passthrough_subcommand` strips it
-/// (mirrors `build_wizard_args`, which re-adds `wizard`).
-pub(super) fn build_worker_args(args: &[String]) -> Vec<String> {
-    let mut forwarded = vec!["worker".to_string()];
+/// Re-add a subcommand token that `route_passthrough_subcommand` strips,
+/// then forward the remaining args verbatim.
+fn prepend_subcommand(token: &str, args: &[String]) -> Vec<String> {
+    let mut forwarded = vec![token.to_string()];
     forwarded.extend_from_slice(args);
     forwarded
 }
 
-/// Forward `gtc provider <args>` to `greentic-setup provider <args>` — the
-/// `provider` token must be re-added because `route_passthrough_subcommand`
-/// strips it (mirrors `build_worker_args`).
+pub(super) fn build_worker_args(args: &[String]) -> Vec<String> {
+    prepend_subcommand("worker", args)
+}
+
 pub(super) fn build_provider_args(args: &[String]) -> Vec<String> {
-    let mut forwarded = vec!["provider".to_string()];
-    forwarded.extend_from_slice(args);
-    forwarded
+    prepend_subcommand("provider", args)
 }
 
 fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
