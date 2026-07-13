@@ -11,6 +11,7 @@
   "gtc.cmd.op.about": "Pass through to greentic-operator.",
   "gtc.cmd.wizard.about": "Open the Greentic wizard menu.",
   "gtc.cmd.setup.about": "Pass through to greentic-setup (bundle lifecycle management).",
+  "gtc.cmd.provider.about": "Manage messaging providers (passthrough to greentic-setup).",
   "gtc.cmd.start.about": "Start a bundle from local or remote reference.",
   "gtc.cmd.stop.about": "Stop a bundle runtime or destroy a deployed environment.",
   "gtc.cmd.add_admin.about": "Register an admin client certificate identity for a local bundle.",
