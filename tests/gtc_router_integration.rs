@@ -1079,6 +1079,69 @@ fn runtime_start_deploys_bundle_into_env_then_starts_bundle_less() {
     assert!(logged.contains("--admin"));
 }
 
+/// `--admin` generates a dev CA plus server and client PRIVATE keys. Under the
+/// legacy path those lived in a tempdir that died on shutdown. B4b hands the
+/// prepared root to `env-deploy`, which stages a PERSISTENT copy — and an
+/// environment store can be remote. The keys must never enter the deployed
+/// revision; greentic-start reads them from the source bundle via
+/// `--admin-certs-dir` instead.
+#[test]
+fn admin_private_keys_are_not_staged_into_the_environment() {
+    let sandbox = TestSandbox::new("admin_private_keys_are_not_staged_into_the_environment");
+    let bundle_dir = sandbox.path().join("bundle");
+    create_minimal_bundle_dir(&bundle_dir);
+    let start_log = sandbox.path().join("start.log");
+    let setup_log = sandbox.path().join("setup.log");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_bundle_build_tool("greentic-bundle", &sandbox.path().join("bundle.log"));
+    sandbox.write_env_deploy_probe_tool("greentic-setup", &setup_log);
+    sandbox.write_arg_logger_tool("greentic-start", &start_log, 0);
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "start",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "runtime",
+            "--admin",
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let deployed = fs::read_to_string(&setup_log).expect("read setup log");
+    assert!(
+        deployed.contains("env-deploy"),
+        "env-deploy must run; got: {deployed}"
+    );
+    assert!(
+        !deployed.contains("LEAKED_PRIVATE_KEY"),
+        "admin private keys must never be staged into the environment store \
+         (it can be remote); probe reported: {deployed}"
+    );
+    assert!(
+        deployed.contains("ADMIN_DIR_IN_DEPLOYED_BUNDLE=false"),
+        "the deployed bundle must carry no .greentic/admin directory; got: {deployed}"
+    );
+
+    // The admin server still gets its certs — from the source bundle, which is
+    // never handed to env-deploy.
+    let served = fs::read_to_string(&start_log).expect("read start log");
+    assert!(served.contains("--admin"), "admin mode still enabled");
+    let bundle_str = bundle_dir.to_str().expect("bundle utf8");
+    assert!(
+        served.contains(&format!("--admin-certs-dir {bundle_str}")),
+        "certs must be served from the source bundle, not the prepared root; got: {served}"
+    );
+}
+
 /// The env-deploy step and the serving process must agree on one env, even if
 /// `$GREENTIC_ENV` changes between the two spawns — so `gtc` resolves it once
 /// and pins it explicitly on both.
@@ -2435,6 +2498,11 @@ impl TestSandbox {
         self.compile_rust_tool_at(&path, &rust_arg_logger_program(log_file, exit_code));
     }
 
+    fn write_env_deploy_probe_tool(&self, name: &str, log_file: &Path) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_env_deploy_probe_program(log_file));
+    }
+
     fn write_arg_env_logger_tool(
         &self,
         name: &str,
@@ -3129,6 +3197,46 @@ fn write_test_release_index(cache_dir: &Path, channel: &str, release: &str) {
 
 fn rust_exit_tool_program(exit_code: i32) -> String {
     format!("fn main() {{ std::process::exit({exit_code}); }}",)
+}
+
+/// A `greentic-setup` stand-in that logs its argv AND inspects the bundle it was
+/// handed by `env-deploy`, recording whether admin private keys are inside it.
+/// The prepared root is a tempdir that gets cleaned up, so the only way to know
+/// what was actually staged into the environment is to look from in here.
+fn rust_env_deploy_probe_program(log_file: &Path) -> String {
+    let log_literal = rust_string_literal(&log_file.display().to_string());
+    format!(
+        r#"
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
+
+fn main() {{
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open({log_literal})
+        .expect("open log");
+    writeln!(file, "{{}}", args.join(" ")).expect("write log");
+
+    if let Some(idx) = args.iter().position(|a| a == "env-deploy")
+        && let Some(bundle) = args.get(idx + 1)
+    {{
+        let admin = Path::new(bundle).join(".greentic").join("admin");
+        writeln!(file, "ADMIN_DIR_IN_DEPLOYED_BUNDLE={{}}", admin.exists())
+            .expect("write log");
+        for key in ["ca.key", "server.key", "client.key"] {{
+            let path = admin.join("certs").join(key);
+            if path.exists() {{
+                writeln!(file, "LEAKED_PRIVATE_KEY={{}}", key).expect("write log");
+            }}
+        }}
+    }}
+    std::process::exit(0);
+}}
+"#
+    )
 }
 
 fn rust_arg_logger_program(log_file: &Path, exit_code: i32) -> String {

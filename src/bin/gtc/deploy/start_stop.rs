@@ -285,6 +285,46 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
         request.tenant.as_deref().unwrap_or("demo"),
         request.team.as_deref().unwrap_or("default")
     );
+    // `--admin` without an explicit cert dir generates a dev CA plus server and
+    // client PRIVATE keys inside the prepared root. The legacy path kept that
+    // root in a tempdir that died on shutdown; env-deploy instead stages a
+    // persistent copy of whatever it is handed, and an environment store can be
+    // remote. Keep the keys out of the deployed revision and serve them from the
+    // source bundle, which greentic-start reads via `--admin-certs-dir`.
+    if request
+        .admin_certs_dir
+        .as_deref()
+        .is_some_and(|dir| dir.starts_with(&prepared.prepared_root))
+    {
+        let staged_admin = prepared.prepared_root.join(".greentic").join("admin");
+        if staged_admin.is_dir()
+            && let Err(err) = fs::remove_dir_all(&staged_admin)
+        {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.start.err.admin_certs_failed",
+                    "failed to prepare admin certificates"
+                )
+            );
+            return 1;
+        }
+        match ensure_admin_certs_ready(&resolved.bundle_dir, None) {
+            Ok(cert_dir) => request.admin_certs_dir = Some(cert_dir),
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(
+                        locale,
+                        "gtc.start.err.admin_certs_failed",
+                        "failed to prepare admin certificates"
+                    )
+                );
+                return 1;
+            }
+        }
+    }
     if let Err(err) = deploy_bundle_into_env(&prepared.prepared_root, &env_id, debug, locale) {
         eprintln!(
             "{}: {err}",
