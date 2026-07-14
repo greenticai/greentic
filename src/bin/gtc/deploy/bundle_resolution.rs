@@ -177,6 +177,7 @@ fn resolve_archive_bundle_path(
         .map_err(|e| GtcError::io(format!("failed to create {}", extracted.display()), e))?;
     expand_bundle_archive(&archive_path, &extracted)?;
     let bundle_dir = detect_bundle_root(&extracted);
+    normalize_artifact_layout_to_workspace(&bundle_dir)?;
     Ok(StartBundleResolution {
         bundle_dir,
         deployment_key,
@@ -335,6 +336,31 @@ pub(crate) fn detect_bundle_root(extracted_root: &Path) -> PathBuf {
     extracted_root.to_path_buf()
 }
 
+/// Normalize an extracted artifact directory so that `greentic-bundle build --root`
+/// can open it as a workspace.
+///
+/// The artifact/normalized layout written by `greentic-bundle` uses `bundle-lock.json`,
+/// while the workspace layout expects `bundle.lock.json` (the `LOCK_FILE` constant).
+/// When only the artifact name exists, rename it to the workspace name so that
+/// `read_bundle_lock` (called by `build_state`) finds the file.
+fn normalize_artifact_layout_to_workspace(bundle_dir: &Path) -> GtcResult<()> {
+    let workspace_lock = bundle_dir.join("bundle.lock.json");
+    let artifact_lock = bundle_dir.join("bundle-lock.json");
+    if !workspace_lock.exists() && artifact_lock.exists() {
+        fs::rename(&artifact_lock, &workspace_lock).map_err(|e| {
+            GtcError::io(
+                format!(
+                    "failed to normalize lock file {} -> {}",
+                    artifact_lock.display(),
+                    workspace_lock.display()
+                ),
+                e,
+            )
+        })?;
+    }
+    Ok(())
+}
+
 fn is_runtime_bundle_root(path: &Path) -> bool {
     path.join("greentic.demo.yaml").exists()
         || path.join("greentic.operator.yaml").exists()
@@ -403,9 +429,10 @@ mod tests {
     use super::{
         deployment_key_for_path, detect_bundle_root, download_https_bundle_to_tempfile,
         expand_bundle_archive, fingerprint_bundle_dir, looks_like_squashfs, map_registry_target,
-        map_remote_bundle_ref, normalize_bundle_fingerprint, parse_local_bundle_ref,
-        resolve_archive_bundle_path, resolve_bundle_reference, resolve_local_mutable_bundle_dir,
-        sanitize_identifier, should_ignore_fingerprint_path,
+        map_remote_bundle_ref, normalize_artifact_layout_to_workspace,
+        normalize_bundle_fingerprint, parse_local_bundle_ref, resolve_archive_bundle_path,
+        resolve_bundle_reference, resolve_local_mutable_bundle_dir, sanitize_identifier,
+        should_ignore_fingerprint_path,
     };
     use crate::tests::env_test_lock;
     use std::env;
@@ -760,5 +787,78 @@ mod tests {
             stream.write_all(&body).expect("body");
         });
         (format!("http://{addr}/{file_name}"), handle)
+    }
+
+    #[test]
+    fn normalize_artifact_layout_renames_lock_file_to_workspace_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        fs::write(root.join("bundle-lock.json"), r#"{"lock":"data"}"#).expect("write");
+
+        assert!(root.join("bundle-lock.json").exists());
+        assert!(!root.join("bundle.lock.json").exists());
+
+        normalize_artifact_layout_to_workspace(root).expect("normalize");
+
+        assert!(!root.join("bundle-lock.json").exists());
+        assert!(root.join("bundle.lock.json").exists());
+        let content = fs::read_to_string(root.join("bundle.lock.json")).expect("read");
+        assert_eq!(content, r#"{"lock":"data"}"#);
+    }
+
+    #[test]
+    fn normalize_artifact_layout_leaves_existing_workspace_lock_untouched() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        fs::write(root.join("bundle.lock.json"), r#"{"workspace":"lock"}"#).expect("write");
+        fs::write(root.join("bundle-lock.json"), r#"{"artifact":"lock"}"#).expect("write");
+
+        normalize_artifact_layout_to_workspace(root).expect("normalize");
+
+        // workspace-layout name wins; artifact-layout name is left as-is
+        let content = fs::read_to_string(root.join("bundle.lock.json")).expect("read");
+        assert_eq!(content, r#"{"workspace":"lock"}"#);
+        assert!(root.join("bundle-lock.json").exists());
+    }
+
+    #[test]
+    fn normalize_artifact_layout_is_noop_when_no_lock_file_exists() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        normalize_artifact_layout_to_workspace(dir.path()).expect("normalize");
+        assert!(!dir.path().join("bundle.lock.json").exists());
+        assert!(!dir.path().join("bundle-lock.json").exists());
+    }
+
+    #[test]
+    fn resolve_archive_normalizes_artifact_lock_to_workspace_name() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let archive_path = dir.path().join("bundle.zip");
+        let file = fs::File::create(&archive_path).expect("create");
+        let mut zip = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default();
+        zip.start_file("bundle/bundle.yaml", options)
+            .expect("start");
+        zip.write_all(b"bundle_id: demo\n").expect("write");
+        zip.start_file("bundle/bundle-manifest.json", options)
+            .expect("start");
+        zip.write_all(b"{}\n").expect("write");
+        zip.start_file("bundle/bundle-lock.json", options)
+            .expect("start");
+        zip.write_all(b"{\"schema_version\":1,\"bundle_id\":\"demo\"}\n")
+            .expect("write");
+        zip.finish().expect("finish");
+
+        let resolved =
+            resolve_bundle_reference(archive_path.to_str().expect("utf8"), "en").expect("resolved");
+
+        // The extracted bundle root must have the workspace-layout lock file name
+        assert!(
+            resolved.bundle_dir.join("bundle.lock.json").exists(),
+            "bundle.lock.json should exist after normalization"
+        );
+        assert!(
+            !resolved.bundle_dir.join("bundle-lock.json").exists(),
+            "bundle-lock.json should have been renamed"
+        );
     }
 }
