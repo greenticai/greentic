@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::env;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -665,6 +666,40 @@ fn setup_help_passthrough_routes_to_greentic_setup() {
 }
 
 #[test]
+fn provider_passthrough_routes_to_greentic_setup_with_provider_token() {
+    let sandbox =
+        TestSandbox::new("provider_passthrough_routes_to_greentic_setup_with_provider_token");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(["provider", "add", "telegram"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    // greentic-setup must receive `provider add telegram` — the `provider`
+    // token is re-prepended by the router (same pattern as `worker`).
+    assert!(
+        logged
+            .split_whitespace()
+            .eq(["provider", "add", "telegram"]),
+        "expected greentic-setup to receive `provider add telegram`, got: {logged}"
+    );
+}
+
+#[test]
+fn provider_passthrough_preserves_exit_code() {
+    let sandbox = TestSandbox::new("provider_passthrough_preserves_exit_code");
+    sandbox.write_exit_tool("greentic-setup", 42);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(["provider", "list"], HashMap::new());
+    assert_eq!(status.code(), Some(42));
+}
+
+#[test]
 fn op_help_passthrough_routes_to_greentic_operator() {
     let sandbox = TestSandbox::new("op_help_passthrough_routes_to_greentic_operator");
     let log_file = sandbox.path().join("op.log");
@@ -970,16 +1005,27 @@ fn op_start_routes_to_demo_start_with_default_tenant_team_and_cloudflared_off() 
     assert!(logged.contains("--cloudflared off"));
 }
 
+/// B4b: `gtc start <bundle>` no longer boots the legacy bundle-scoped ingress.
+/// It deploys the bundle into the environment via `greentic-setup env-deploy`,
+/// then starts greentic-start *bundle-less* so the env/revision runtime serves
+/// it (static assets, DirectLine, WebSocket, CORS — none of which the legacy
+/// ingress has on the revision path).
+///
+/// The `--bundle` assertions here are inverted on purpose: a `--bundle` on the
+/// start argv means the reroute regressed and the runtime silently loses the
+/// webchat GUI's socket. That is the whole point of this test.
 #[test]
-fn runtime_start_routes_to_greentic_start_cli() {
-    let sandbox = TestSandbox::new("runtime_start_routes_to_greentic_start_cli");
+fn runtime_start_deploys_bundle_into_env_then_starts_bundle_less() {
+    let sandbox = TestSandbox::new("runtime_start_deploys_bundle_into_env_then_starts_bundle_less");
     let bundle_dir = sandbox.path().join("bundle");
     create_minimal_bundle_dir(&bundle_dir);
-    let log_file = sandbox.path().join("start.log");
+    let start_log = sandbox.path().join("start.log");
+    let setup_log = sandbox.path().join("setup.log");
 
     sandbox.write_exit_tool("greentic-dev", 0);
     sandbox.write_bundle_build_tool("greentic-bundle", &sandbox.path().join("bundle.log"));
-    sandbox.write_arg_logger_tool("greentic-start", &log_file, 0);
+    sandbox.write_arg_logger_tool("greentic-setup", &setup_log, 0);
+    sandbox.write_arg_logger_tool("greentic-start", &start_log, 0);
 
     let output = sandbox.run_gtc_capture(
         [
@@ -1004,19 +1050,137 @@ fn runtime_start_routes_to_greentic_start_cli() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let logged = fs::read_to_string(log_file).expect("read start log");
-    assert!(logged.contains("--locale en start"));
-    assert!(logged.contains("--bundle"));
-    // `--bundle` must rewrite to prepared-root; source dir may appear under `--log-dir`.
-    let bundle_str = bundle_dir.to_str().expect("bundle utf8");
+    // The bundle is deployed into the env before anything is served.
+    let deployed = fs::read_to_string(&setup_log).expect("read setup log");
     assert!(
-        !logged.contains(&format!("--bundle {bundle_str}")),
-        "--bundle should be rewritten to prepared-root, not the source dir; got: {logged}"
+        deployed.contains("env-deploy"),
+        "greentic-setup must be invoked with env-deploy; got: {deployed}"
+    );
+    assert!(
+        deployed.contains("--env local"),
+        "env-deploy must target the resolved env; got: {deployed}"
+    );
+
+    // greentic-start is then booted bundle-less against that same env.
+    let logged = fs::read_to_string(&start_log).expect("read start log");
+    assert!(logged.contains("--locale en start"));
+    assert!(
+        !logged.contains("--bundle"),
+        "start must be bundle-less so the env/revision runtime serves the \
+         revision (a --bundle here silently drops the webchat WebSocket); got: {logged}"
+    );
+    assert!(
+        logged.contains("--env local"),
+        "start must be pinned to the same env the bundle was deployed into; got: {logged}"
     );
     assert!(logged.contains("--tenant demo"));
     assert!(logged.contains("--team ops"));
     assert!(logged.contains("--cloudflared off"));
     assert!(logged.contains("--admin"));
+}
+
+/// `--admin` generates a dev CA plus server and client PRIVATE keys. Under the
+/// legacy path those lived in a tempdir that died on shutdown. B4b hands the
+/// prepared root to `env-deploy`, which stages a PERSISTENT copy — and an
+/// environment store can be remote. The keys must never enter the deployed
+/// revision; greentic-start reads them from the source bundle via
+/// `--admin-certs-dir` instead.
+#[test]
+fn admin_private_keys_are_not_staged_into_the_environment() {
+    let sandbox = TestSandbox::new("admin_private_keys_are_not_staged_into_the_environment");
+    let bundle_dir = sandbox.path().join("bundle");
+    create_minimal_bundle_dir(&bundle_dir);
+    let start_log = sandbox.path().join("start.log");
+    let setup_log = sandbox.path().join("setup.log");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_bundle_build_tool("greentic-bundle", &sandbox.path().join("bundle.log"));
+    sandbox.write_env_deploy_probe_tool("greentic-setup", &setup_log);
+    sandbox.write_arg_logger_tool("greentic-start", &start_log, 0);
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "start",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "runtime",
+            "--admin",
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "stdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let deployed = fs::read_to_string(&setup_log).expect("read setup log");
+    assert!(
+        deployed.contains("env-deploy"),
+        "env-deploy must run; got: {deployed}"
+    );
+    assert!(
+        !deployed.contains("LEAKED_PRIVATE_KEY"),
+        "admin private keys must never be staged into the environment store \
+         (it can be remote); probe reported: {deployed}"
+    );
+    assert!(
+        deployed.contains("ADMIN_DIR_IN_DEPLOYED_BUNDLE=false"),
+        "the deployed bundle must carry no .greentic/admin directory; got: {deployed}"
+    );
+
+    // The admin server still gets its certs — from the source bundle, which is
+    // never handed to env-deploy.
+    let served = fs::read_to_string(&start_log).expect("read start log");
+    assert!(served.contains("--admin"), "admin mode still enabled");
+    let bundle_str = bundle_dir.to_str().expect("bundle utf8");
+    assert!(
+        served.contains(&format!("--admin-certs-dir {bundle_str}")),
+        "certs must be served from the source bundle, not the prepared root; got: {served}"
+    );
+}
+
+/// The env-deploy step and the serving process must agree on one env, even if
+/// `$GREENTIC_ENV` changes between the two spawns — so `gtc` resolves it once
+/// and pins it explicitly on both.
+#[test]
+fn runtime_start_pins_explicit_env_on_both_deploy_and_serve() {
+    let sandbox = TestSandbox::new("runtime_start_pins_explicit_env_on_both_deploy_and_serve");
+    let bundle_dir = sandbox.path().join("bundle");
+    create_minimal_bundle_dir(&bundle_dir);
+    let start_log = sandbox.path().join("start.log");
+    let setup_log = sandbox.path().join("setup.log");
+
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_bundle_build_tool("greentic-bundle", &sandbox.path().join("bundle.log"));
+    sandbox.write_arg_logger_tool("greentic-setup", &setup_log, 0);
+    sandbox.write_arg_logger_tool("greentic-start", &start_log, 0);
+
+    let output = sandbox.run_gtc_capture(
+        [
+            "start",
+            bundle_dir.to_str().expect("bundle utf8"),
+            "--target",
+            "runtime",
+            "--env",
+            "staging",
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let deployed = fs::read_to_string(&setup_log).expect("read setup log");
+    let served = fs::read_to_string(&start_log).expect("read start log");
+    assert!(
+        deployed.contains("--env staging"),
+        "env-deploy must honor --env; got: {deployed}"
+    );
+    assert!(
+        served.contains("--env staging"),
+        "serve must honor --env; got: {served}"
+    );
 }
 
 #[test]
@@ -1063,14 +1227,14 @@ fn install_public_mode_installs_manifest_toolchain() {
     assert!(cargo_logged.contains("search cargo-binstall --limit 1"));
     assert!(
         cargo_logged.contains(
-            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+            "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-dev --version 0.5.9 --bin greentic-dev"
         )
     );
     assert!(cargo_logged.contains(
-        "binstall -y --locked --force greentic-runner --version 0.5.10 --bin greentic-runner"
+        "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-runner --version 0.5.10 --bin greentic-runner"
     ));
     assert!(cargo_logged.contains(
-        "binstall -y --locked --force greentic-runner --version 0.5.10 --bin greentic-runner-cli"
+        "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-runner --version 0.5.10 --bin greentic-runner-cli"
     ));
 }
 
@@ -1875,7 +2039,7 @@ fn install_latest_manifest_resolves_prerelease_before_binstall() {
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
     assert!(cargo_logged.contains("search greentic-flow --limit 1"));
     assert!(cargo_logged.contains(
-        "binstall -y --locked --force greentic-flow --version 0.6.0-dev.25001174716 --bin greentic-flow"
+        "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-flow --version 0.6.0-dev.25001174716 --bin greentic-flow"
     ));
 }
 
@@ -1942,7 +2106,7 @@ fn install_tenant_mode_delegates_to_greentic_dev_after_toolchain_success() {
     let cargo_logged = fs::read_to_string(cargo_log_file).expect("read cargo log");
     assert!(
         cargo_logged.contains(
-            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+            "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-dev --version 0.5.9 --bin greentic-dev"
         )
     );
 
@@ -2136,7 +2300,7 @@ fn update_installs_manifest_toolchain_with_force() {
     let cargo_logged = fs::read_to_string(&cargo_log_file).expect("read cargo log");
     assert!(
         cargo_logged.contains(
-            "binstall -y --locked --force greentic-dev --version 0.5.9 --bin greentic-dev"
+            "binstall -y --locked --force --maximum-resolution-timeout 60 greentic-dev --version 0.5.9 --bin greentic-dev"
         )
     );
 
@@ -2334,6 +2498,11 @@ impl TestSandbox {
         self.compile_rust_tool_at(&path, &rust_arg_logger_program(log_file, exit_code));
     }
 
+    fn write_env_deploy_probe_tool(&self, name: &str, log_file: &Path) {
+        let path = self.binary_path(name);
+        self.compile_rust_tool_at(&path, &rust_env_deploy_probe_program(log_file));
+    }
+
     fn write_arg_env_logger_tool(
         &self,
         name: &str,
@@ -2465,7 +2634,22 @@ impl TestSandbox {
             cmd.env(k, v);
         }
 
-        cmd.output().expect("run gtc")
+        // ETXTBSY guard. These tests compile helper executables while other
+        // test threads are spawning processes. Between `fork()` and `execve()`
+        // a child transiently inherits the writable fd of an executable another
+        // thread is still creating, and exec'ing that file returns ETXTBSY.
+        // The window is short, so a bounded retry is enough; without it the
+        // suite fails roughly one run in four, on a different test each time.
+        for attempt in 0..10 {
+            match cmd.output() {
+                Ok(output) => return output,
+                Err(err) if err.kind() == io::ErrorKind::ExecutableFileBusy => {
+                    std::thread::sleep(std::time::Duration::from_millis(20 * (attempt + 1)));
+                }
+                Err(err) => panic!("run gtc: {err:?}"),
+            }
+        }
+        panic!("run gtc: still ETXTBSY after retries");
     }
 }
 
@@ -3015,6 +3199,46 @@ fn rust_exit_tool_program(exit_code: i32) -> String {
     format!("fn main() {{ std::process::exit({exit_code}); }}",)
 }
 
+/// A `greentic-setup` stand-in that logs its argv AND inspects the bundle it was
+/// handed by `env-deploy`, recording whether admin private keys are inside it.
+/// The prepared root is a tempdir that gets cleaned up, so the only way to know
+/// what was actually staged into the environment is to look from in here.
+fn rust_env_deploy_probe_program(log_file: &Path) -> String {
+    let log_literal = rust_string_literal(&log_file.display().to_string());
+    format!(
+        r#"
+use std::fs::OpenOptions;
+use std::io::Write;
+use std::path::Path;
+
+fn main() {{
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open({log_literal})
+        .expect("open log");
+    writeln!(file, "{{}}", args.join(" ")).expect("write log");
+
+    if let Some(idx) = args.iter().position(|a| a == "env-deploy")
+        && let Some(bundle) = args.get(idx + 1)
+    {{
+        let admin = Path::new(bundle).join(".greentic").join("admin");
+        writeln!(file, "ADMIN_DIR_IN_DEPLOYED_BUNDLE={{}}", admin.exists())
+            .expect("write log");
+        for key in ["ca.key", "server.key", "client.key"] {{
+            let path = admin.join("certs").join(key);
+            if path.exists() {{
+                writeln!(file, "LEAKED_PRIVATE_KEY={{}}", key).expect("write log");
+            }}
+        }}
+    }}
+    std::process::exit(0);
+}}
+"#
+    )
+}
+
 fn rust_arg_logger_program(log_file: &Path, exit_code: i32) -> String {
     let log_literal = rust_string_literal(&log_file.display().to_string());
     format!(
@@ -3204,7 +3428,7 @@ fn main() {{
         return;
     }}
     if args.first().map(String::as_str) == Some("binstall")
-        && args.get(1).map(String::as_str) == Some("--version")
+        && matches!(args.get(1).map(String::as_str), Some("-V" | "--version"))
     {{
         println!("cargo-binstall 1.0.0");
         return;

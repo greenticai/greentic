@@ -1,16 +1,17 @@
 use super::{
-    AdminRegistryDocument, DEV_BIN, FLOW_BIN, StartTarget, admin_registry_path, build_cli,
-    build_wizard_args, collect_tail, default_install_channel_for_invocation, detect_bundle_root,
-    detect_locale, ensure_admin_certs_ready, extract_tar_archive, fingerprint_bundle_dir,
-    locale_from_args, normalize_bundle_fingerprint, normalize_expected_sha256,
-    normalize_install_arch, parse_prompt_choice, parse_start_cli_options, parse_start_request,
-    parse_stop_cli_options, parse_stop_request, remove_admin_registry_entry,
-    resolve_admin_cert_dir, resolve_canonical_target_provider_pack_from,
-    resolve_companion_binary_from, resolve_companion_binary_from_invocation,
-    resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
-    resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
-    run_admin_access, run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry,
-    select_start_target, should_send_auth_header, tenant_env_var_name, upsert_admin_registry_entry,
+    AdminRegistryDocument, DEV_BIN, DW_BIN, FLOW_BIN, SETUP_BIN, StartTarget, admin_registry_path,
+    build_cli, build_wizard_args, collect_tail, default_install_channel_for_invocation,
+    detect_bundle_root, detect_locale, ensure_admin_certs_ready, extract_tar_archive,
+    fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
+    normalize_expected_sha256, normalize_install_arch, parse_prompt_choice,
+    parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
+    remove_admin_registry_entry, resolve_admin_cert_dir,
+    resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
+    resolve_companion_binary_from_invocation, resolve_deploy_app_pack_path,
+    resolve_local_mutable_bundle_dir, resolve_target_provider_pack, resolve_tenant_key,
+    rewrite_store_tenant_placeholder, route_passthrough_subcommand, run_admin_access,
+    run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry, select_start_target,
+    should_send_auth_header, start_k8s_rewrite, tenant_env_var_name, upsert_admin_registry_entry,
     verify_sha256_digest,
 };
 #[cfg(unix)]
@@ -237,6 +238,41 @@ fn route_passthrough_subcommand_routes_wizard_to_greentic_dev() {
             "--locale".to_string(),
             "en".to_string(),
             "--help".to_string()
+        ]
+    );
+}
+
+#[test]
+fn route_passthrough_subcommand_routes_worker_to_greentic_dw() {
+    let tail = vec!["build".to_string(), "s.yaml".to_string()];
+    let (binary, args) = route_passthrough_subcommand("worker", &tail, "en").expect("worker route");
+
+    assert_eq!(binary, DW_BIN);
+    // the `worker` token must be re-added so greentic-dw sees `worker build s.yaml`
+    assert_eq!(
+        args,
+        vec![
+            "worker".to_string(),
+            "build".to_string(),
+            "s.yaml".to_string()
+        ]
+    );
+}
+
+#[test]
+fn route_passthrough_subcommand_routes_provider_to_greentic_setup() {
+    let tail = vec!["add".to_string(), "telegram".to_string()];
+    let (binary, args) =
+        route_passthrough_subcommand("provider", &tail, "en").expect("provider route");
+
+    assert_eq!(binary, SETUP_BIN);
+    // the `provider` token must be re-added so greentic-setup sees `provider add telegram`
+    assert_eq!(
+        args,
+        vec![
+            "provider".to_string(),
+            "add".to_string(),
+            "telegram".to_string()
         ]
     );
 }
@@ -1796,6 +1832,69 @@ fn fingerprint_bundle_dir_skips_symlink_cycles() {
 
     assert!(fingerprint.contains("file:packs/cards-demo.gtpack"));
     assert!(!fingerprint.contains("loop"));
+}
+
+#[test]
+fn start_k8s_rewrite_rewrites_leading_k8s_token() {
+    let tail = vec!["k8s".to_string()];
+    let rewritten = start_k8s_rewrite(&tail).expect("should rewrite");
+    assert_eq!(
+        rewritten,
+        vec!["op".to_string(), "env".to_string(), "up".to_string()]
+    );
+}
+
+#[test]
+fn start_k8s_rewrite_does_not_rewrite_k8s_after_flag() {
+    let tail = vec!["--answers".to_string(), "k8s".to_string()];
+    assert!(start_k8s_rewrite(&tail).is_none());
+}
+
+#[test]
+fn start_k8s_rewrite_returns_none_without_k8s() {
+    let tail = vec!["my-bundle.gtbundle".to_string()];
+    assert!(start_k8s_rewrite(&tail).is_none());
+}
+
+/// Only the exact token `k8s` is reserved. A bundle named `k8s` stays reachable
+/// through any path form, so the sugar cannot swallow a real bundle ref.
+#[test]
+fn start_k8s_rewrite_leaves_path_form_bundle_refs_to_run_start() {
+    for bundle_ref in ["./k8s", "k8s/", "k8s.gtbundle", "/opt/bundles/k8s", "K8s"] {
+        let tail = vec![bundle_ref.to_string()];
+        assert!(
+            start_k8s_rewrite(&tail).is_none(),
+            "`{bundle_ref}` must reach run_start as a bundle ref"
+        );
+    }
+}
+
+#[test]
+fn start_k8s_rewrite_returns_none_for_empty_tail() {
+    let tail: Vec<String> = vec![];
+    assert!(start_k8s_rewrite(&tail).is_none());
+}
+
+#[test]
+fn start_k8s_rewrite_preserves_trailing_flags_in_order() {
+    let tail = vec![
+        "k8s".to_string(),
+        "--answers".to_string(),
+        "/tmp/answers.json".to_string(),
+        "--dry-run".to_string(),
+    ];
+    let rewritten = start_k8s_rewrite(&tail).expect("should rewrite");
+    assert_eq!(
+        rewritten,
+        vec![
+            "op".to_string(),
+            "env".to_string(),
+            "up".to_string(),
+            "--answers".to_string(),
+            "/tmp/answers.json".to_string(),
+            "--dry-run".to_string(),
+        ]
+    );
 }
 
 struct HttpRequest {

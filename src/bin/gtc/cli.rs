@@ -843,6 +843,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.start.about",
                     "Start a bundle from local or remote reference.",
                 ))
+                .after_help("Use `gtc start k8s [FLAGS]` to provision a local Kind cluster and deploy an environment via `op env up`. All flags (including --answers) are forwarded to the operator. Only the exact first token `k8s` is reserved: a bundle of that name is still reachable by path (`./k8s`).")
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -865,6 +866,19 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_help_flag(true)
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.dev.about").into_owned())
+                .arg(cmd_args.clone()),
+        )
+        .subcommand(
+            Command::new("worker")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.worker.about",
+                    "Author and build agentic workers (passthrough to greentic-dw).",
+                ))
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -939,6 +953,19 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 )
                 .arg(release_context_strict_arg(options_heading))
                 .arg(release_context_ignore_arg(options_heading))
+                .arg(cmd_args.clone()),
+        )
+        .subcommand(
+            Command::new("provider")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.provider.about",
+                    "Manage messaging providers (passthrough to greentic-setup).",
+                ))
                 .arg(cmd_args),
         )
         .subcommand(

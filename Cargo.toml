@@ -101,5 +101,5 @@ features = [
 
 [dev-dependencies]
 criterion = "0.8"
-insta = "1.43"
+insta = "1.48"
 proptest = "1.7"

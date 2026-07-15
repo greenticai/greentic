@@ -52,6 +52,9 @@ use commands::default_install_channel_for_invocation;
 use commands::run;
 #[cfg(test)]
 #[allow(unused_imports)]
+use commands::start_k8s_rewrite;
+#[cfg(test)]
+#[allow(unused_imports)]
 use deploy::resolve_local_mutable_bundle_dir;
 #[cfg(test)]
 #[allow(unused_imports)]
@@ -106,6 +109,7 @@ const FLOW_BIN: &str = "greentic-flow";
 const PACK_BIN: &str = "greentic-pack";
 const RUNNER_BIN: &str = "greentic-runner";
 const SECRETS_BIN: &str = "greentic-secrets";
+const DW_BIN: &str = "greentic-dw";
 fn main() {
     let raw_args: Vec<String> = std::env::args().collect();
     let exit_code = run(raw_args);

@@ -13,10 +13,14 @@ use super::bundle_resolution::resolve_bundle_reference;
 use super::cloud_deploy::{destroy_deployment, ensure_started_or_deployed};
 use super::prepared_bundle::{prepare_bundle_for_start, print_prepared_bundle_debug};
 use super::{ChildProcessEnv, StartCliOptions, StartTarget, StopCliOptions};
-use crate::START_BIN;
 use crate::admin::ensure_admin_certs_ready;
 use crate::i18n_support::t_or;
 use crate::process::{run_binary_checked, run_binary_checked_with_target_and_env};
+use crate::{SETUP_BIN, START_BIN};
+
+/// Environment served when neither `--env` nor `$GREENTIC_ENV` is set. Must
+/// match greentic-start's own default, which bootstraps this env on demand.
+const DEFAULT_ENV_ID: &str = "local";
 
 const START_USAGE: &str = "usage: gtc start [BUNDLE_REF] [start flags...]\n\
   BUNDLE_REF: local path, file://, oci://, repo://, store:// (omit to serve the active env's deployed revisions)\n\
@@ -24,7 +28,7 @@ const START_USAGE: &str = "usage: gtc start [BUNDLE_REF] [start flags...]\n\
               --deploy-bundle-source <src> --upload-bundle <url> --upload-bundle-presign-expires <secs>\n\
               --extension-start-handoff <path>\n\
   runtime flags are forwarded to greentic-start (e.g. --env, --tenant, --team, --nats, --cloudflared, --ngrok,\n\
-  --admin, --restart, --verbose, --quiet); see `greentic-start start --help` for the full list";
+  --admin, --restart, --verbose, --quiet, --no-updates); see `greentic-start start --help` for the full list";
 
 const STOP_USAGE: &str = "usage: gtc stop [BUNDLE_REF] [stop flags...]\n\
   BUNDLE_REF: bundle to stop (omit to stop the active env's serving runtime)\n\
@@ -268,12 +272,78 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
             }
         }
     }
-    println!("Deployment mode: local runtime");
+    // B4b: a bundle ref no longer boots the legacy bundle-scoped ingress.
+    // Deploy it into the environment, then start greentic-start *bundle-less*
+    // so it serves the deployed revision through the env/revision runtime —
+    // which is where static assets, DirectLine, WebSocket and CORS live. The
+    // env is created on demand (greentic-start bootstraps it), and the webchat
+    // GUI is on by default for `local`.
+    let env_id = resolve_env_id(request.env.as_deref());
+    println!("Deployment mode: local runtime (environment `{env_id}`)");
     println!(
         "Starting tenant={} team={}",
         request.tenant.as_deref().unwrap_or("demo"),
         request.team.as_deref().unwrap_or("default")
     );
+    // `--admin` without an explicit cert dir generates a dev CA plus server and
+    // client PRIVATE keys inside the prepared root. The legacy path kept that
+    // root in a tempdir that died on shutdown; env-deploy instead stages a
+    // persistent copy of whatever it is handed, and an environment store can be
+    // remote. Keep the keys out of the deployed revision and serve them from the
+    // source bundle, which greentic-start reads via `--admin-certs-dir`.
+    if request
+        .admin_certs_dir
+        .as_deref()
+        .is_some_and(|dir| dir.starts_with(&prepared.prepared_root))
+    {
+        let staged_admin = prepared.prepared_root.join(".greentic").join("admin");
+        if staged_admin.is_dir()
+            && let Err(err) = fs::remove_dir_all(&staged_admin)
+        {
+            eprintln!(
+                "{}: {err}",
+                t_or(
+                    locale,
+                    "gtc.start.err.admin_certs_failed",
+                    "failed to prepare admin certificates"
+                )
+            );
+            return 1;
+        }
+        match ensure_admin_certs_ready(&resolved.bundle_dir, None) {
+            Ok(cert_dir) => request.admin_certs_dir = Some(cert_dir),
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(
+                        locale,
+                        "gtc.start.err.admin_certs_failed",
+                        "failed to prepare admin certificates"
+                    )
+                );
+                return 1;
+            }
+        }
+    }
+    if let Err(err) = deploy_bundle_into_env(&prepared.prepared_root, &env_id, debug, locale) {
+        eprintln!(
+            "{}: {err}",
+            t_or(
+                locale,
+                "gtc.start.err.env_deploy_failed",
+                "failed to deploy bundle into environment"
+            )
+        );
+        return 1;
+    }
+    // The env-apply engine has staged its own copy of the revision, so the
+    // prepared tempdir is no longer the serving root. Pin the env explicitly
+    // rather than letting greentic-start re-resolve $GREENTIC_ENV: the two
+    // processes must agree on the same env even if the variable changes
+    // between them.
+    request.bundle = None;
+    request.config = None;
+    request.env = Some(env_id);
     // The prepared bundle lives under a tempdir that gets cleaned on shutdown,
     // so default operator.log/flow.log into the source bundle dir where users
     // can actually find them.
@@ -300,6 +370,39 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
             1
         }
     }
+}
+
+/// Resolve the environment id using greentic-start's precedence:
+/// explicit `--env` > `$GREENTIC_ENV` > `local`.
+///
+/// Used by both start and stop so the env-deploy/serve and stop paths
+/// agree on the same environment.
+fn resolve_env_id(explicit: Option<&str>) -> String {
+    explicit
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("GREENTIC_ENV")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| DEFAULT_ENV_ID.to_string())
+}
+
+/// Deploy a prepared bundle into `env_id` via `greentic-setup env-deploy`.
+///
+/// `--env` and `--non-interactive` are global flags on the setup CLI, so they
+/// precede the subcommand.
+fn deploy_bundle_into_env(bundle: &Path, env_id: &str, debug: bool, locale: &str) -> GtcResult<()> {
+    let args = vec![
+        "--locale".to_string(),
+        locale.to_string(),
+        "--env".to_string(),
+        env_id.to_string(),
+        "--non-interactive".to_string(),
+        "env-deploy".to_string(),
+        bundle.display().to_string(),
+    ];
+    run_binary_checked(SETUP_BIN, &args, debug, locale, "env-deploy bundle")
 }
 
 fn local_runtime_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
@@ -446,6 +549,13 @@ pub(crate) fn run_stop(tail: &[String], debug: bool, locale: &str) -> i32 {
                 );
                 return 2;
             }
+            // B4b: start now launches a bundle-less env-backed runtime for
+            // bundle refs, so stop must target the same env rather than
+            // sending `--bundle` to a legacy path that no longer exists.
+            let mut request = request;
+            let env_id = resolve_env_id(request.env.as_deref());
+            request.bundle = None;
+            request.env = Some(env_id);
             let args = request.to_runtime_stop_args(locale);
             match run_binary_checked(START_BIN, &args, debug, locale, "stop bundle") {
                 Ok(()) => 0,
@@ -951,6 +1061,7 @@ mod tests {
             team: Some("ops".to_string()),
             no_nats: false,
             no_browser: true,
+            no_updates: false,
             nats: NatsModeArg::External,
             nats_url: Some("nats://demo".to_string()),
             config: Some(PathBuf::from("/tmp/config.yaml")),
@@ -989,6 +1100,27 @@ mod tests {
         assert!(args.contains(&"--no-browser".to_string()));
         assert!(args.contains(&"ops,local".to_string()));
         assert!(args.contains(&"gateway,nats".to_string()));
+        assert!(
+            !args.contains(&"--no-updates".to_string()),
+            "the updater is on unless the operator opts out"
+        );
+    }
+
+    #[test]
+    fn no_updates_round_trips_through_parse_and_serialize() {
+        // `gtc start` re-parses its tail by hand — a flag that is not in both
+        // `parse_start_request` and `to_runtime_start_args` silently vanishes
+        // before greentic-start ever sees it.
+        let tail = vec!["--no-updates".to_string()];
+        let request =
+            parse_start_request(&tail, PathBuf::from("/tmp/bundle")).expect("--no-updates parses");
+        assert!(request.no_updates);
+        assert!(
+            request
+                .to_runtime_start_args("en")
+                .contains(&"--no-updates".to_string())
+        );
+        assert!(!start_flag_takes_value("--no-updates"));
     }
 
     #[test]
@@ -1178,6 +1310,7 @@ mod tests {
         for flag in [
             "--no-nats",
             "--no-browser",
+            "--no-updates",
             "--verbose",
             "--quiet",
             "--admin",

@@ -5,7 +5,7 @@ use gtc::perf_targets::{
     rewrite_legacy_op_args as perf_rewrite_legacy_op_args,
 };
 
-use super::{DEV_BIN, OP_BIN, SETUP_BIN};
+use super::{DEV_BIN, DW_BIN, OP_BIN, SETUP_BIN};
 use crate::extensions::has_extension_flags;
 use crate::i18n_support::i18n;
 
@@ -66,8 +66,26 @@ pub(super) fn route_passthrough_subcommand(
         "op" => Some((OP_BIN, rewrite_legacy_op_args(tail))),
         "setup" => Some((SETUP_BIN, tail.to_vec())),
         "wizard" => Some((DEV_BIN, build_wizard_args(tail, locale))),
+        "worker" => Some((DW_BIN, build_worker_args(tail))),
+        "provider" => Some((SETUP_BIN, build_provider_args(tail))),
         _ => None,
     }
+}
+
+/// Re-add a subcommand token that `route_passthrough_subcommand` strips,
+/// then forward the remaining args verbatim.
+fn prepend_subcommand(token: &str, args: &[String]) -> Vec<String> {
+    let mut forwarded = vec![token.to_string()];
+    forwarded.extend_from_slice(args);
+    forwarded
+}
+
+pub(super) fn build_worker_args(args: &[String]) -> Vec<String> {
+    prepend_subcommand("worker", args)
+}
+
+pub(super) fn build_provider_args(args: &[String]) -> Vec<String> {
+    prepend_subcommand("provider", args)
 }
 
 fn rewrite_legacy_op_args(args: &[String]) -> Vec<String> {
