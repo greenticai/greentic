@@ -52,6 +52,9 @@ use commands::default_install_channel_for_invocation;
 use commands::run;
 #[cfg(test)]
 #[allow(unused_imports)]
+use commands::start_cloudrun_rewrite;
+#[cfg(test)]
+#[allow(unused_imports)]
 use commands::start_k8s_rewrite;
 #[cfg(test)]
 #[allow(unused_imports)]

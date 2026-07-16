@@ -843,7 +843,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.start.about",
                     "Start a bundle from local or remote reference.",
                 ))
-                .after_help("Use `gtc start k8s [FLAGS]` to provision a local Kind cluster and deploy an environment via `op env up`. All flags (including --answers) are forwarded to the operator. Only the exact first token `k8s` is reserved: a bundle of that name is still reachable by path (`./k8s`).")
+                .after_help("Use `gtc start k8s [FLAGS]` to provision a local Kind cluster and deploy an environment via `op env up`, or `gtc start cloudrun [FLAGS]` to deploy a scale-to-zero Google Cloud Run environment and print its live `run.app` URL. All flags (including --answers) are forwarded to the operator. Only the exact first tokens `k8s` and `cloudrun` are reserved: a bundle of either name is still reachable by path (`./k8s`, `./cloudrun`).")
                 .arg(cmd_args.clone()),
         )
         .subcommand(
