@@ -3,16 +3,16 @@ use super::{
     build_cli, build_wizard_args, collect_tail, default_install_channel_for_invocation,
     detect_bundle_root, detect_locale, ensure_admin_certs_ready, extract_tar_archive,
     fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
-    normalize_expected_sha256, normalize_install_arch, parse_prompt_choice,
-    parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
-    remove_admin_registry_entry, resolve_admin_cert_dir,
-    resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
-    resolve_companion_binary_from_invocation, resolve_deploy_app_pack_path,
-    resolve_local_mutable_bundle_dir, resolve_target_provider_pack, resolve_tenant_key,
-    rewrite_store_tenant_placeholder, route_passthrough_subcommand, run_admin_access,
-    run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry, select_start_target,
-    should_send_auth_header, start_k8s_rewrite, tenant_env_var_name, upsert_admin_registry_entry,
-    verify_sha256_digest,
+    normalize_expected_sha256, normalize_install_arch, operator_messaging_op_deprecation,
+    parse_prompt_choice, parse_start_cli_options, parse_start_request, parse_stop_cli_options,
+    parse_stop_request, promote_setup_provider, remove_admin_registry_entry,
+    resolve_admin_cert_dir, resolve_canonical_target_provider_pack_from,
+    resolve_companion_binary_from, resolve_companion_binary_from_invocation,
+    resolve_deploy_app_pack_path, resolve_local_mutable_bundle_dir, resolve_target_provider_pack,
+    resolve_tenant_key, rewrite_store_tenant_placeholder, route_passthrough_subcommand,
+    run_admin_access, run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry,
+    select_start_target, should_send_auth_header, start_k8s_rewrite, tenant_env_var_name,
+    upsert_admin_registry_entry, verify_sha256_digest,
 };
 #[cfg(unix)]
 use super::{apply_default_deploy_env_for_target, extract_zip_bytes, validate_cloud_deploy_inputs};
@@ -275,6 +275,84 @@ fn route_passthrough_subcommand_routes_provider_to_greentic_setup() {
             "telegram".to_string()
         ]
     );
+}
+
+#[test]
+fn route_passthrough_subcommand_routes_provider_remove_to_greentic_setup() {
+    let tail = vec!["remove".to_string(), "telegram".to_string()];
+    let (binary, args) =
+        route_passthrough_subcommand("provider", &tail, "en").expect("provider route");
+
+    assert_eq!(binary, SETUP_BIN);
+    // the `provider` token must be re-added so greentic-setup sees `provider remove telegram`
+    assert_eq!(
+        args,
+        vec![
+            "provider".to_string(),
+            "remove".to_string(),
+            "telegram".to_string()
+        ]
+    );
+}
+
+#[test]
+fn promote_setup_provider_rewrites_setup_provider_to_provider() {
+    let tail = vec![
+        "provider".to_string(),
+        "add".to_string(),
+        "telegram".to_string(),
+    ];
+    let (name, rewritten) = promote_setup_provider("setup", tail);
+
+    assert_eq!(name, "provider");
+    // the leading `provider` token is stripped; `build_provider_args` re-prepends it later
+    assert_eq!(rewritten, vec!["add".to_string(), "telegram".to_string()]);
+}
+
+#[test]
+fn promote_setup_provider_leaves_plain_setup_untouched() {
+    let tail = vec!["./my-bundle".to_string()];
+    let (name, rewritten) = promote_setup_provider("setup", tail);
+
+    assert_eq!(name, "setup");
+    assert_eq!(rewritten, vec!["./my-bundle".to_string()]);
+}
+
+#[test]
+fn promote_setup_provider_leaves_standalone_provider_untouched() {
+    let tail = vec!["add".to_string(), "telegram".to_string()];
+    let (name, rewritten) = promote_setup_provider("provider", tail);
+
+    assert_eq!(name, "provider");
+    assert_eq!(rewritten, vec!["add".to_string(), "telegram".to_string()]);
+}
+
+#[test]
+fn operator_messaging_op_deprecation_flags_endpoint_verbs() {
+    // Post-rewrite operator argv: `gtc op messaging endpoint add …`.
+    let args = vec![
+        "op".to_string(),
+        "messaging".to_string(),
+        "endpoint".to_string(),
+        "add".to_string(),
+    ];
+    let hint = operator_messaging_op_deprecation(&args).expect("deprecation hint");
+    assert!(hint.contains("gtc setup provider"));
+}
+
+#[test]
+fn operator_messaging_op_deprecation_ignores_other_ops() {
+    // Non-messaging operator ops keep working with no notice.
+    for args in [
+        vec!["op".to_string(), "env".to_string(), "up".to_string()],
+        vec!["op".to_string(), "env-packs".to_string(), "add".to_string()],
+        vec!["op".to_string(), "messaging".to_string()],
+    ] {
+        assert!(
+            operator_messaging_op_deprecation(&args).is_none(),
+            "unexpected deprecation for {args:?}"
+        );
+    }
 }
 
 #[test]

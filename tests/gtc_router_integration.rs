@@ -700,6 +700,274 @@ fn provider_passthrough_preserves_exit_code() {
 }
 
 #[test]
+fn provider_remove_passthrough_routes_to_greentic_setup_with_provider_token() {
+    let sandbox = TestSandbox::new(
+        "provider_remove_passthrough_routes_to_greentic_setup_with_provider_token",
+    );
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(["provider", "remove", "telegram"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    // greentic-setup must receive `provider remove telegram` — the `provider`
+    // token is re-prepended by the router (same pattern as `add`).
+    assert!(
+        logged
+            .split_whitespace()
+            .eq(["provider", "remove", "telegram"]),
+        "expected greentic-setup to receive `provider remove telegram`, got: {logged}"
+    );
+}
+
+#[test]
+fn provider_remove_passthrough_preserves_exit_code() {
+    let sandbox = TestSandbox::new("provider_remove_passthrough_preserves_exit_code");
+    sandbox.write_exit_tool("greentic-setup", 7);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let status = sandbox.run_gtc(["provider", "remove", "telegram"], HashMap::new());
+    assert_eq!(status.code(), Some(7));
+}
+
+#[test]
+fn provider_schema_surfaces_questions_from_greentic_setup() {
+    let sandbox = TestSandbox::new("provider_schema_surfaces_questions_from_greentic_setup");
+    // greentic-setup emits the provider's question/secret schema on stdout when
+    // asked with `--schema`; gtc captures it and re-emits it for a UI.
+    let schema = r#"{"title":"telegram","questions":[{"id":"bot_token","secret":true}]}"#;
+    sandbox.write_stdout_tool("greentic-setup", schema, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let output =
+        sandbox.run_gtc_capture(["provider", "add", "telegram", "--schema"], HashMap::new());
+    assert_eq!(output.status.code(), Some(0));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // gtc pretty-prints the captured schema, so match on stable substrings.
+    assert!(
+        stdout.contains("\"bot_token\"") && stdout.contains("\"questions\""),
+        "expected gtc to surface the provider schema, got: {stdout}"
+    );
+}
+
+#[test]
+fn provider_answers_local_file_is_resolved_and_forwarded() {
+    let sandbox = TestSandbox::new("provider_answers_local_file_is_resolved_and_forwarded");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    // A valid local answers document is validated by gtc, then forwarded to
+    // greentic-setup — `provider` now participates in answers resolution.
+    let answers_path = sandbox.path().join("answers.json");
+    fs::write(&answers_path, r#"{"bot_token":"secret-123"}"#).expect("write answers");
+    let answers_str = answers_path.to_str().expect("utf8 answers path");
+
+    let status = sandbox.run_gtc(
+        ["provider", "add", "telegram", "--answers", answers_str],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    assert!(
+        logged
+            .split_whitespace()
+            .eq(["provider", "add", "telegram", "--answers", answers_str]),
+        "expected greentic-setup to receive the resolved answers path, got: {logged}"
+    );
+}
+
+#[test]
+fn provider_answers_missing_source_fails_before_greentic_setup() {
+    let sandbox = TestSandbox::new("provider_answers_missing_source_fails_before_greentic_setup");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    // Because gtc now resolves `--answers` for `provider`, an unreadable source
+    // fails inside gtc — greentic-setup must never be invoked. (Before this
+    // change the bad source passed straight through and the stub would run.)
+    let missing = sandbox.path().join("does-not-exist.json");
+    let status = sandbox.run_gtc(
+        [
+            "provider",
+            "add",
+            "telegram",
+            "--answers",
+            missing.to_str().expect("utf8 path"),
+        ],
+        HashMap::new(),
+    );
+    assert_ne!(
+        status.code(),
+        Some(0),
+        "expected gtc to fail on the bad answers source"
+    );
+    assert!(
+        !log_file.exists(),
+        "greentic-setup must not run when answers resolution fails"
+    );
+}
+
+#[test]
+fn setup_provider_add_routes_to_greentic_setup_with_provider_token() {
+    let sandbox =
+        TestSandbox::new("setup_provider_add_routes_to_greentic_setup_with_provider_token");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    // `gtc setup provider add telegram` is sugar for `gtc provider add telegram`:
+    // the leading `provider` token is stripped, then re-prepended, so
+    // greentic-setup still receives `provider add telegram`.
+    let status = sandbox.run_gtc(["setup", "provider", "add", "telegram"], HashMap::new());
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    assert!(
+        logged
+            .split_whitespace()
+            .eq(["provider", "add", "telegram"]),
+        "expected greentic-setup to receive `provider add telegram`, got: {logged}"
+    );
+}
+
+#[test]
+fn setup_provider_schema_surfaces_questions_from_greentic_setup() {
+    let sandbox = TestSandbox::new("setup_provider_schema_surfaces_questions_from_greentic_setup");
+    // Same `--schema` capture path as the standalone `gtc provider` surface,
+    // reached via `gtc setup provider add … --schema`.
+    let schema = r#"{"title":"telegram","questions":[{"id":"bot_token","secret":true}]}"#;
+    sandbox.write_stdout_tool("greentic-setup", schema, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    let output = sandbox.run_gtc_capture(
+        ["setup", "provider", "add", "telegram", "--schema"],
+        HashMap::new(),
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"bot_token\"") && stdout.contains("\"questions\""),
+        "expected gtc to surface the provider schema, got: {stdout}"
+    );
+}
+
+#[test]
+fn setup_provider_answers_local_file_is_resolved_and_forwarded() {
+    let sandbox = TestSandbox::new("setup_provider_answers_local_file_is_resolved_and_forwarded");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    // `gtc setup provider …` participates in answers resolution just like the
+    // standalone `provider` surface.
+    let answers_path = sandbox.path().join("answers.json");
+    fs::write(&answers_path, r#"{"bot_token":"secret-123"}"#).expect("write answers");
+    let answers_str = answers_path.to_str().expect("utf8 answers path");
+
+    let status = sandbox.run_gtc(
+        [
+            "setup",
+            "provider",
+            "add",
+            "telegram",
+            "--answers",
+            answers_str,
+        ],
+        HashMap::new(),
+    );
+    assert_eq!(status.code(), Some(0));
+
+    let logged = fs::read_to_string(log_file).expect("read setup log");
+    assert!(
+        logged
+            .split_whitespace()
+            .eq(["provider", "add", "telegram", "--answers", answers_str]),
+        "expected greentic-setup to receive the resolved answers path, got: {logged}"
+    );
+}
+
+#[test]
+fn setup_provider_answers_missing_source_fails_before_greentic_setup() {
+    let sandbox =
+        TestSandbox::new("setup_provider_answers_missing_source_fails_before_greentic_setup");
+    let log_file = sandbox.path().join("setup.log");
+    sandbox.write_arg_logger_tool("greentic-setup", &log_file, 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+    sandbox.write_exit_tool("greentic-operator", 0);
+
+    // A bad `--answers` source fails inside gtc before greentic-setup is spawned,
+    // just as on the standalone `provider` surface.
+    let missing = sandbox.path().join("does-not-exist.json");
+    let status = sandbox.run_gtc(
+        [
+            "setup",
+            "provider",
+            "add",
+            "telegram",
+            "--answers",
+            missing.to_str().expect("utf8 path"),
+        ],
+        HashMap::new(),
+    );
+    assert_ne!(
+        status.code(),
+        Some(0),
+        "expected gtc to fail on the bad answers source"
+    );
+    assert!(
+        !log_file.exists(),
+        "greentic-setup must not run when answers resolution fails"
+    );
+}
+
+#[test]
+fn op_messaging_endpoint_warns_deprecated_and_still_forwards_to_operator() {
+    let sandbox =
+        TestSandbox::new("op_messaging_endpoint_warns_deprecated_and_still_forwards_to_operator");
+    let log_file = sandbox.path().join("operator.log");
+    sandbox.write_arg_logger_tool("greentic-operator", &log_file, 0);
+    sandbox.write_exit_tool("greentic-setup", 0);
+    sandbox.write_exit_tool("greentic-dev", 0);
+
+    let output = sandbox.run_gtc_capture(
+        ["op", "messaging", "endpoint", "add", "--env", "local"],
+        HashMap::new(),
+    );
+    assert_eq!(output.status.code(), Some(0));
+
+    // The deprecated op still works, but prints a migration notice to stderr.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("deprecated") && stderr.contains("gtc setup provider"),
+        "expected a deprecation warning pointing to `gtc setup provider`, got: {stderr}"
+    );
+
+    // The rewriter prepends `op`, so the operator receives the verb verbatim.
+    let logged = fs::read_to_string(log_file).expect("read operator log");
+    assert!(
+        logged
+            .split_whitespace()
+            .eq(["op", "messaging", "endpoint", "add", "--env", "local"]),
+        "expected operator to receive `op messaging endpoint add --env local`, got: {logged}"
+    );
+}
+
+#[test]
 fn op_help_passthrough_routes_to_greentic_operator() {
     let sandbox = TestSandbox::new("op_help_passthrough_routes_to_greentic_operator");
     let log_file = sandbox.path().join("op.log");
