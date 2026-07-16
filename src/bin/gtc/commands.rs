@@ -2,6 +2,7 @@ use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use clap::ArgMatches;
 use serde_json::Value;
@@ -149,6 +150,13 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
         },
         Some((name @ ("dev" | "op" | "wizard" | "setup" | "worker" | "provider"), sub_matches)) => {
             let tail = collect_tail(sub_matches);
+            // `gtc setup provider …` is sugar for `gtc provider …`: promote it to
+            // the provider path so the same `--schema` capture and `--answers`
+            // materialization apply and greentic-setup receives `provider <verb> …`
+            // (the token is re-prepended by `build_provider_args`). It also drops
+            // the setup-only release-context / extension-handoff handling, which do
+            // not apply to a provider tail — matching the standalone `gtc provider`.
+            let (name, tail) = promote_setup_provider(name, tail);
             let tail = if matches!(name, "wizard" | "setup") {
                 let release_context =
                     match release_context_flags(sub_matches, &tail, default_install_channel) {
@@ -178,7 +186,10 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 tail
             };
             let mut answers_tempdir = None;
-            let tail = if matches!(name, "wizard" | "setup") {
+            // `provider` joins `wizard`/`setup` here: a UI collects answers for
+            // the questions surfaced by `--schema` and hands them back via
+            // `--answers`, so remote references must be materialized the same way.
+            let tail = if matches!(name, "wizard" | "setup" | "provider") {
                 match resolve_answers_args(&tail) {
                     Ok(resolved) => {
                         answers_tempdir = resolved.tempdir;
@@ -208,6 +219,12 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                     return run_wizard_schema_full(binary, &args, debug, &locale);
                 }
                 return run_wizard_schema(binary, &args, debug, &locale);
+            }
+            if name == "provider" && has_schema_flag(&args) {
+                return run_provider_schema(binary, &args, debug, &locale);
+            }
+            if name == "op" {
+                warn_deprecated_operator_messaging_op(&args);
             }
             let _answers_tempdir = answers_tempdir;
             passthrough(binary, &args, debug, &locale)
@@ -426,6 +443,40 @@ fn run_wizard_schema(binary: &str, args: &[String], debug: bool, locale: &str) -
     }
 }
 
+/// Surface the provider setup question/secret schema emitted by
+/// `greentic-setup` so a UI can render a form. gtc runs
+/// `greentic-setup provider … --schema`, captures the JSON document, and
+/// re-emits it pretty-printed. Answers collected by the UI are handed back via
+/// `--answers` (resolved by `resolve_answers_args`, same as `setup`). Unlike
+/// `run_wizard_schema`, no nested `$ref` rewriting is needed — the provider
+/// schema is a flat question document, forwarded as-is apart from formatting.
+fn run_provider_schema(binary: &str, args: &[String], debug: bool, locale: &str) -> i32 {
+    let raw = match run_binary_capture(binary, args, debug, locale) {
+        Ok(raw) => raw,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    let schema: Value = match serde_json::from_str(&raw) {
+        Ok(schema) => schema,
+        Err(err) => {
+            eprintln!("invalid provider schema JSON from {binary}: {err}");
+            return 1;
+        }
+    };
+    match serde_json::to_string_pretty(&schema) {
+        Ok(rendered) => {
+            println!("{rendered}");
+            0
+        }
+        Err(err) => {
+            eprintln!("failed to render provider schema JSON: {err}");
+            1
+        }
+    }
+}
+
 fn has_schema_flag(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--schema" || arg.starts_with("--schema="))
@@ -588,6 +639,56 @@ fn json_pointer_path(path: &[String]) -> String {
 
 fn escape_json_pointer_segment(segment: &str) -> String {
     segment.replace('~', "~0").replace('/', "~1")
+}
+
+/// Promote `gtc setup provider …` to the `provider` passthrough path. When a
+/// `setup` invocation leads with the `provider` token, strip it and re-target
+/// the subcommand as `provider` so the shared `--schema` capture and `--answers`
+/// materialization apply and greentic-setup receives `provider <verb> …` (the
+/// token is re-prepended by `build_provider_args`). Any other invocation is
+/// returned unchanged.
+pub(super) fn promote_setup_provider(name: &str, tail: Vec<String>) -> (&str, Vec<String>) {
+    if name == "setup" && tail.first().map(String::as_str) == Some("provider") {
+        ("provider", tail[1..].to_vec())
+    } else {
+        (name, tail)
+    }
+}
+
+/// Fires at most once per process so a single invocation, or a batch of them,
+/// does not spam the deprecation notice.
+static OPERATOR_MESSAGING_OP_WARNED: AtomicBool = AtomicBool::new(false);
+
+/// The operator `op messaging endpoint …` verbs manage per-environment
+/// messaging providers — the surface now owned by `gtc setup provider …` (the
+/// new env path). Return the migration hint when `args` (the operator-bound
+/// argv after [`rewrite_legacy_op_args`], e.g.
+/// `["op", "messaging", "endpoint", "add", …]`) targets that group; otherwise
+/// return `None`. The op is *not* rewritten — callers still forward it — so the
+/// deprecated path keeps working while it is being retired.
+pub(super) fn operator_messaging_op_deprecation(args: &[String]) -> Option<&'static str> {
+    let mut tokens = args.iter().map(String::as_str);
+    if tokens.next() == Some("op")
+        && tokens.next() == Some("messaging")
+        && tokens.next() == Some("endpoint")
+    {
+        Some(
+            "`gtc op messaging endpoint …` is deprecated; manage messaging providers with \
+             `gtc setup provider …` (add/list/remove) against the environment.",
+        )
+    } else {
+        None
+    }
+}
+
+/// Emit the messaging-op deprecation notice at most once per process. Called on
+/// the `op` passthrough right before the operator binary is spawned.
+fn warn_deprecated_operator_messaging_op(args: &[String]) {
+    if let Some(message) = operator_messaging_op_deprecation(args)
+        && !OPERATOR_MESSAGING_OP_WARNED.swap(true, Ordering::SeqCst)
+    {
+        eprintln!("warning: {message}");
+    }
 }
 
 /// Detect a leading `k8s` token in a `start` tail and rewrite it into an

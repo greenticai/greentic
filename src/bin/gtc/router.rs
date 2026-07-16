@@ -67,6 +67,11 @@ pub(super) fn route_passthrough_subcommand(
         "setup" => Some((SETUP_BIN, tail.to_vec())),
         "wizard" => Some((DEV_BIN, build_wizard_args(tail, locale))),
         "worker" => Some((DW_BIN, build_worker_args(tail))),
+        // `provider` re-prepends its token, then `commands::run` treats the
+        // tail like `setup`'s: `--schema` is intercepted to surface the
+        // provider's question/secret schema for a UI, and `--answers` sources
+        // (oci://, store://, repo://, http://) are materialized before the tail
+        // reaches greentic-setup. It still skips the release-context check.
         "provider" => Some((SETUP_BIN, build_provider_args(tail))),
         _ => None,
     }

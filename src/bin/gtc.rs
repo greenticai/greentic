@@ -49,6 +49,12 @@ use cli::build_cli;
 #[cfg(test)]
 #[allow(unused_imports)]
 use commands::default_install_channel_for_invocation;
+#[cfg(test)]
+#[allow(unused_imports)]
+use commands::operator_messaging_op_deprecation;
+#[cfg(test)]
+#[allow(unused_imports)]
+use commands::promote_setup_provider;
 use commands::run;
 #[cfg(test)]
 #[allow(unused_imports)]

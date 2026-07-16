@@ -888,6 +888,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_help_flag(true)
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.op.about").into_owned())
+                .after_help("Deprecated: `gtc op messaging endpoint …` (per-environment messaging providers). Use `gtc setup provider …` (add/list/remove) instead — it manages the same environment surface.")
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -940,7 +941,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 .disable_help_flag(true)
                 .disable_version_flag(true)
                 .about(t(locale, "gtc.cmd.setup.about").into_owned())
-                .after_help("Answers sources: --answers accepts local paths, file://, http://, https://, oci://, store://, and repo:// JSON object documents.")
+                .after_help("Add providers to an environment with `gtc setup provider add <kind>` (list/remove too); surface a provider's setup questions with `gtc setup provider add <kind> --schema` (emits JSON for a UI to render). Answers sources: --answers accepts local paths, file://, http://, https://, oci://, store://, and repo:// JSON object documents.")
                 .arg(
                     Arg::new("extension-setup-handoff")
                         .long("extension-setup-handoff")
@@ -966,6 +967,9 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.provider.about",
                     "Manage messaging providers (passthrough to greentic-setup).",
                 ))
+                .after_help(
+                    "Surface a provider's setup questions with `gtc provider add <name> --schema` (emits JSON for a UI to render). Answers sources: --answers accepts local paths, file://, http://, https://, oci://, store://, and repo:// JSON object documents.",
+                )
                 .arg(cmd_args),
         )
         .subcommand(
