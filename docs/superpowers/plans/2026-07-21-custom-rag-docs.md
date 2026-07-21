@@ -403,53 +403,127 @@ cargo test --lib retrieve
 
 Expected: 4 tests pass.
 
-- [ ] **Step 5: Implement the HTTP call**
+- [ ] **Step 5: Enable the host capability features**
 
-Add to `src/lib.rs`. The endpoint comes from config, the key from the secrets store — never from
-the payload:
+These are Cargo features on `greentic-interfaces-guest`, not WIT world edits. `cargo-component`
+unions whatever the compiled code actually imports into the final component type, so enabling
+the feature and calling the function is sufficient — no `[package.metadata.component.target.dependencies]`
+entry is needed.
 
-```rust
-#[cfg(target_arch = "wasm32")]
-const RAG_API_KEY_SECRET: &str = "RAG_API_KEY";
+In `Cargo.toml`:
 
-#[cfg(target_arch = "wasm32")]
-fn call_retrieval_service(request: &serde_json::Value) -> Result<serde_json::Value, String> {
-    let endpoint = std::env::var("RAG_ENDPOINT")
-        .map_err(|_| "RAG_ENDPOINT is not configured".to_string())?;
-    let api_key = secrets_get(RAG_API_KEY_SECRET)?;
-    http_post_json(&endpoint, &api_key, request)
-}
+```toml
+greentic-interfaces-guest = { version = ">=1.1.0-dev, <1.2.0-0", default-features = false, features = ["component-v0-6", "secrets", "http-client-v1-1"] }
 ```
 
-`secrets_get` and `http_post_json` are thin wrappers over the imported `greentic:secrets-store`
-and `greentic:http/http-client` interfaces. Their exact binding paths depend on what the
-scaffold generated in Task 1 — read the generated bindings module and write the wrappers against
-what is actually there. If the scaffold imported neither interface, add them to the inline WIT
-world alongside `component-descriptor`, copying the import shape from
-`component-rag/wit/rag/world.wit:8-9` (that file's *imports* are correct even though its exports
-are on the dead ABI).
+Enable `http-client-v1-1` **only**. Enabling both `http-client` and `http-client-v1-1` fails at
+the link step with `failed to upgrade greentic:http/http-client@1.0.0 to @1.1.0 ... different
+number of function parameters`. For the same reason, do not enable the catch-all `guest`
+feature — it turns on both.
 
-Do not fabricate binding paths. Build after writing the wrappers and fix against real compiler
-errors.
+- [ ] **Step 6: Implement the HTTP call**
 
-- [ ] **Step 6: Rebuild and re-check exports**
+Add to `src/lib.rs`. This code has been compiled and its import set verified against what the
+runner's `register_all` provides (`pack.rs:1598-1626`):
+
+```rust
+/// Calls the partner's retrieval endpoint.
+///
+/// `payload` is the full invocation payload the runner delivers:
+/// `{ "config": { ... }, "input": { ... } }`. The runner merges the flow node's
+/// `config:` block into the payload before `invoke` (`pack.rs:2390-2422`);
+/// components never read host environment variables.
+#[cfg(target_arch = "wasm32")]
+fn call_retrieval_service(payload: &serde_json::Value) -> Result<serde_json::Value, String> {
+    use greentic_interfaces_guest::http_client_v1_1 as client;
+    use greentic_interfaces_guest::secrets_store;
+
+    let endpoint = payload
+        .get("config")
+        .and_then(|c| c.get("rag_endpoint"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| "missing config.rag_endpoint".to_string())?;
+
+    // Secrets come from the secrets store only — never from config or the payload.
+    let api_key_bytes = secrets_store::get(RAG_API_KEY_SECRET)
+        .map_err(|e| format!("secrets get failed: {e:?}"))?
+        .ok_or_else(|| format!("missing secret {RAG_API_KEY_SECRET}"))?;
+    let api_key = String::from_utf8(api_key_bytes).map_err(|_| "secret is not utf8".to_string())?;
+
+    let body = retrieve::build_request_body(payload.get("input").unwrap_or(payload))?;
+
+    let req = client::Request {
+        method: "POST".to_string(),
+        url: endpoint.to_string(),
+        headers: vec![
+            ("Content-Type".to_string(), "application/json".to_string()),
+            ("Authorization".to_string(), format!("Bearer {api_key}")),
+        ],
+        body: serde_json::to_vec(&body).ok(),
+    };
+    let opts = client::RequestOptions {
+        timeout_ms: Some(10_000),
+        allow_insecure: Some(false),
+        follow_redirects: Some(true),
+    };
+
+    let resp = client::send(&req, Some(opts), None)
+        .map_err(|e| format!("http error: {} ({})", e.message, e.code))?;
+    if !(200..300).contains(&resp.status) {
+        return Err(format!("retrieval service returned status {}", resp.status));
+    }
+    let body_bytes = resp.body.ok_or_else(|| "empty response body".to_string())?;
+    serde_json::from_slice(&body_bytes).map_err(|e| format!("invalid JSON response: {e}"))
+}
+
+#[cfg(target_arch = "wasm32")]
+const RAG_API_KEY_SECRET: &str = "RAG_API_KEY";
+```
+
+Adjust the Step 3 dispatcher branch to match this signature — it passes the whole payload, not
+just the input half:
+
+```rust
+"retrieve" => match call_retrieval_service(&value) {
+    Ok(body) => retrieve::shape_response(&body),
+    Err(err) => serde_json::json!({ "error": err }),
+},
+```
+
+Reference notes, verified: `secrets_store::get(key) -> Result<Option<Vec<u8>>, SecretsError>`
+binds `greentic:secrets-store@1.0.0` (read-only; the crate's `secrets` feature cannot reach the
+write-capable 1.1.0). The runner registers a compat shim that satisfies 1.0.0 imports from its
+1.1.0 host state, so this instantiates against the real runner. `component-rag` calls the same
+underlying packages but through a locally generated `bindings::` module — its call-site *shape*
+is a valid reference, its module paths and world composition are not.
+
+- [ ] **Step 7: Rebuild and re-check exports**
 
 ```bash
 cargo build --target wasm32-wasip2 --release && ./check-exports.sh
 ```
 
-Expected: builds, both exports still present.
+Expected: builds, both exports still present. Also confirm with
+`wasm-tools component wit` that the component now imports
+`greentic:http/http-client@1.1.0` and `greentic:secrets-store/secrets-store@1.0.0` — and that it
+does **not** import `greentic:http/http-client@1.0.0`.
 
-- [ ] **Step 7: Add the sample input**
+- [ ] **Step 8: Add the sample input**
+
+This mirrors the shape the runner actually delivers, so the harness exercises the same parsing
+path as production:
 
 ```bash
 mkdir -p examples
 cat > examples/in.json <<'EOF'
-{ "query": "how do refunds work", "top_k": 3 }
+{
+  "config": { "rag_endpoint": "https://rag.example.com/v1/retrieve" },
+  "input":  { "query": "how do refunds work", "top_k": 3 }
+}
 EOF
 ```
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add src/retrieve.rs src/lib.rs examples/in.json
