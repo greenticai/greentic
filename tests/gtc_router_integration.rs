@@ -2610,6 +2610,14 @@ impl TestSandbox {
         let mut cmd = Command::new(binary);
         cmd.args(args).env("PATH", merged_path);
 
+        // Keep gtc's system.log bookkeeping (version/checksum snapshots) inside
+        // the sandbox so tests never append to the developer's real
+        // ~/.greentic/logs. Explicit per-test overrides in extra_env still win.
+        cmd.env(
+            "GTC_SYSTEM_LOG_DIR",
+            self.path().join("system-log").display().to_string(),
+        );
+
         for (binary, env_key) in [
             ("greentic-dev", "GREENTIC_DEV_BIN"),
             ("greentic-operator", "GREENTIC_OPERATOR_BIN"),
