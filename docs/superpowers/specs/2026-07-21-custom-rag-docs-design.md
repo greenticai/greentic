@@ -160,17 +160,23 @@ greentic-component build --manifest ./component.manifest.json
 greentic-component test --wasm ./component.wasm --op retrieve --input ./in.json \
   --secrets ./secrets.env
 greentic-component doctor <wasm> --manifest ./component.manifest.json
-packc build --in <DIR>
-packc sign --pack <DIR> --key <ed25519.pem>
-packc verify
+greentic-pack build --in <DIR>
+greentic-pack sign --pack <DIR> --key <ed25519.pem>
+greentic-pack verify
 ```
 
-The test harness sandbox refuses HTTP by default; exercising a real call needs
-`--allow-http --dry-run=false`.
+**Correction (verified 2026-07-22 by building the crate):** the pack binary is **`greentic-pack`**,
+not `packc`. `greentic-pack/crates/packc/Cargo.toml` sets `[package] name = "greentic-pack"`,
+`[lib] name = "packc"`, and `[[bin]] name = "greentic-pack"` — so `packc` is only the crate/lib
+name. The earlier draft's claim that the binary is `packc` (and that `component-rag/Makefile`'s
+`greentic-pack build` is a non-existent command) was wrong and is retracted.
 
-The page must name the pack binary **`packc`**. `greentic-pack` has no `[[bin]]`, and
-`component-rag/Makefile:41` invokes a `greentic-pack build --in ... --gtpack-out ...` command
-that matches no CLI in the workspace — a trap already sitting in the repo.
+The test harness sandbox refuses HTTP by default. Separately — and more importantly for an HTTP
+component — the `greentic-component` harness cannot instantiate a component importing
+`greentic:http/http-client@1.1.0` at all (its linker wires only the legacy runner-host HTTP
+surface), so `doctor`/`test` and the `build` describe step do not work for this component. Local
+verification is `cargo test` + `wasm-tools component wit`; full instantiation is confirmed only
+in the runner. See the plan's Task 4 and follow-up #6.
 
 ### Flow node shape
 
@@ -215,7 +221,7 @@ example repository's CI, so they keep running after the page ships:
 4. `wasm-tools component wit` literally lists `greentic:component/component-descriptor@0.6.0`
    **and** `greentic:component/node@0.6.0`. This is the gate `component-rag` fails, and it fails
    silently, so it is checked explicitly.
-5. `packc build --in <DIR>` produces a `.gtpack`
+5. `greentic-pack build --in <DIR>` produces a `.gtpack`
 6. If affordable without heavy infrastructure: load that pack in the runner and invoke the
    operation, mirroring `greentic-runner-host/tests/pack_manifest.rs:1039`
    (`agentic_worker_component_invoker_lists_and_invokes`)

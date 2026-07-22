@@ -6,7 +6,7 @@
 
 **Architecture:** A new standalone public repo (`greentic-example-rag`) holds an ABI A WASM component exposing a single `retrieve` operation that calls the partner's HTTP retrieval service. Its CI enforces the five verification gates. The docs page inlines that code and links to a pinned tag, and an aside on the existing knowledge page redirects the misconception that a custom RAG can replace the built-in knowledge tier.
 
-**Tech Stack:** Rust (edition 2024, toolchain 1.95.0), `wasm32-wasip2`, `wit-bindgen`, `greentic-interfaces-guest` (feature `component-v0-6`), `greentic-types`, `greentic-component` CLI, `wasm-tools`, `packc`, Astro/Starlight (greentic-docs).
+**Tech Stack:** Rust (edition 2024, toolchain 1.95.0), `wasm32-wasip2`, `wit-bindgen`, `greentic-interfaces-guest` (feature `component-v0-6`), `greentic-types`, `greentic-component` CLI, `wasm-tools`, `greentic-pack` CLI (crate `packc`), Astro/Starlight (greentic-docs).
 
 ## Global Constraints
 
@@ -14,7 +14,7 @@
 - The component must export **both** `greentic:component/node@0.6.0` and `greentic:component/component-descriptor@0.6.0`.
 - Rust toolchain `1.95.0`, target `wasm32-wasip2` (`greentic-component/rust-toolchain.toml`).
 - Docs are written in **English**. Translations into the seven locales are out of scope.
-- Docs must name the pack CLI **`packc`**, never `greentic-pack`.
+- Docs must name the pack CLI **`greentic-pack`** (the `[[bin]]` name). `packc` is only the crate/lib name in `greentic-pack/crates/packc`, not an installable command.
 - Docs must not present `component-rag`, `component-http`, or `packs/rag-cs` as copyable examples.
 - The four limits in the spec's "Limits the page states explicitly" section must all appear on the page.
 - No personal names in committed docs — use role labels.
@@ -633,13 +633,14 @@ git commit -q -m "feat: declare retrieve schemas and the RAG_API_KEY requirement
 - Consumes: the built wasm and `component.manifest.json` from Task 4.
 - Produces: a `.gtpack`, and the `pack_id` / component id the docs page uses in its flow example.
 
-- [ ] **Step 1: Install packc**
+- [ ] **Step 1: Install the pack CLI**
 
-`packc` is not currently on PATH.
+The crate lives at `greentic-pack/crates/packc`, but the installed binary is named
+**`greentic-pack`** (its `[[bin]]` name) — there is no `packc` executable.
 
 ```bash
 cargo install --path <monorepo>/greentic-pack/crates/packc --locked
-packc --version
+greentic-pack --version
 ```
 
 - [ ] **Step 2: Write pack.yaml**
@@ -673,7 +674,7 @@ example's job to demonstrate.
 mkdir -p pack/components
 cp target/wasm32-wasip2/release/greentic_example_rag.wasm pack/components/
 cp component.manifest.json pack/components/
-packc build --in ./pack
+greentic-pack build --in ./pack
 ```
 
 Expected: `pack/dist/manifest.cbor` and a `.gtpack`.
@@ -682,8 +683,8 @@ Expected: `pack/dist/manifest.cbor` and a `.gtpack`.
 
 ```bash
 openssl genpkey -algorithm ed25519 -out /tmp/example-signing.pem
-packc sign --pack ./pack --key /tmp/example-signing.pem
-packc verify --pack ./pack
+greentic-pack sign --pack ./pack --key /tmp/example-signing.pem
+greentic-pack verify --pack ./pack
 ```
 
 Expected: verify passes. The throwaway key stays out of the repo — add `*.pem` to
@@ -736,8 +737,9 @@ jobs:
         run: ./check-exports.sh
 ```
 
-Gates 2, 3, and 5 need `greentic-component` and `packc`, which are not published to crates.io as
-standalone installables in a form this workflow can assume. Add them only once you have
+Gates 2, 3, and 5 need `greentic-component` and `greentic-pack`, which are not published to
+crates.io as standalone installables in a form this workflow can assume. (Note gates 2 and 3 are
+also blocked for an HTTP component by the harness linker gap — see Task 4.) Add them only once you have
 confirmed an install path that works on a clean runner; until then leave them out rather than
 adding steps that will red-flag CI for the wrong reason.
 
@@ -818,8 +820,8 @@ Then the ten sections from the spec, in order. Content requirements per section:
    logic reference, with its ABI caveat.
 5. **Path 3** — point at Knowledge Base collections in the designer.
 6. **Build, test, package** — `greentic-component build --manifest ... --no-flow` (explain why
-   `--no-flow`: a required-no-default field breaks dev-flow generation), then `packc` (named
-   correctly) for the pack. State the harness limitation plainly as an `<Aside type="caution">`:
+   `--no-flow`: a required-no-default field breaks dev-flow generation), then `greentic-pack`
+   (the pack CLI — `packc` is only the crate name) for the pack. State the harness limitation plainly as an `<Aside type="caution">`:
    as of CLI 1.3.0-research.1, a component that imports `greentic:http/http-client@1.1.0` cannot
    be instantiated by `greentic-component doctor`/`test`, and `greentic-component build` skips
    its describe artifacts — all three fail with `matching implementation was not found in the
@@ -941,7 +943,10 @@ These surfaced during the audit and are real defects, but fixing them is out of 
    host. `component-http` is published to GHCR by CI regardless.
 2. `packs/rag-cs` is invalid against `PackConfig` and its flow uses a node shape the parser
    rejects.
-3. `component-rag/Makefile:41` invokes `greentic-pack build`, a command that does not exist.
+3. ~~`component-rag/Makefile:41` invokes `greentic-pack build`, a command that does not exist.~~
+   **Retracted** — `greentic-pack` IS the correct binary name (`[[bin]]` in
+   `greentic-pack/crates/packc/Cargo.toml:102`); `packc` is only the crate/lib name. The earlier
+   audit misread the lib name as the binary name. The Makefile line is fine on the command name.
 4. The `rust-wasi-p2-min` scaffold does not export `component-descriptor@0.6.0`, so every
    generated component fails runner introspection silently until the author adds it by hand.
 5. `ComponentV0V6V0Pre::new` failure maps to `Ok(None)` (`pack.rs:3186-3189`), turning an ABI
