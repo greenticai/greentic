@@ -34,6 +34,14 @@ cargo test --all-targets --all-features
 echo "[4b/6] cargo test --test perf_scaling hashing_scaling_should_not_collapse -- --ignored --exact"
 cargo test --test perf_scaling hashing_scaling_should_not_collapse -- --ignored --exact
 
+# The socket-binding tests are `#[ignore]`d so a sandbox without loopback can
+# still run `cargo test`. They are also the ONLY tests that drive the real HTTP
+# fetch paths end to end — everything else calls the validation helpers
+# directly, so a guard could be deleted from its call site with the whole suite
+# still green. Run them here or they never run at all.
+echo "[4c/6] cargo test --bin gtc -- --ignored (socket-binding fetch tests)"
+cargo test --bin gtc -- --ignored
+
 echo "[5/6] cargo publish --dry-run --allow-dirty"
 cargo publish --dry-run --allow-dirty
 
