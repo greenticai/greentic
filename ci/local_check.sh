@@ -13,6 +13,14 @@ fi
 echo "[1b/6] validate canonical doc examples"
 bash ci/validate_doc_examples.sh
 
+bundle_mirror_repo="${GREENTIC_BUNDLE_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/greentic-bundle}"
+if [[ -d "$bundle_mirror_repo" ]]; then
+  echo "[1c/6] bundle-dir mirror check"
+  GREENTIC_BUNDLE_REPO="$bundle_mirror_repo" bash ci/check_bundle_dir_mirror.sh
+else
+  echo "warning: greentic-bundle sibling not found; skipping bundle-dir mirror check" >&2
+fi
+
 echo "[2/6] cargo fmt --all -- --check"
 cargo fmt --all -- --check
 
