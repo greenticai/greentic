@@ -16,7 +16,10 @@ use clap::ArgMatches;
 use serde_json::{Map, Value};
 use tempfile::TempDir;
 
-use crate::answer_resolver::{DefaultAnswerSourceLoader, load_answer_bytes, parse_answers_bytes};
+use crate::answer_resolver::{
+    AnswerSourceKind, AnswerSourceLoader, DefaultAnswerSourceLoader, classify_answers_source,
+    load_answer_bytes, parse_answers_bytes,
+};
 use crate::cli::build_cli;
 use crate::commands::{answers_error_exit_code, check_release_context};
 use crate::deploy::run_start;
@@ -199,8 +202,13 @@ fn build_plan(sub_matches: &ArgMatches) -> Result<UpPlan, UpError> {
     // incompatible with the bundle the wizard built.
     let snapshot = TempDir::new()
         .map_err(|err| UpError::usage(format!("creating the answers snapshot directory: {err}")))?;
-    let (create_answers, document) = snapshot_answers(snapshot.path(), "create", create_source)?;
-    let (setup_answers, _) = snapshot_answers(snapshot.path(), "setup", setup_source)?;
+    let loader = DefaultAnswerSourceLoader;
+    let (create_answers, document) =
+        snapshot_answers(snapshot.path(), "create", create_source, &loader)?;
+    // The setup document's parse is discarded, but not wasted: it is what makes
+    // a malformed setup document fail here rather than at the setup step, after
+    // the wizard has already created a bundle.
+    let (setup_answers, _) = snapshot_answers(snapshot.path(), "setup", setup_source, &loader)?;
 
     // Predicted unconditionally, even under `--bundle-dir`: this is where the
     // wizard writes, so the guard needs it whatever the later steps use.
@@ -239,23 +247,43 @@ fn guarded_dirs(plan: &UpPlan) -> Vec<&Path> {
     dirs
 }
 
-/// Fetch a document once, keep the exact bytes, and return the path every
-/// later step reads plus the parsed document for prediction.
+/// Read a document once and return the path every later step reads, plus the
+/// parsed document for prediction.
 ///
-/// The snapshot directory is `tempfile`'s 0700, which is what keeps the
-/// setup document's provider credentials off a shared machine.
+/// A **remote** source is materialized into `dir` so all three readers see the
+/// same bytes: `gtc wizard --answers <url>` re-fetches on every invocation, and
+/// the README's `releases/latest` URLs are mutable, so otherwise the overwrite
+/// guard could be decided on one version while the wizard acted on another.
+/// The snapshot directory is `tempfile`'s 0700, which keeps the setup
+/// document's provider credentials off a shared machine.
+///
+/// A **local** source is validated and passed through at its original path. It
+/// must not be relocated: greentic-bundle resolves relative pack and provider
+/// references against the answers file's own directory
+/// (`local_reference_base_dir`), and only *remote* documents are required to
+/// carry absolute references. Copying a local document into a tempdir would
+/// silently break every relative reference in it.
 fn snapshot_answers(
     dir: &Path,
     name: &str,
     source: &str,
+    loader: &dyn AnswerSourceLoader,
 ) -> Result<(String, Map<String, Value>), UpError> {
-    let loader = DefaultAnswerSourceLoader;
     let to_err = |err: gtc::error::GtcError| UpError {
         message: format!("{err}"),
         code: answers_error_exit_code(&err),
     };
-    let bytes = load_answer_bytes(source, &loader).map_err(to_err)?;
+    let kind = classify_answers_source(source).map_err(to_err)?;
+    let bytes = load_answer_bytes(source, loader).map_err(to_err)?;
     let document = parse_answers_bytes(source, &bytes).map_err(to_err)?;
+
+    if matches!(
+        kind,
+        AnswerSourceKind::LocalPath | AnswerSourceKind::FileUrl
+    ) {
+        return Ok((source.to_string(), document));
+    }
+
     let path = dir.join(format!("{name}-answers.json"));
     std::fs::write(&path, &bytes)
         .map_err(|err| UpError::usage(format!("writing {}: {err}", path.display())))?;
@@ -695,26 +723,76 @@ mod tests {
         assert_eq!(guarded_dirs(&plan), vec![Path::new("/work/demo-bundle")]);
     }
 
+    #[derive(Default)]
+    struct CountingLoader {
+        http_calls: std::cell::Cell<usize>,
+    }
+
+    impl crate::answer_resolver::AnswerSourceLoader for CountingLoader {
+        fn load_http(&self, _source: &str) -> gtc::error::GtcResult<Vec<u8>> {
+            self.http_calls.set(self.http_calls.get() + 1);
+            Ok(br#"{"answers":{"selected_action":"bundle"},"note":"fetched once"}"#.to_vec())
+        }
+
+        fn load_distributor(&self, _source: &str) -> gtc::error::GtcResult<Vec<u8>> {
+            unreachable!("not exercised")
+        }
+    }
+
     #[test]
-    fn a_snapshot_is_byte_identical_and_read_back_from_disk() {
-        // Every step must see the SAME bytes: a `releases/latest` URL can
-        // change between the guard decision and the wizard's own fetch.
+    fn a_remote_document_is_fetched_once_and_materialized() {
+        // The point of the snapshot: `gtc wizard --answers <url>` re-fetches on
+        // every invocation and `releases/latest` is mutable, so the guard could
+        // otherwise be decided on different bytes than the wizard acts on.
+        let dir = TempDir::new().unwrap();
+        let loader = CountingLoader::default();
+        let (path, document) = snapshot_answers(
+            dir.path(),
+            "create",
+            "https://example.com/create-answers.json",
+            &loader,
+        )
+        .map_err(|err| err.message)
+        .unwrap();
+
+        assert_eq!(loader.http_calls.get(), 1, "fetched exactly once");
+        assert!(
+            Path::new(&path).starts_with(dir.path()),
+            "{path} is not inside the snapshot directory"
+        );
+        assert_eq!(document["note"], "fetched once");
+        assert_eq!(
+            std::fs::read(&path).unwrap(),
+            br#"{"answers":{"selected_action":"bundle"},"note":"fetched once"}"#,
+            "bytes must be written verbatim, not re-serialized"
+        );
+    }
+
+    #[test]
+    fn a_local_document_is_never_relocated() {
+        // greentic-bundle resolves relative pack/provider references against
+        // the answers file's OWN directory (`local_reference_base_dir`).
+        // Copying a local document into a tempdir would move that base and
+        // silently break every relative reference in it.
         let dir = TempDir::new().unwrap();
         let source = dir.path().join("origin.json");
         let raw = br#"{"answers":{"selected_action":"bundle"},"note":"kept verbatim"}"#;
         std::fs::write(&source, raw).unwrap();
 
-        let (path, document) =
-            snapshot_answers(dir.path(), "create", &source.display().to_string())
-                .map_err(|err| err.message)
-                .unwrap();
-        assert_ne!(path, source.display().to_string(), "must be a copy");
-        assert_eq!(std::fs::read(&path).unwrap(), raw);
+        let (path, document) = snapshot_answers(
+            dir.path(),
+            "create",
+            &source.display().to_string(),
+            &CountingLoader::default(),
+        )
+        .map_err(|err| err.message)
+        .unwrap();
+        assert_eq!(
+            path,
+            source.display().to_string(),
+            "a local document must be passed through at its original path"
+        );
         assert_eq!(document["note"], "kept verbatim");
-
-        // Mutating the origin afterwards must not reach any step.
-        std::fs::write(&source, br#"{"answers":{"selected_action":"pack"}}"#).unwrap();
-        assert_eq!(std::fs::read(&path).unwrap(), raw);
     }
 
     /// Build a real `UpPlan` the way `run_up` does: through clap, from files
@@ -783,14 +861,10 @@ mod tests {
     }
 
     #[test]
-    fn build_plan_hands_every_step_a_snapshot_not_the_original() {
+    fn build_plan_hands_every_step_a_readable_document() {
         let dir = TempDir::new().unwrap();
         let plan = build_plan_from(dir.path(), &[]);
         for answers in [&plan.create_answers, &plan.setup_answers] {
-            assert!(
-                !answers.starts_with(&dir.path().display().to_string()),
-                "{answers} is the original, not a snapshot"
-            );
             assert!(Path::new(answers).is_file(), "{answers} is missing");
         }
     }
