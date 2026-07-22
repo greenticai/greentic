@@ -34,6 +34,7 @@ use crate::router::{
     route_passthrough_subcommand,
 };
 use crate::toolchain::{installed_toolchain_label, latest_release_context_warning};
+use crate::up::run_up;
 
 pub(super) fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
@@ -102,6 +103,13 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 2
             }
         },
+        Some(("up", sub_matches)) => run_up(
+            sub_matches,
+            default_install_channel,
+            invocation.as_deref(),
+            debug,
+            &locale,
+        ),
         Some(("start", sub_matches)) => {
             // `start` is a pure catch-all at the clap layer — every flag
             // (including gtc-internal ones) is parsed from the tail by one
@@ -299,7 +307,7 @@ fn resolve_answers_arg_value(
     }
 }
 
-fn answers_error_exit_code(err: &gtc::error::GtcError) -> i32 {
+pub(super) fn answers_error_exit_code(err: &gtc::error::GtcError) -> i32 {
     if matches!(err, gtc::error::GtcError::InvalidData { context, .. } if context == "answers source")
     {
         2
@@ -365,7 +373,7 @@ fn release_context_flags(
     })
 }
 
-fn check_release_context(
+pub(super) fn check_release_context(
     channel: &str,
     invocation: Option<&str>,
     debug: bool,

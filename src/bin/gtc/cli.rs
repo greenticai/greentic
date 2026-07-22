@@ -828,6 +828,88 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 ),
         )
         .subcommand(
+            // Unlike `start`, `up` is NOT a catch-all: its own flags are
+            // parsed by clap and only the tail after `--` is forwarded. A
+            // catch-all here would silently swallow a misspelled
+            // `--setup-answers` into the start tail.
+            Command::new("up")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.up.about",
+                    "Create, set up and start a bundle in one command.",
+                ))
+                .after_help(crate::up::after_help(locale))
+                .arg(
+                    Arg::new("answers")
+                        .long("answers")
+                        .value_name("SRC")
+                        .num_args(1)
+                        .required(true)
+                        .help_heading(options_heading)
+                        .help(t_or(locale, "gtc.arg.up.answers.help", "Create-answers document for the wizard step. Accepts local paths, file://, http://, https://, oci://, store:// and repo:// JSON documents.")),
+                )
+                .arg(
+                    Arg::new("setup-answers")
+                        .long("setup-answers")
+                        .value_name("SRC")
+                        .num_args(1)
+                        .required(true)
+                        .help_heading(options_heading)
+                        .help(t_or(locale, "gtc.arg.up.setup_answers.help", "Setup-answers document for the setup step; same sources as --answers.")),
+                )
+                .arg(
+                    Arg::new("bundle-dir")
+                        .long("bundle-dir")
+                        .value_name("PATH")
+                        .num_args(1)
+                        .help_heading(options_heading)
+                        .help(t_or(locale, "gtc.arg.up.bundle_dir.help", "Where `up` looks for the bundle after the wizard runs, when the predicted path is wrong. It does NOT move the wizard: the wizard always writes where the create-answers document's `output_dir` says.")),
+                )
+                .arg(
+                    Arg::new("no-install")
+                        .long("no-install")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t_or(locale, "gtc.arg.up.no_install.help", "Skip the install step; fail later if the toolchain is missing.")),
+                )
+                .arg(
+                    Arg::new("no-start")
+                        .long("no-start")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t_or(locale, "gtc.arg.up.no_start.help", "Stop after setup and print the start command instead of running it.")),
+                )
+                .arg(
+                    Arg::new("dry-run")
+                        .long("dry-run")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t_or(locale, "gtc.arg.up.dry_run.help", "Print the resolved bundle directory and every step, then exit without running any of them.")),
+                )
+                .arg(
+                    Arg::new("force")
+                        .long("force")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t_or(locale, "gtc.arg.up.force.help", "Proceed even when the bundle directory already exists. Overwrites it; only safe when nothing is running against it.")),
+                )
+                .arg(release_context_strict_arg(options_heading))
+                .arg(release_context_ignore_arg(options_heading))
+                .arg(
+                    Arg::new("args")
+                        .num_args(0..)
+                        .last(true)
+                        .allow_hyphen_values(true)
+                        .value_name("START_ARGS")
+                        .help_heading(arguments_heading)
+                        .help(t_or(locale, "gtc.arg.up.start_args.help", "Arguments after `--`, forwarded verbatim to the start step.")),
+                ),
+        )
+        .subcommand(
             // Pure catch-all (the `op` pattern): ONE tail parser owns the
             // whole start surface — positional bundle ref, gtc-specific
             // flags, and every forwarded greentic-start flag — so a leading
