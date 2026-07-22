@@ -571,53 +571,48 @@ greentic-component build --manifest ./component.manifest.json
 Expected: succeeds, refreshes hashes, embeds the manifest as CBOR into the
 `greentic.component.manifest.v1` custom section, and emits `dist/*.describe.cbor` + `.json`.
 
-- [ ] **Step 3: Run doctor (gate 2)**
+- [ ] **Step 3: Run doctor (gate 2) — and record that it cannot instantiate an http component**
 
 ```bash
 greentic-component doctor target/wasm32-wasip2/release/greentic_example_rag.wasm \
   --manifest ./component.manifest.json
 ```
 
-Expected: passes — world, hashes, and embedded manifest all agree.
+**Verified outcome (both CLI 1.1.0 and 1.3.0-research.1):** this FAILS with
+`component imports instance greentic:http/http-client@1.1.0, but a matching implementation was
+not found in the linker`. This is not a component defect. The `greentic-component` local harness
+wires only the legacy `greentic:host@1.0.0` runner-host HTTP surface plus control/state/secrets
+(`greentic-component/crates/greentic-component/src/test_harness/linker.rs:114-124`); it does not
+wire the blessed `greentic:http/http-client@1.1.0` interface that the production runner provides
+(`greentic-runner-host/src/pack.rs` `register_all`, `http_client_v1_1: Some(...)`). The
+component targets the runner's ABI on purpose, per the platform's own WIT guidance
+(`greentic:host@1.0.0` is marked "LEGACY COMPATIBILITY SURFACE. Prefer dedicated host capability
+worlds"), so the harness cannot instantiate it.
 
-- [ ] **Step 4: Run the harness (gate 3)**
-
-```bash
-greentic-component test \
-  --wasm target/wasm32-wasip2/release/greentic_example_rag.wasm \
-  --op retrieve --input ./examples/in.json --pretty
-```
-
-Expected: the sandbox refuses the outbound HTTP call, and the component returns the structured
-error from Task 3 rather than trapping. **That is the pass condition for this step** — it proves
-`invoke` is reachable and the error path is clean.
-
-Then, against a real endpoint:
-
-```bash
-RAG_ENDPOINT=<your endpoint> greentic-component test \
-  --wasm target/wasm32-wasip2/release/greentic_example_rag.wasm \
-  --op retrieve --input ./examples/in.json \
-  --secret RAG_API_KEY=<key> --allow-http --dry-run=false --pretty
-```
-
-Expected: `{"context": "...", "chunks": [...]}`.
-
-If no retrieval endpoint is available, record that the live run was not performed. Do not write
-an invented transcript into the docs page.
-
-- [ ] **Step 5: Save the transcript**
+Gates 2 and 3 are therefore **not achievable via the CLI harness for an HTTP component**, and
+this is recorded as skipped-with-reason rather than papered over. The verification that DOES run:
+`cargo test` (the `retrieve.rs` logic, from Task 3), `check-exports.sh` (the ABI shape, Task 2),
+and the runner load-test (Task 9) for full instantiation. Save the doctor output as evidence:
 
 ```bash
 mkdir -p notes
-# paste the actual command output
-$EDITOR notes/harness-run.txt
+greentic-component doctor target/wasm32-wasip2/release/greentic_example_rag.wasm \
+  --manifest ./component.manifest.json > notes/doctor-linker-gap.txt 2>&1 || true
 ```
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 4: Re-confirm the logic gate that DOES run**
 
 ```bash
-git add component.manifest.json notes/harness-run.txt dist/ 2>/dev/null || git add component.manifest.json notes/harness-run.txt
+cargo test --lib
+```
+
+Expected: passes, including the four `retrieve` tests. This is the local behavioural proof;
+`greentic-component test` cannot serve that role for this component (Step 3).
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add component.manifest.json notes/doctor-linker-gap.txt
 git commit -q -m "feat: declare retrieve schemas and the RAG_API_KEY requirement"
 ```
 
@@ -817,8 +812,15 @@ Then the ten sections from the spec, in order. Content requirements per section:
    corpus carried in config. Do not present `component-rag` as copyable; mention it only as
    logic reference, with its ABI caveat.
 5. **Path 3** — point at Knowledge Base collections in the designer.
-6. **Build, test, package** — the verified command list from the spec, `packc` named correctly,
-   and the sandbox note (`--allow-http --dry-run=false` for a real call).
+6. **Build, test, package** — the verified command list from the spec, `packc` named correctly.
+   State the harness limitation plainly as an `<Aside type="caution">`: `greentic-component
+   doctor`/`test` (as of CLI 1.3.0-research.1) cannot instantiate a component that imports
+   `greentic:http/http-client@1.1.0` — it fails with `matching implementation was not found in
+   the linker` because the local harness wires only the legacy runner-host HTTP surface. So for
+   an HTTP-using component, local verification is `cargo test` (the retrieve logic) plus the
+   export check (`wasm-tools component wit`); full instantiation is confirmed when the pack runs
+   in the runner. Do not tell the reader to run `greentic-component test` and expect a
+   `{context, chunks}` result — that command does not work for this component today.
 7. **Use it: as a flow node** — the `schema_version: 2` example with the
    `greentic-example-rag.retrieve` key shape, and the warning that the key's component segment,
    the pack manifest id, and the `describe()` name must all be spelled identically.
@@ -937,3 +939,11 @@ These surfaced during the audit and are real defects, but fixing them is out of 
    generated component fails runner introspection silently until the author adds it by hand.
 5. `ComponentV0V6V0Pre::new` failure maps to `Ok(None)` (`pack.rs:3186-3189`), turning an ABI
    mismatch into "this component has no operations" with no diagnostic.
+6. The `greentic-component test`/`doctor` local harness is out of sync with the runner. Its
+   linker (`greentic-component/crates/greentic-component/src/test_harness/linker.rs:114-124`)
+   wires only the legacy `greentic:host@1.0.0` runner-host HTTP surface, not the blessed
+   `greentic:http/http-client@1.1.0` the runner provides. A component that follows the WIT's own
+   "prefer dedicated host capability worlds" guidance therefore cannot be instantiated by the
+   platform's own test harness — verified against both CLI 1.1.0 and 1.3.0-research.1. The
+   harness should wire the dedicated host capability worlds (http-client, secrets 1.1) so
+   components built against the current runner ABI can be tested locally.
