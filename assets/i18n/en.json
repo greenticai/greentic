@@ -140,5 +140,9 @@
   "gtc.arg.up.no_start.help": "Stop after setup and print the start command instead of running it.",
   "gtc.arg.up.dry_run.help": "Print the resolved bundle directory and every step, then exit without running any of them.",
   "gtc.arg.up.force.help": "Proceed even when the bundle directory already exists. Overwrites it; only safe when nothing is running against it.",
-  "gtc.arg.up.start_args.help": "Arguments after `--`, forwarded verbatim to the start step."
+  "gtc.arg.up.updates.help": "Subscribe the environment to the fleet update channel after setup. Seeds the trust root and configures polling against the default plan endpoint.",
+  "gtc.arg.up.start_args.help": "Arguments after `--`, forwarded verbatim to the start step.",
+  "gtc.up.err.updates_version_gate": "--updates requires a newer greentic-operator",
+  "gtc.up.err.updates_manifest_write": "failed to write the updates manifest",
+  "gtc.up.err.updates_apply_failed": "`gtc up` stopped at the updates step"
 }

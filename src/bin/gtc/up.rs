@@ -16,6 +16,7 @@ use clap::ArgMatches;
 use serde_json::{Map, Value};
 use tempfile::TempDir;
 
+use crate::OP_BIN;
 use crate::answer_resolver::{
     AnswerSourceKind, AnswerSourceLoader, DefaultAnswerSourceLoader, classify_answers_source,
     load_answer_bytes, parse_answers_bytes,
@@ -25,7 +26,7 @@ use crate::commands::{answers_error_exit_code, check_release_context};
 use crate::deploy::run_start;
 use crate::i18n_support::t_or;
 use crate::install::run_install;
-use crate::process::passthrough;
+use crate::process::{passthrough, run_binary_capture, run_binary_checked};
 use crate::router::route_passthrough_subcommand;
 
 /// Everything `run_up` needs from the command line, resolved once.
@@ -43,6 +44,7 @@ struct UpPlan {
     setup_answers: String,
     start_tail: Vec<String>,
     install: bool,
+    updates: bool,
     start: bool,
     dry_run: bool,
     force: bool,
@@ -155,6 +157,14 @@ pub(super) fn run_up(
         );
     }
 
+    if plan.updates {
+        let env_id = resolve_start_env_id(&plan.start_tail);
+        let status = run_updates_step(&env_id, &plan._snapshot, debug, locale);
+        if status != 0 {
+            return status;
+        }
+    }
+
     if !plan.start {
         // The tail is only ever forwarded to start, so with --no-start it
         // would silently vanish. Put it in the printed command instead.
@@ -227,6 +237,7 @@ fn build_plan(sub_matches: &ArgMatches) -> Result<UpPlan, UpError> {
             .get_many::<String>("args")
             .map(|values| values.cloned().collect())
             .unwrap_or_default(),
+        updates: sub_matches.get_flag("updates"),
         install: !sub_matches.get_flag("no-install"),
         start: !sub_matches.get_flag("no-start"),
         dry_run: sub_matches.get_flag("dry-run"),
@@ -482,6 +493,12 @@ fn print_dry_run(plan: &UpPlan) {
         plan.bundle_dir.display(),
         plan.setup_answers
     );
+    if plan.updates {
+        let env_id = resolve_start_env_id(&plan.start_tail);
+        println!(
+            "  updates  greentic-operator op env apply (env={env_id}, trust_root=bootstrap, plan_endpoint={DEFAULT_PLAN_ENDPOINT})"
+        );
+    }
     if plan.start {
         let tail = start_tail_suffix(&plan.start_tail);
         println!("  start    gtc start {}{tail}", plan.bundle_dir.display());
@@ -501,6 +518,134 @@ pub(super) fn after_help(locale: &str) -> String {
          --advanced) are NOT forwarded — run the four commands separately if \
          you need them. Everything after `--` is forwarded to the start step.",
     )
+}
+
+const DEFAULT_PLAN_ENDPOINT: &str = "https://updates.greentic.cloud/v1/environments/_/plan";
+const MIN_OPERATOR_VERSION: (u16, u16, u16) = (1, 1, 24);
+
+/// Extract the environment id from the start tail args.
+///
+/// Precedence: `--env <id>` or `--env=<id>` in the tail, then
+/// `$GREENTIC_ENV`, then `"local"`.
+fn resolve_start_env_id(start_tail: &[String]) -> String {
+    // --env=<id> form
+    if let Some(id) = start_tail.iter().find_map(|arg| arg.strip_prefix("--env=")) {
+        return id.to_string();
+    }
+
+    // --env <id> (spaced) form
+    if let Some(pair) = start_tail.windows(2).find(|pair| pair[0] == "--env") {
+        return pair[1].clone();
+    }
+
+    // Environment variable fallback
+    if let Ok(val) = std::env::var("GREENTIC_ENV")
+        && !val.is_empty()
+    {
+        return val;
+    }
+
+    "local".to_string()
+}
+
+/// Run the updates subscription step: version-gate the operator, write a
+/// minimal env-manifest, and apply it via `op env apply`.
+fn run_updates_step(env_id: &str, snapshot: &TempDir, debug: bool, locale: &str) -> i32 {
+    // Version-gate: the operator must embed greentic-deployer >= 1.1.24
+    // for the `updates` block in env-manifest to be handled.
+    if !check_operator_version(debug, locale) {
+        let (major, minor, patch) = MIN_OPERATOR_VERSION;
+        let msg = t_or(
+            locale,
+            "gtc.up.err.updates_version_gate",
+            "greentic-operator >= {version} is required for --updates",
+        )
+        .replace("{version}", &format!("{major}.{minor}.{patch}"));
+        eprintln!("{msg}");
+        return 1;
+    }
+
+    // Build a minimal env-manifest that seeds the trust root and configures
+    // the plan endpoint. `op env apply` handles both idempotently.
+    let manifest = serde_json::json!({
+        "schema": "greentic.env-manifest.v1",
+        "environment": { "id": env_id },
+        "trust_root": "bootstrap",
+        "updates": {
+            "plan_endpoint": DEFAULT_PLAN_ENDPOINT,
+        },
+    });
+
+    let path = snapshot.path().join("updates-manifest.json");
+    if let Err(err) = std::fs::write(&path, manifest.to_string().as_bytes()) {
+        eprintln!(
+            "{}: {err}",
+            t_or(
+                locale,
+                "gtc.up.err.updates_manifest_write",
+                "failed to write updates manifest",
+            )
+        );
+        return 1;
+    }
+
+    let path_str = path.display().to_string();
+    let args: Vec<String> = vec![
+        "op".to_string(),
+        "env".to_string(),
+        "apply".to_string(),
+        "--answers".to_string(),
+        path_str,
+        "--non-interactive".to_string(),
+        "--yes".to_string(),
+    ];
+
+    if let Err(err) = run_binary_checked(OP_BIN, &args, debug, locale, "updates subscription") {
+        eprintln!(
+            "{}: {err}",
+            t_or(
+                locale,
+                "gtc.up.err.updates_apply_failed",
+                "updates subscription failed",
+            )
+        );
+        return 1;
+    }
+
+    0
+}
+
+/// Parse a version triple from operator `--version` output.
+///
+/// Handles lines like `greentic-operator 1.1.24`, `v1.1.24`,
+/// `1.1.24-dev.42`, stripping a `v` prefix and any pre-release suffix.
+fn parse_version_triple(output: &str) -> Option<(u16, u16, u16)> {
+    let token = output
+        .split_whitespace()
+        .rev()
+        .find(|tok| tok.contains('.'))?;
+
+    let token = token.strip_prefix('v').unwrap_or(token);
+    // Strip pre-release suffix: split on '-' or '+', take the first part.
+    let token = token.split(['-', '+']).next()?;
+
+    let mut parts = token.splitn(3, '.');
+    let major = parts.next()?.parse().ok()?;
+    let minor = parts.next()?.parse().ok()?;
+    let patch = parts.next()?.parse().ok()?;
+    Some((major, minor, patch))
+}
+
+/// Check that the installed operator meets the minimum version for --updates.
+fn check_operator_version(debug: bool, locale: &str) -> bool {
+    let version_args = ["--version".to_string()];
+    let Ok(output) = run_binary_capture(OP_BIN, &version_args, debug, locale) else {
+        return false;
+    };
+    let Some(version) = parse_version_triple(&output) else {
+        return false;
+    };
+    version >= MIN_OPERATOR_VERSION
 }
 
 #[cfg(test)]
@@ -694,6 +839,7 @@ mod tests {
             create_answers: String::new(),
             setup_answers: String::new(),
             start_tail: Vec::new(),
+            updates: false,
             install: false,
             start: false,
             dry_run: true,
@@ -875,6 +1021,103 @@ mod tests {
         assert_eq!(
             start_tail_suffix(&["--cloudflared".to_string(), "off".to_string()]),
             " --cloudflared off"
+        );
+    }
+
+    // -- updates flag tests --
+
+    #[test]
+    fn updates_flag_defaults_to_off() {
+        let dir = TempDir::new().unwrap();
+        let plan = build_plan_from(dir.path(), &[]);
+        assert!(!plan.updates);
+    }
+
+    #[test]
+    fn updates_flag_is_parsed_when_present() {
+        let dir = TempDir::new().unwrap();
+        let plan = build_plan_from(dir.path(), &["--updates"]);
+        assert!(plan.updates);
+    }
+
+    // -- resolve_start_env_id tests --
+
+    #[test]
+    fn resolve_start_env_id_defaults_to_local() {
+        // Remove the env var so it doesn't interfere.
+        // SAFETY: this test is single-threaded and no other thread reads
+        // GREENTIC_ENV concurrently.
+        unsafe { std::env::remove_var("GREENTIC_ENV") };
+        assert_eq!(resolve_start_env_id(&[]), "local");
+    }
+
+    #[test]
+    fn resolve_start_env_id_extracts_spaced_flag() {
+        let tail = vec!["--env".to_string(), "staging".to_string()];
+        assert_eq!(resolve_start_env_id(&tail), "staging");
+    }
+
+    #[test]
+    fn resolve_start_env_id_extracts_equals_flag() {
+        let tail = vec!["--env=production".to_string()];
+        assert_eq!(resolve_start_env_id(&tail), "production");
+    }
+
+    // -- parse_version_triple tests --
+
+    #[test]
+    fn parse_version_triple_handles_typical_operator_output() {
+        assert_eq!(
+            parse_version_triple("greentic-operator 1.1.24"),
+            Some((1, 1, 24))
+        );
+    }
+
+    #[test]
+    fn parse_version_triple_handles_bare_version() {
+        assert_eq!(parse_version_triple("1.2.3"), Some((1, 2, 3)));
+    }
+
+    #[test]
+    fn parse_version_triple_handles_v_prefix() {
+        assert_eq!(parse_version_triple("v1.1.24"), Some((1, 1, 24)));
+    }
+
+    #[test]
+    fn parse_version_triple_strips_prerelease_suffix() {
+        assert_eq!(
+            parse_version_triple("greentic-operator 1.2.12345-dev.42"),
+            Some((1, 2, 12345))
+        );
+    }
+
+    #[test]
+    fn parse_version_triple_returns_none_for_garbage() {
+        assert_eq!(parse_version_triple("no version here"), None);
+    }
+
+    // -- version gate tests --
+
+    #[test]
+    fn version_gate_accepts_exact_minimum() {
+        assert!(parse_version_triple("1.1.24").unwrap() >= MIN_OPERATOR_VERSION);
+    }
+
+    #[test]
+    fn version_gate_rejects_below_minimum() {
+        assert!(parse_version_triple("1.1.23").unwrap() < MIN_OPERATOR_VERSION);
+    }
+
+    #[test]
+    fn version_gate_accepts_above_minimum() {
+        assert!(parse_version_triple("1.2.0").unwrap() >= MIN_OPERATOR_VERSION);
+    }
+
+    #[test]
+    fn default_plan_endpoint_matches_the_fleet_url() {
+        assert_eq!(
+            DEFAULT_PLAN_ENDPOINT,
+            "https://updates.greentic.cloud/v1/environments/_/plan"
         );
     }
 }

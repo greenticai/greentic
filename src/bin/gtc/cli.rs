@@ -897,6 +897,13 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .help_heading(options_heading)
                         .help(t_or(locale, "gtc.arg.up.force.help", "Proceed even when the bundle directory already exists. Overwrites it; only safe when nothing is running against it.")),
                 )
+                .arg(
+                    Arg::new("updates")
+                        .long("updates")
+                        .action(ArgAction::SetTrue)
+                        .help_heading(options_heading)
+                        .help(t_or(locale, "gtc.arg.up.updates.help", "Subscribe the environment to the fleet update channel after setup. Seeds the trust root and configures polling against the default plan endpoint.")),
+                )
                 .arg(release_context_strict_arg(options_heading))
                 .arg(release_context_ignore_arg(options_heading))
                 .arg(
