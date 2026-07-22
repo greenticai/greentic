@@ -1,5 +1,6 @@
 use std::fs;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use greentic_distributor_client::{
     DistClient, DistOptions, PackFetchOptions, default_pack_layer_media_types,
@@ -9,6 +10,18 @@ use gtc::error::{GtcError, GtcResult};
 use oci_distribution::Reference;
 use reqwest::blocking::Client;
 use serde_json::{Map, Value};
+
+/// Maximum size of an answers document fetched over HTTP (10 MiB).
+const HTTP_MAX_BYTES: usize = 10 * 1024 * 1024;
+
+/// Maximum number of HTTP redirects to follow.
+const HTTP_MAX_REDIRECTS: usize = 10;
+
+/// HTTP connect timeout for answers fetches.
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Total HTTP timeout for answers fetches.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(60);
 
 pub(super) trait AnswerSourceLoader {
     fn load_http(&self, source: &str) -> GtcResult<Vec<u8>>;
@@ -20,24 +33,79 @@ pub(super) struct DefaultAnswerSourceLoader;
 impl AnswerSourceLoader for DefaultAnswerSourceLoader {
     fn load_http(&self, source: &str) -> GtcResult<Vec<u8>> {
         let client = Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
+            .connect_timeout(HTTP_CONNECT_TIMEOUT)
+            .timeout(HTTP_TIMEOUT)
             .build()
             .map_err(|err| GtcError::message(format!("failed to create HTTP client: {err}")))?;
-        let response = client
-            .get(source)
-            .header("Accept", "application/json")
-            .header("User-Agent", format!("gtc/{}", env!("CARGO_PKG_VERSION")))
-            .send()
-            .map_err(|err| GtcError::message(format!("failed to fetch answers {source}: {err}")))?;
-        let status = response.status();
-        if !status.is_success() {
-            return Err(GtcError::message(format!(
-                "failed to fetch answers {source}: HTTP {status}"
-            )));
+
+        let mut current = reqwest::Url::parse(source).map_err(|err| {
+            GtcError::invalid_data("answers source", format!("invalid URL {source}: {err}"))
+        })?;
+        let original_scheme = current.scheme().to_string();
+
+        for _ in 0..HTTP_MAX_REDIRECTS {
+            let response = client
+                .get(current.clone())
+                .header("Accept", "application/json")
+                .header("User-Agent", format!("gtc/{}", env!("CARGO_PKG_VERSION")))
+                .send()
+                .map_err(|err| {
+                    GtcError::message(format!("failed to fetch answers {source}: {err}"))
+                })?;
+
+            if response.status().is_redirection() {
+                let location = response
+                    .headers()
+                    .get(reqwest::header::LOCATION)
+                    .ok_or_else(|| {
+                        GtcError::invalid_data(
+                            "answers fetch",
+                            format!("redirect from {current} has no Location header"),
+                        )
+                    })?
+                    .to_str()
+                    .map_err(|err| {
+                        GtcError::invalid_data(
+                            "answers fetch",
+                            format!("invalid Location header from {current}: {err}"),
+                        )
+                    })?;
+                let next = current.join(location).map_err(|err| {
+                    GtcError::invalid_data(
+                        "answers fetch",
+                        format!("invalid redirect target {location}: {err}"),
+                    )
+                })?;
+                validate_redirect_scheme(&original_scheme, next.scheme(), &next)?;
+                current = next;
+                continue;
+            }
+
+            let status = response.status();
+            if !status.is_success() {
+                return Err(GtcError::message(format!(
+                    "failed to fetch answers {source}: HTTP {status}"
+                )));
+            }
+            validate_content_type(
+                response
+                    .headers()
+                    .get(reqwest::header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok()),
+                source,
+            )?;
+            let bytes = response.bytes().map_err(|err| {
+                GtcError::message(format!("failed to read answers {source}: {err}"))
+            })?;
+            validate_response_size(bytes.len(), source)?;
+            return Ok(bytes.to_vec());
         }
-        response
-            .bytes()
-            .map(|bytes| bytes.to_vec())
-            .map_err(|err| GtcError::message(format!("failed to read answers {source}: {err}")))
+
+        Err(GtcError::invalid_data(
+            "answers fetch",
+            format!("too many redirects while fetching {source}"),
+        ))
     }
 
     fn load_distributor(&self, source: &str) -> GtcResult<Vec<u8>> {
@@ -267,6 +335,59 @@ where
 
 fn is_json_media_type(media_type: &str) -> bool {
     media_type == "application/json" || media_type.ends_with("+json")
+}
+
+/// Reject HTTPS-to-HTTP scheme downgrades during redirect following.
+fn validate_redirect_scheme(
+    original_scheme: &str,
+    target_scheme: &str,
+    target: &reqwest::Url,
+) -> GtcResult<()> {
+    if original_scheme == "https" && target_scheme != "https" {
+        return Err(GtcError::invalid_data(
+            "answers fetch",
+            format!("refusing redirect to {target}: HTTPS to HTTP downgrade"),
+        ));
+    }
+    Ok(())
+}
+
+/// Reject responses whose Content-Type is clearly not JSON (e.g. HTML error
+/// pages). Missing Content-Type is allowed because some CDNs and GitHub raw
+/// URLs omit it.
+fn validate_content_type(content_type: Option<&str>, source: &str) -> GtcResult<()> {
+    let Some(ct) = content_type else {
+        return Ok(());
+    };
+    let media_type = ct.split(';').next().unwrap_or("").trim();
+    if media_type.is_empty()
+        || media_type == "application/json"
+        || media_type.ends_with("+json")
+        || media_type == "application/octet-stream"
+        || media_type == "text/plain"
+    {
+        return Ok(());
+    }
+    Err(GtcError::invalid_data(
+        "answers fetch",
+        format!(
+            "{source} returned Content-Type '{ct}'; expected application/json or a +json variant"
+        ),
+    ))
+}
+
+/// Reject responses that exceed the size cap.
+fn validate_response_size(len: usize, source: &str) -> GtcResult<()> {
+    if len > HTTP_MAX_BYTES {
+        return Err(GtcError::invalid_data(
+            "answers fetch",
+            format!(
+                "{source} response is {len} bytes, exceeding the {} byte limit",
+                HTTP_MAX_BYTES
+            ),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -520,6 +641,104 @@ mod tests {
             map_oci_answers_reference("repo:///answers:stable", &options).unwrap(),
             "ghcr.io/acme/answers:stable"
         );
+    }
+
+    // -- redirect scheme validation --
+
+    #[test]
+    fn rejects_https_to_http_redirect() {
+        let target = reqwest::Url::parse("http://evil.test/answers.json").unwrap();
+        let err = super::validate_redirect_scheme("https", "http", &target).unwrap_err();
+        assert!(matches!(err, GtcError::InvalidData { .. }));
+        assert!(err.to_string().contains("HTTPS to HTTP downgrade"));
+    }
+
+    #[test]
+    fn accepts_https_to_https_redirect() {
+        let target = reqwest::Url::parse("https://cdn.example.com/answers.json").unwrap();
+        super::validate_redirect_scheme("https", "https", &target).unwrap();
+    }
+
+    #[test]
+    fn accepts_http_to_https_upgrade_redirect() {
+        let target = reqwest::Url::parse("https://secure.example.com/answers.json").unwrap();
+        super::validate_redirect_scheme("http", "https", &target).unwrap();
+    }
+
+    #[test]
+    fn accepts_http_to_http_redirect() {
+        let target = reqwest::Url::parse("http://other.example.com/answers.json").unwrap();
+        super::validate_redirect_scheme("http", "http", &target).unwrap();
+    }
+
+    // -- content-type validation --
+
+    #[test]
+    fn rejects_html_content_type() {
+        let err =
+            super::validate_content_type(Some("text/html"), "https://x.test/a.json").unwrap_err();
+        assert!(matches!(err, GtcError::InvalidData { .. }));
+        assert!(err.to_string().contains("Content-Type"));
+    }
+
+    #[test]
+    fn rejects_html_content_type_with_charset() {
+        let err =
+            super::validate_content_type(Some("text/html; charset=utf-8"), "https://x.test/a.json")
+                .unwrap_err();
+        assert!(err.to_string().contains("Content-Type"));
+    }
+
+    #[test]
+    fn accepts_application_json_content_type() {
+        super::validate_content_type(Some("application/json"), "src").unwrap();
+    }
+
+    #[test]
+    fn accepts_vendor_json_content_type() {
+        super::validate_content_type(Some("application/vnd.greentic.answers.v1+json"), "src")
+            .unwrap();
+    }
+
+    #[test]
+    fn accepts_octet_stream_content_type() {
+        super::validate_content_type(Some("application/octet-stream"), "src").unwrap();
+    }
+
+    #[test]
+    fn accepts_text_plain_content_type() {
+        super::validate_content_type(Some("text/plain"), "src").unwrap();
+    }
+
+    #[test]
+    fn accepts_missing_content_type() {
+        super::validate_content_type(None, "src").unwrap();
+    }
+
+    #[test]
+    fn accepts_json_content_type_with_charset() {
+        super::validate_content_type(Some("application/json; charset=utf-8"), "src").unwrap();
+    }
+
+    // -- response size validation --
+
+    #[test]
+    fn rejects_oversized_response() {
+        let err =
+            super::validate_response_size(super::HTTP_MAX_BYTES + 1, "https://x.test/big.json")
+                .unwrap_err();
+        assert!(matches!(err, GtcError::InvalidData { .. }));
+        assert!(err.to_string().contains("exceeding"));
+    }
+
+    #[test]
+    fn accepts_response_at_size_limit() {
+        super::validate_response_size(super::HTTP_MAX_BYTES, "src").unwrap();
+    }
+
+    #[test]
+    fn accepts_small_response() {
+        super::validate_response_size(42, "src").unwrap();
     }
 
     #[test]
