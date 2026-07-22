@@ -669,9 +669,7 @@ fn updates_manifest(env_id: &str) -> Value {
     serde_json::json!({
         "schema": "greentic.env-manifest.v1",
         "environment": { "id": env_id },
-        "updates": {
-            "plan_endpoint": DEFAULT_PLAN_ENDPOINT,
-        },
+        "updates": {},
     })
 }
 
