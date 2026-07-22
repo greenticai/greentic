@@ -224,13 +224,12 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
     }
 }
 
-pub(super) struct ResolvedAnswersArgs {
-    pub(super) args: Vec<String>,
-    #[allow(dead_code)]
-    pub(super) tempdir: Option<TempDir>,
+struct ResolvedAnswersArgs {
+    args: Vec<String>,
+    tempdir: Option<TempDir>,
 }
 
-pub(super) fn resolve_answers_args(args: &[String]) -> gtc::error::GtcResult<ResolvedAnswersArgs> {
+fn resolve_answers_args(args: &[String]) -> gtc::error::GtcResult<ResolvedAnswersArgs> {
     let loader = DefaultAnswerSourceLoader;
     let mut rewritten = Vec::with_capacity(args.len());
     let mut tempdir: Option<TempDir> = None;

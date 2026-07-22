@@ -14,11 +14,11 @@ use std::path::{Path, PathBuf};
 
 use clap::ArgMatches;
 use serde_json::{Map, Value};
+use tempfile::TempDir;
 
+use crate::answer_resolver::{DefaultAnswerSourceLoader, load_answer_bytes, parse_answers_bytes};
 use crate::cli::build_cli;
-use crate::commands::{
-    ResolvedAnswersArgs, answers_error_exit_code, check_release_context, resolve_answers_args,
-};
+use crate::commands::{answers_error_exit_code, check_release_context};
 use crate::deploy::run_start;
 use crate::i18n_support::t_or;
 use crate::install::run_install;
@@ -27,8 +27,14 @@ use crate::router::route_passthrough_subcommand;
 
 /// Everything `run_up` needs from the command line, resolved once.
 struct UpPlan {
-    /// Absolute — `output_dir` in the create document is CWD-relative, and a
-    /// later step must not re-resolve it against a different directory.
+    /// Where the WIZARD will write, from the create document. Always known:
+    /// the wizard requires `bundle_id`, so a document it could accept is a
+    /// document `up` can predict from. This is the path the overwrite guard
+    /// exists to protect, and `--bundle-dir` does not move it.
+    wizard_dir: PathBuf,
+    /// Where setup and start operate — `wizard_dir` unless `--bundle-dir`
+    /// corrects a prediction that drifted. Absolute: `output_dir` is
+    /// CWD-relative and a later step must not re-resolve it elsewhere.
     bundle_dir: PathBuf,
     create_answers: String,
     setup_answers: String,
@@ -37,11 +43,10 @@ struct UpPlan {
     start: bool,
     dry_run: bool,
     force: bool,
-    /// Held only for their `Drop`: a materialized `oci://` / `store://` /
-    /// `repo://` document lives in a tempdir that must outlive the child
-    /// process reading it. Dropping either early turns into a confusing
-    /// "file not found" from a companion binary.
-    _answers_tempdirs: Vec<ResolvedAnswersArgs>,
+    /// Held only for its `Drop`: both documents are snapshotted into it, and
+    /// it must outlive the child processes reading them. Dropping it early
+    /// turns into a confusing "file not found" from a companion binary.
+    _snapshot: TempDir,
 }
 
 pub(super) fn run_up(
@@ -59,19 +64,26 @@ pub(super) fn run_up(
         }
     };
 
-    // The bundle-directory guard runs before anything else mutates the
-    // machine: `up` hides which of its steps is destructive, so it must
-    // refuse earlier than the four commands it replaces would.
-    if plan.bundle_dir.exists() && !plan.force {
-        eprintln!(
-            "{} already exists. `up` runs the wizard in create mode, which \
-             overwrites a bundle you may have edited and orphans a tunnel \
-             still running against it. Pass --force to overwrite it, \
-             --bundle-dir <PATH> to build elsewhere, or run `gtc setup` and \
-             `gtc start` directly against it.",
-            plan.bundle_dir.display()
-        );
-        return 2;
+    // The overwrite guard runs before anything else mutates the machine:
+    // `up` hides which of its steps is destructive, so it must refuse earlier
+    // than the four commands it replaces would.
+    //
+    // Every directory a step may write is checked, not just the one setup and
+    // start use. `--bundle-dir` does NOT redirect the wizard, so guarding only
+    // it would leave the wizard free to overwrite the document's directory
+    // without `--force` — the exact data loss this guard exists to prevent.
+    for dir in guarded_dirs(&plan) {
+        if dir.exists() && !plan.force {
+            eprintln!(
+                "{} already exists. `up` runs the wizard in create mode, which \
+                 overwrites a bundle you may have edited and orphans a tunnel \
+                 still running against it. Pass --force to overwrite it, change \
+                 `output_dir` in the create-answers document to build elsewhere, \
+                 or run `gtc setup` and `gtc start` directly against it.",
+                dir.display()
+            );
+            return 2;
+        }
     }
 
     // Once, not once per delegated step. `gtc wizard` and `gtc setup` each run
@@ -179,26 +191,27 @@ fn build_plan(sub_matches: &ArgMatches) -> Result<UpPlan, UpError> {
         .get_one::<String>("setup-answers")
         .expect("clap requires --setup-answers");
 
-    // Route both documents through the same resolver `gtc wizard` and
-    // `gtc setup` use, so `oci://`, `store://` and `repo://` behave here
-    // exactly as they do there.
-    let create = resolve_one(create_source)?;
-    let setup = resolve_one(setup_source)?;
-    let create_answers = answers_value(&create);
-    let setup_answers = answers_value(&setup);
+    // Snapshot BOTH documents once, then hand those files to every step.
+    // `gtc wizard --answers <url>` re-fetches on each invocation, and the
+    // README's `releases/latest` URLs are mutable — so without this the
+    // overwrite guard would be decided on one version of the create document
+    // while the wizard acted on another, and setup could receive a version
+    // incompatible with the bundle the wizard built.
+    let snapshot = TempDir::new()
+        .map_err(|err| UpError::usage(format!("creating the answers snapshot directory: {err}")))?;
+    let (create_answers, document) = snapshot_answers(snapshot.path(), "create", create_source)?;
+    let (setup_answers, _) = snapshot_answers(snapshot.path(), "setup", setup_source)?;
 
+    // Predicted unconditionally, even under `--bundle-dir`: this is where the
+    // wizard writes, so the guard needs it whatever the later steps use.
+    let wizard_dir = pin(&predict_bundle_dir(&document).map_err(UpError::usage)?)?;
     let bundle_dir = match sub_matches.get_one::<String>("bundle-dir") {
-        Some(explicit) => PathBuf::from(explicit),
-        None => {
-            let document = crate::answer_resolver::load_answers(&create_answers)
-                .map_err(|err| UpError::usage(format!("--answers {create_answers}: {err}")))?;
-            predict_bundle_dir(&document).map_err(UpError::usage)?
-        }
+        Some(explicit) => pin(Path::new(explicit))?,
+        None => wizard_dir.clone(),
     };
-    let bundle_dir = absolutize(&bundle_dir)
-        .map_err(|err| UpError::usage(format!("resolving {}: {err}", bundle_dir.display())))?;
 
     Ok(UpPlan {
+        wizard_dir,
         bundle_dir,
         create_answers,
         setup_answers,
@@ -210,24 +223,47 @@ fn build_plan(sub_matches: &ArgMatches) -> Result<UpPlan, UpError> {
         start: !sub_matches.get_flag("no-start"),
         dry_run: sub_matches.get_flag("dry-run"),
         force: sub_matches.get_flag("force"),
-        _answers_tempdirs: vec![create, setup],
+        _snapshot: snapshot,
     })
 }
 
-fn resolve_one(source: &str) -> Result<ResolvedAnswersArgs, UpError> {
-    resolve_answers_args(&["--answers".to_string(), source.to_string()]).map_err(|err| UpError {
+/// Every directory a step may write, deduplicated.
+///
+/// `bundle_dir` differs from `wizard_dir` only under `--bundle-dir`, and then
+/// both are live: the wizard writes one, setup and start the other.
+fn guarded_dirs(plan: &UpPlan) -> Vec<&Path> {
+    let mut dirs = vec![plan.wizard_dir.as_path()];
+    if plan.bundle_dir != plan.wizard_dir {
+        dirs.push(plan.bundle_dir.as_path());
+    }
+    dirs
+}
+
+/// Fetch a document once, keep the exact bytes, and return the path every
+/// later step reads plus the parsed document for prediction.
+///
+/// The snapshot directory is `tempfile`'s 0700, which is what keeps the
+/// setup document's provider credentials off a shared machine.
+fn snapshot_answers(
+    dir: &Path,
+    name: &str,
+    source: &str,
+) -> Result<(String, Map<String, Value>), UpError> {
+    let loader = DefaultAnswerSourceLoader;
+    let to_err = |err: gtc::error::GtcError| UpError {
         message: format!("{err}"),
         code: answers_error_exit_code(&err),
-    })
+    };
+    let bytes = load_answer_bytes(source, &loader).map_err(to_err)?;
+    let document = parse_answers_bytes(source, &bytes).map_err(to_err)?;
+    let path = dir.join(format!("{name}-answers.json"));
+    std::fs::write(&path, &bytes)
+        .map_err(|err| UpError::usage(format!("writing {}: {err}", path.display())))?;
+    Ok((path.display().to_string(), document))
 }
 
-/// The resolved path `resolve_answers_args` rewrote `--answers <src>` into.
-fn answers_value(resolved: &ResolvedAnswersArgs) -> String {
-    resolved
-        .args
-        .get(1)
-        .cloned()
-        .expect("resolve_answers_args preserves the --answers value")
+fn pin(path: &Path) -> Result<PathBuf, UpError> {
+    absolutize(path).map_err(|err| UpError::usage(format!("resolving {}: {err}", path.display())))
 }
 
 /// Predict the directory the bundle wizard will create.
@@ -398,12 +434,21 @@ fn start_tail_suffix(tail: &[String]) -> String {
 
 fn print_dry_run(plan: &UpPlan) {
     println!("bundle directory: {}", plan.bundle_dir.display());
+    if plan.bundle_dir != plan.wizard_dir {
+        // Surface the split: the wizard writes one directory and setup/start
+        // read another, and a dry run that showed only one would hide it.
+        println!("wizard writes to:  {}", plan.wizard_dir.display());
+    }
     println!("steps:");
     if plan.install {
         println!("  install  gtc install --skip-self-update");
     }
     println!("  wizard   gtc wizard --answers {}", plan.create_answers);
     println!("  verify   {} exists", plan.bundle_dir.display());
+    println!(
+        "  guard    {} must not already exist",
+        plan.wizard_dir.display()
+    );
     println!(
         "  setup    gtc setup {} --answers {} --non-interactive",
         plan.bundle_dir.display(),
@@ -423,10 +468,10 @@ pub(super) fn after_help(locale: &str) -> String {
         "gtc.cmd.up.after_help",
         "Runs install -> wizard -> setup -> start as one command, ending in a \
          foreground server (Ctrl+C to stop). Both answer documents are \
-         required; `up` never guesses the second one. Setup flags (--tenant, \
-         --team, --env, --advanced) are NOT forwarded — run the four commands \
-         separately if you need them. Everything after `--` is forwarded to \
-         the start step.",
+         required; `up` never guesses the second one, and both are fetched \
+         once and reused by every step. Setup flags (--tenant, --team, --env, \
+         --advanced) are NOT forwarded — run the four commands separately if \
+         you need them. Everything after `--` is forwarded to the start step.",
     )
 }
 
@@ -491,8 +536,10 @@ mod tests {
 
     #[test]
     fn a_blank_output_dir_falls_back_rather_than_predicting_the_cwd() {
-        // greentic-bundle maps an empty output_dir to "."; predicting the CWD
-        // would make the exists-guard fire on every run.
+        // Mirrors `normalized_request_from_document` in greentic-bundle, which
+        // trims `output_dir`, discards it when empty, and falls back to the
+        // derived default. NOT `normalize_output_dir`'s empty-maps-to-"." rule
+        // — that guards other seed paths and never sees a value from here.
         let doc = bundle_doc(json!({
             "bundle_id": "quickstart",
             "output_dir": "   ",
@@ -610,6 +657,142 @@ mod tests {
             assert!(!matches.get_flag(selector), "{selector} should be unset");
         }
         assert!(!matches.get_flag("dry-run"));
+    }
+
+    fn plan_with(wizard: &str, bundle: &str) -> UpPlan {
+        UpPlan {
+            wizard_dir: PathBuf::from(wizard),
+            bundle_dir: PathBuf::from(bundle),
+            create_answers: String::new(),
+            setup_answers: String::new(),
+            start_tail: Vec::new(),
+            install: false,
+            start: false,
+            dry_run: true,
+            force: false,
+            _snapshot: TempDir::new().unwrap(),
+        }
+    }
+
+    #[test]
+    fn the_guard_covers_the_wizard_directory_even_under_bundle_dir() {
+        // --bundle-dir does NOT redirect the wizard, so guarding only it would
+        // leave the document's directory free to be overwritten without
+        // --force. Both must be checked.
+        let plan = plan_with("/work/from-document", "/work/override");
+        assert_eq!(
+            guarded_dirs(&plan),
+            vec![
+                Path::new("/work/from-document"),
+                Path::new("/work/override")
+            ]
+        );
+    }
+
+    #[test]
+    fn the_guard_does_not_repeat_a_single_directory() {
+        let plan = plan_with("/work/demo-bundle", "/work/demo-bundle");
+        assert_eq!(guarded_dirs(&plan), vec![Path::new("/work/demo-bundle")]);
+    }
+
+    #[test]
+    fn a_snapshot_is_byte_identical_and_read_back_from_disk() {
+        // Every step must see the SAME bytes: a `releases/latest` URL can
+        // change between the guard decision and the wizard's own fetch.
+        let dir = TempDir::new().unwrap();
+        let source = dir.path().join("origin.json");
+        let raw = br#"{"answers":{"selected_action":"bundle"},"note":"kept verbatim"}"#;
+        std::fs::write(&source, raw).unwrap();
+
+        let (path, document) =
+            snapshot_answers(dir.path(), "create", &source.display().to_string())
+                .map_err(|err| err.message)
+                .unwrap();
+        assert_ne!(path, source.display().to_string(), "must be a copy");
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
+        assert_eq!(document["note"], "kept verbatim");
+
+        // Mutating the origin afterwards must not reach any step.
+        std::fs::write(&source, br#"{"answers":{"selected_action":"pack"}}"#).unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(), raw);
+    }
+
+    /// Build a real `UpPlan` the way `run_up` does: through clap, from files
+    /// on disk. Without this, the guard's most important property — that
+    /// `--bundle-dir` cannot detach it from the wizard — is only asserted
+    /// against a hand-built struct, and a `build_plan` that wired the two
+    /// together would sail through.
+    fn build_plan_from(dir: &Path, extra: &[&str]) -> UpPlan {
+        let create = dir.join("create.json");
+        let setup = dir.join("setup.json");
+        std::fs::write(
+            &create,
+            serde_json::to_vec(&bundle_doc(json!({
+                "bundle_id": "helpdesk-itsm-demo",
+                "output_dir": "from-document",
+            })))
+            .unwrap(),
+        )
+        .unwrap();
+        std::fs::write(&setup, br#"{"tenant":"demo"}"#).unwrap();
+
+        let mut argv = vec![
+            "gtc".to_string(),
+            "up".to_string(),
+            "--answers".to_string(),
+            create.display().to_string(),
+            "--setup-answers".to_string(),
+            setup.display().to_string(),
+        ];
+        argv.extend(extra.iter().map(|value| value.to_string()));
+
+        let matches = build_cli("en")
+            .try_get_matches_from(argv)
+            .expect("up parses");
+        let sub = matches
+            .subcommand_matches("up")
+            .expect("up matches")
+            .clone();
+        build_plan(&sub).map_err(|err| err.message).expect("plan")
+    }
+
+    #[test]
+    fn bundle_dir_never_detaches_the_guard_from_the_wizard() {
+        // The whole point of the guard: `--bundle-dir` moves where setup and
+        // start look, NOT where the wizard writes. If build_plan ever sets
+        // wizard_dir from the override, the document's directory becomes
+        // overwritable without --force.
+        let dir = TempDir::new().unwrap();
+        let plan = build_plan_from(dir.path(), &["--bundle-dir", "/work/override"]);
+        assert!(
+            plan.wizard_dir.ends_with("from-document"),
+            "wizard_dir must come from the document, got {}",
+            plan.wizard_dir.display()
+        );
+        assert_eq!(plan.bundle_dir, PathBuf::from("/work/override"));
+        assert_eq!(guarded_dirs(&plan).len(), 2);
+    }
+
+    #[test]
+    fn without_an_override_both_directories_are_the_documents() {
+        let dir = TempDir::new().unwrap();
+        let plan = build_plan_from(dir.path(), &[]);
+        assert_eq!(plan.bundle_dir, plan.wizard_dir);
+        assert!(plan.wizard_dir.ends_with("from-document"));
+        assert_eq!(guarded_dirs(&plan).len(), 1);
+    }
+
+    #[test]
+    fn build_plan_hands_every_step_a_snapshot_not_the_original() {
+        let dir = TempDir::new().unwrap();
+        let plan = build_plan_from(dir.path(), &[]);
+        for answers in [&plan.create_answers, &plan.setup_answers] {
+            assert!(
+                !answers.starts_with(&dir.path().display().to_string()),
+                "{answers} is the original, not a snapshot"
+            );
+            assert!(Path::new(answers).is_file(), "{answers} is missing");
+        }
     }
 
     #[test]

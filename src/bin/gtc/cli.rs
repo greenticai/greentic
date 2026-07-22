@@ -867,7 +867,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .value_name("PATH")
                         .num_args(1)
                         .help_heading(options_heading)
-                        .help(t_or(locale, "gtc.arg.up.bundle_dir.help", "Override the bundle directory predicted from the create-answers document.")),
+                        .help(t_or(locale, "gtc.arg.up.bundle_dir.help", "Where `up` looks for the bundle after the wizard runs, when the predicted path is wrong. It does NOT move the wizard: the wizard always writes where the create-answers document's `output_dir` says.")),
                 )
                 .arg(
                     Arg::new("no-install")
