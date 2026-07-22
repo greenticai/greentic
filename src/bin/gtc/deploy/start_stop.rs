@@ -351,7 +351,13 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
         request.log_dir = Some(resolved.bundle_dir.join("logs"));
     }
     let args = request.to_runtime_start_args(locale);
-    let runtime_env = local_runtime_secret_env(&resolved.bundle_dir);
+    // Dev-secrets store resolution is owned by greentic-start (#423): it reads
+    // the shared env store (`~/.greentic/environments/<env>/.greentic/dev/…`)
+    // from `$GREENTIC_ENV`, which we pass via `--env` above. gtc used to export
+    // `GREENTIC_DEV_SECRETS_PATH` pinned to the bundle root — but that env var
+    // is the OVERRIDE the reader (and greentic-setup #226) honour FIRST, so it
+    // silently defeated the env-store resolution and made setup-written secrets
+    // unreadable. Don't set it here; let start resolve the one true store.
     match run_binary_checked_with_target_and_env(
         START_BIN,
         &args,
@@ -359,7 +365,7 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
         locale,
         "start bundle",
         None,
-        runtime_env.as_ref(),
+        None,
     ) {
         Ok(()) => 0,
         Err(err) => {
@@ -377,7 +383,7 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
 ///
 /// Used by both start and stop so the env-deploy/serve and stop paths
 /// agree on the same environment.
-fn resolve_env_id(explicit: Option<&str>) -> String {
+pub(crate) fn resolve_env_id(explicit: Option<&str>) -> String {
     explicit
         .map(str::to_string)
         .or_else(|| {
@@ -386,6 +392,23 @@ fn resolve_env_id(explicit: Option<&str>) -> String {
                 .filter(|value| !value.trim().is_empty())
         })
         .unwrap_or_else(|| DEFAULT_ENV_ID.to_string())
+}
+
+/// Child-process env that pins gtc's resolved Greentic environment for any
+/// child that touches the secrets store.
+///
+/// The dev-secrets store location is gated on `$GREENTIC_ENV` (env store when
+/// set, legacy bundle-root when unset). gtc resolves the env once (see
+/// [`resolve_env_id`]) and must pin it *identically* on every child that reads
+/// or writes secrets — `start`'s deploy+serve **and** the `setup`/`provider`/`op`
+/// passthroughs — otherwise the writer (greentic-setup) and reader
+/// (greentic-start) disagree on the store and setup-written secrets are
+/// invisible at runtime. Pinned on the **child** only, never gtc's own process,
+/// so the env-store gate stays opt-in for non-gtc callers.
+pub(crate) fn pinned_env_for_children(env_id: &str) -> ChildProcessEnv {
+    let mut env = ChildProcessEnv::new();
+    env.set("GREENTIC_ENV", env_id.to_string());
+    env
 }
 
 /// Deploy a prepared bundle into `env_id` via `greentic-setup env-deploy`.
@@ -403,22 +426,6 @@ fn deploy_bundle_into_env(bundle: &Path, env_id: &str, debug: bool, locale: &str
         bundle.display().to_string(),
     ];
     run_binary_checked(SETUP_BIN, &args, debug, locale, "env-deploy bundle")
-}
-
-fn local_runtime_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
-    let dev_secrets = bundle_dir
-        .join(".greentic")
-        .join("dev")
-        .join(".dev.secrets.env");
-    if !dev_secrets.is_file() {
-        return None;
-    }
-    let mut env = ChildProcessEnv::new();
-    env.set(
-        "GREENTIC_DEV_SECRETS_PATH",
-        dev_secrets.display().to_string(),
-    );
-    Some(env)
 }
 
 pub(crate) fn run_stop(tail: &[String], debug: bool, locale: &str) -> i32 {
@@ -1443,30 +1450,8 @@ mod tests {
         assert_eq!(target, None);
     }
 
-    #[test]
-    fn local_runtime_secret_env_points_at_bundle_envelope_when_present() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let envelope = dir
-            .path()
-            .join(".greentic")
-            .join("dev")
-            .join(".dev.secrets.env");
-        fs::create_dir_all(envelope.parent().expect("parent")).expect("mkdir");
-        fs::write(&envelope, "SECRET=value\n").expect("envelope");
-
-        let env = super::local_runtime_secret_env(dir.path()).expect("env present");
-        let entry = env
-            .vars
-            .iter()
-            .find(|(key, _)| key == "GREENTIC_DEV_SECRETS_PATH")
-            .expect("GREENTIC_DEV_SECRETS_PATH must be set");
-        assert_eq!(entry.1.as_str(), envelope.display().to_string());
-    }
-
-    #[test]
-    fn local_runtime_secret_env_returns_none_when_envelope_absent() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        // No `.greentic/dev/.dev.secrets.env` file created on purpose.
-        assert!(super::local_runtime_secret_env(dir.path()).is_none());
-    }
+    // NOTE: gtc no longer exports `GREENTIC_DEV_SECRETS_PATH` on `start` — the
+    // dev-secrets store is resolved by greentic-start (#423) from the shared env
+    // store, and pinning the override to the bundle root defeated it. See
+    // `run_start_with_bundle_ref_and_tail`.
 }

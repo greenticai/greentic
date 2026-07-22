@@ -19,7 +19,8 @@ use crate::answer_resolver::{
 };
 use crate::cli::build_cli;
 use crate::deploy::{
-    RefreshArgs, resolve_local_mutable_bundle_dir, run_refresh, run_start, run_stop,
+    RefreshArgs, pinned_env_for_children, resolve_env_id, resolve_local_mutable_bundle_dir,
+    run_refresh, run_start, run_stop,
 };
 use crate::docs_cmd::run_docs;
 use crate::extensions::{
@@ -27,13 +28,25 @@ use crate::extensions::{
 };
 use crate::i18n_support::i18n;
 use crate::install::{run_install, run_update};
-use crate::process::{passthrough, run_binary_capture, run_doctor};
+use crate::process::{passthrough, passthrough_with_env, run_binary_capture, run_doctor};
 use crate::release_cache::run_release_cache;
 use crate::router::{
     collect_tail, detect_locale, locale_from_args, parse_raw_passthrough, passthrough_help_request,
     route_passthrough_subcommand,
 };
 use crate::toolchain::{installed_toolchain_label, latest_release_context_warning};
+
+/// Extract the value of a `--env <id>` flag from a passthrough arg list, so a
+/// secret-touching passthrough pins the same env the subcommand itself will
+/// resolve. `None` falls back (via `resolve_env_id`) to `$GREENTIC_ENV` then the
+/// `local` default — matching `gtc start`'s precedence.
+fn env_flag_from_args(args: &[String]) -> Option<String> {
+    args.iter()
+        .position(|arg| arg == "--env")
+        .and_then(|idx| args.get(idx + 1))
+        .filter(|value| !value.trim().is_empty())
+        .cloned()
+}
 
 pub(super) fn run(raw_args: Vec<String>) -> i32 {
     let i18n = i18n();
@@ -210,6 +223,19 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
                 return run_wizard_schema(binary, &args, debug, &locale);
             }
             let _answers_tempdir = answers_tempdir;
+            // Secret-touching passthroughs invoke greentic-setup / greentic-operator,
+            // which read and write the dev-secrets store. That store's location is
+            // gated on `$GREENTIC_ENV`; `gtc start` pins its resolved env on its
+            // deploy+serve children, so these must pin the *same* resolved env —
+            // otherwise the writer defaults to the legacy bundle-root store while
+            // `gtc start`'s reader uses the env store, and setup-written secrets are
+            // invisible at runtime. Pinned on the child only (never gtc's own
+            // process), so the env-store gate stays opt-in for non-gtc callers.
+            if matches!(name, "setup" | "provider" | "op" | "wizard") {
+                let env_id = resolve_env_id(env_flag_from_args(&args).as_deref());
+                let child_env = pinned_env_for_children(&env_id);
+                return passthrough_with_env(binary, &args, debug, &locale, &child_env);
+            }
             passthrough(binary, &args, debug, &locale)
         }
         _ => 2,

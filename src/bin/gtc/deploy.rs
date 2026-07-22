@@ -37,8 +37,8 @@ pub(super) use prepared_bundle::{
 pub(super) use refresh::{RefreshArgs, run_refresh};
 #[allow(unused_imports)]
 pub(super) use start_stop::{
-    parse_start_cli_options, parse_stop_cli_options, run_start, run_start_with_bundle_ref_and_tail,
-    run_stop, select_start_target,
+    parse_start_cli_options, parse_stop_cli_options, pinned_env_for_children, resolve_env_id,
+    run_start, run_start_with_bundle_ref_and_tail, run_stop, select_start_target,
 };
 
 #[derive(Debug)]
