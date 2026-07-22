@@ -130,5 +130,15 @@
   "gtc.wizard.prompt.select": "Select option:",
   "gtc.wizard.prompt.bundle_path": "Bundle directory (e.g. ./mybundle):",
   "gtc.wizard.err.bundle_path_required": "Bundle path is required.",
-  "gtc.wizard.err.bundle_exists": "Bundle path already exists: {path}"
+  "gtc.wizard.err.bundle_exists": "Bundle path already exists: {path}",
+  "gtc.cmd.up.about": "Create, set up and start a bundle in one command.",
+  "gtc.cmd.up.after_help": "Runs install -> wizard -> setup -> start as one command, ending in a foreground server (Ctrl+C to stop). Both answer documents are required; `up` never guesses the second one. Setup flags (--tenant, --team, --env, --advanced) are NOT forwarded — run the four commands separately if you need them. Everything after `--` is forwarded to the start step.",
+  "gtc.arg.up.answers.help": "Create-answers document for the wizard step. Accepts local paths, file://, http://, https://, oci://, store:// and repo:// JSON documents.",
+  "gtc.arg.up.setup_answers.help": "Setup-answers document for the setup step; same sources as --answers.",
+  "gtc.arg.up.bundle_dir.help": "Override the bundle directory predicted from the create-answers document.",
+  "gtc.arg.up.no_install.help": "Skip the install step; fail later if the toolchain is missing.",
+  "gtc.arg.up.no_start.help": "Stop after setup and print the start command instead of running it.",
+  "gtc.arg.up.dry_run.help": "Print the resolved bundle directory and every step, then exit without running any of them.",
+  "gtc.arg.up.force.help": "Proceed even when the bundle directory already exists. Overwrites it; only safe when nothing is running against it.",
+  "gtc.arg.up.start_args.help": "Arguments after `--`, forwarded verbatim to the start step."
 }

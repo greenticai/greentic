@@ -28,6 +28,8 @@ mod release_cache;
 mod router;
 #[path = "gtc/toolchain.rs"]
 mod toolchain;
+#[path = "gtc/up.rs"]
+mod up;
 
 use std::path::Path;
 
