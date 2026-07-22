@@ -496,8 +496,9 @@ fn print_dry_run(plan: &UpPlan) {
     if plan.updates {
         let env_id = resolve_start_env_id(&plan.start_tail);
         println!(
-            "  updates  greentic-operator op env apply (env={env_id}, trust_root=bootstrap, plan_endpoint={DEFAULT_PLAN_ENDPOINT})"
+            "  updates  greentic-operator op env apply --dry-run (env={env_id}, plan_endpoint={DEFAULT_PLAN_ENDPOINT})"
         );
+        println!("           greentic-operator op env apply --non-interactive");
     }
     if plan.start {
         let tail = start_tail_suffix(&plan.start_tail);
@@ -521,7 +522,23 @@ pub(super) fn after_help(locale: &str) -> String {
 }
 
 const DEFAULT_PLAN_ENDPOINT: &str = "https://updates.greentic.cloud/v1/environments/_/plan";
-const MIN_OPERATOR_VERSION: (u16, u16, u16) = (1, 1, 24);
+
+/// The verb whose presence proves the operator can honour an `updates` block.
+///
+/// Deliberately NOT a version comparison. `greentic-operator` is a thin wrapper
+/// crate with its OWN version — 1.1.4 on crates.io — while the capability lives
+/// in its `greentic-deployer` dependency, currently 1.1.24. Those numbers do not
+/// track each other: `greentic-operator 1.1.4` depends on
+/// `greentic-deployer >=1.1.16, <1.2.0-0`, so what a given binary can actually
+/// do depends on when it was built, not on what `--version` prints. Gating on
+/// `>= 1.1.24` compared against `--version` output refuses EVERY install,
+/// including a freshly built one that is perfectly capable.
+///
+/// `op trust-root add-did` landed in the same deployer release as `trust_did`
+/// handling in the env-manifest, so its presence is a direct answer to the
+/// question actually being asked. An older binary reports
+/// `unrecognized subcommand 'add-did'` and exits non-zero.
+const UPDATES_CAPABILITY_PROBE: [&str; 4] = ["op", "trust-root", "add-did", "--help"];
 
 /// Extract the environment id from the start tail args.
 ///
@@ -551,30 +568,22 @@ fn resolve_start_env_id(start_tail: &[String]) -> String {
 /// Run the updates subscription step: version-gate the operator, write a
 /// minimal env-manifest, and apply it via `op env apply`.
 fn run_updates_step(env_id: &str, snapshot: &TempDir, debug: bool, locale: &str) -> i32 {
-    // Version-gate: the operator must embed greentic-deployer >= 1.1.24
-    // for the `updates` block in env-manifest to be handled.
-    if !check_operator_version(debug, locale) {
-        let (major, minor, patch) = MIN_OPERATOR_VERSION;
-        let msg = t_or(
-            locale,
-            "gtc.up.err.updates_version_gate",
-            "greentic-operator >= {version} is required for --updates",
-        )
-        .replace("{version}", &format!("{major}.{minor}.{patch}"));
-        eprintln!("{msg}");
+    // Capability-gate the companion before writing anything.
+    if !operator_supports_updates(debug, locale) {
+        eprintln!(
+            "{}",
+            t_or(
+                locale,
+                "gtc.up.err.updates_version_gate",
+                "--updates needs a greentic-operator built against greentic-deployer 1.1.24 \
+                 or newer (it must provide `op trust-root add-did`). Reinstall greentic-operator \
+                 and retry.",
+            )
+        );
         return 1;
     }
 
-    // Build a minimal env-manifest that seeds the trust root and configures
-    // the plan endpoint. `op env apply` handles both idempotently.
-    let manifest = serde_json::json!({
-        "schema": "greentic.env-manifest.v1",
-        "environment": { "id": env_id },
-        "trust_root": "bootstrap",
-        "updates": {
-            "plan_endpoint": DEFAULT_PLAN_ENDPOINT,
-        },
-    });
+    let manifest = updates_manifest(env_id);
 
     let path = snapshot.path().join("updates-manifest.json");
     if let Err(err) = std::fs::write(&path, manifest.to_string().as_bytes()) {
@@ -590,16 +599,44 @@ fn run_updates_step(env_id: &str, snapshot: &TempDir, debug: bool, locale: &str)
     }
 
     let path_str = path.display().to_string();
-    let args: Vec<String> = vec![
-        "op".to_string(),
-        "env".to_string(),
-        "apply".to_string(),
-        "--answers".to_string(),
-        path_str,
-        "--non-interactive".to_string(),
-        "--yes".to_string(),
-    ];
+    let apply_args = |extra: &[&str]| -> Vec<String> {
+        let mut args = vec![
+            "op".to_string(),
+            "env".to_string(),
+            "apply".to_string(),
+            "--answers".to_string(),
+            path_str.clone(),
+        ];
+        args.extend(extra.iter().map(|s| (*s).to_string()));
+        args
+    };
 
+    // Show the plan BEFORE converging. `--non-interactive` implies `--yes`, so
+    // the real apply below cannot stop to ask — a bootstrap must not hang on a
+    // prompt. That makes this preview the only thing standing between the
+    // operator and an unannounced change to what their environment trusts, so
+    // it is not optional and a failure here aborts before anything mutates.
+    // `--dry-run` validates, diffs and prints the plan, then exits without
+    // touching the store.
+    if let Err(err) = run_binary_checked(
+        OP_BIN,
+        &apply_args(&["--dry-run"]),
+        debug,
+        locale,
+        "updates subscription plan",
+    ) {
+        eprintln!(
+            "{}: {err}",
+            t_or(
+                locale,
+                "gtc.up.err.updates_plan_failed",
+                "could not plan the updates subscription",
+            )
+        );
+        return 1;
+    }
+
+    let args = apply_args(&["--non-interactive"]);
     if let Err(err) = run_binary_checked(OP_BIN, &args, debug, locale, "updates subscription") {
         eprintln!(
             "{}: {err}",
@@ -615,37 +652,40 @@ fn run_updates_step(env_id: &str, snapshot: &TempDir, debug: bool, locale: &str)
     0
 }
 
-/// Parse a version triple from operator `--version` output.
+/// The env-manifest that subscribes `env_id` to the fleet update channel.
 ///
-/// Handles lines like `greentic-operator 1.1.24`, `v1.1.24`,
-/// `1.1.24-dev.42`, stripping a `v` prefix and any pre-release suffix.
-fn parse_version_triple(output: &str) -> Option<(u16, u16, u16)> {
-    let token = output
-        .split_whitespace()
-        .rev()
-        .find(|tok| tok.contains('.'))?;
-
-    let token = token.strip_prefix('v').unwrap_or(token);
-    // Strip pre-release suffix: split on '-' or '+', take the first part.
-    let token = token.split(['-', '+']).next()?;
-
-    let mut parts = token.splitn(3, '.');
-    let major = parts.next()?.parse().ok()?;
-    let minor = parts.next()?.parse().ok()?;
-    let patch = parts.next()?.parse().ok()?;
-    Some((major, minor, patch))
+/// `plan_endpoint` is the only field written explicitly because it is a
+/// required field (`pub plan_endpoint: String` in `ManifestUpdates`) — an
+/// empty `"updates": {}` block fails with `missing field 'plan_endpoint'`.
+/// All other fields (`enabled`, `on_notify`, `poll_interval_secs`, etc.)
+/// are `Option` and default correctly when absent.
+///
+/// `trust_root` is deliberately absent. Trust-root writes are the takeover
+/// primitive the surrounding design exists to contain, and the implicit
+/// `trust_did` anchoring that `plan_endpoint == DEFAULT_PLAN_ENDPOINT`
+/// triggers already establishes the only key this environment needs in
+/// order to verify fleet plans.
+fn updates_manifest(env_id: &str) -> Value {
+    serde_json::json!({
+        "schema": "greentic.env-manifest.v1",
+        "environment": { "id": env_id },
+        "updates": {
+            "plan_endpoint": DEFAULT_PLAN_ENDPOINT,
+        },
+    })
 }
 
-/// Check that the installed operator meets the minimum version for --updates.
-fn check_operator_version(debug: bool, locale: &str) -> bool {
-    let version_args = ["--version".to_string()];
-    let Ok(output) = run_binary_capture(OP_BIN, &version_args, debug, locale) else {
-        return false;
-    };
-    let Some(version) = parse_version_triple(&output) else {
-        return false;
-    };
-    version >= MIN_OPERATOR_VERSION
+/// Probe whether the installed operator can honour an `updates` block.
+///
+/// See [`UPDATES_CAPABILITY_PROBE`] for why this is a capability probe and not
+/// a version comparison. Fails closed: any error running the probe is treated
+/// as "not capable".
+fn operator_supports_updates(debug: bool, locale: &str) -> bool {
+    let args: Vec<String> = UPDATES_CAPABILITY_PROBE
+        .iter()
+        .map(|s| (*s).to_string())
+        .collect();
+    run_binary_capture(OP_BIN, &args, debug, locale).is_ok()
 }
 
 #[cfg(test)]
@@ -1063,54 +1103,45 @@ mod tests {
         assert_eq!(resolve_start_env_id(&tail), "production");
     }
 
-    // -- parse_version_triple tests --
-
+    /// The gate must ask what the binary can DO. `greentic-operator` is a
+    /// wrapper crate versioned 1.1.4 while the capability lives in its
+    /// `greentic-deployer` dependency at 1.1.24, so any assertion about the
+    /// probe being a version comparison would be asserting a bug.
     #[test]
-    fn parse_version_triple_handles_typical_operator_output() {
+    fn capability_probe_asks_for_the_verb_that_proves_updates_support() {
         assert_eq!(
-            parse_version_triple("greentic-operator 1.1.24"),
-            Some((1, 1, 24))
+            UPDATES_CAPABILITY_PROBE,
+            ["op", "trust-root", "add-did", "--help"],
+        );
+    }
+
+    /// The `updates` block must stay EMPTY: every field defaults to the fleet
+    /// answer, and `trust_did` anchors implicitly only when nothing pins the
+    /// endpoint away from the default. Writing fields out pins today's values.
+    #[test]
+    fn updates_manifest_declares_an_empty_block_and_never_a_trust_root() {
+        let manifest = updates_manifest("local");
+
+        assert_eq!(manifest["schema"], "greentic.env-manifest.v1");
+        assert_eq!(manifest["environment"]["id"], "local");
+        assert_eq!(
+            manifest["updates"],
+            json!({}),
+            "an explicit field pins today's default into the environment",
+        );
+        assert!(
+            manifest.get("trust_root").is_none(),
+            "a bootstrap must not write the trust root: implicit trust_did \
+             anchoring already establishes the fleet key",
         );
     }
 
     #[test]
-    fn parse_version_triple_handles_bare_version() {
-        assert_eq!(parse_version_triple("1.2.3"), Some((1, 2, 3)));
-    }
-
-    #[test]
-    fn parse_version_triple_handles_v_prefix() {
-        assert_eq!(parse_version_triple("v1.1.24"), Some((1, 1, 24)));
-    }
-
-    #[test]
-    fn parse_version_triple_strips_prerelease_suffix() {
+    fn updates_manifest_names_the_resolved_environment() {
         assert_eq!(
-            parse_version_triple("greentic-operator 1.2.12345-dev.42"),
-            Some((1, 2, 12345))
+            updates_manifest("production")["environment"]["id"],
+            "production"
         );
-    }
-
-    #[test]
-    fn parse_version_triple_returns_none_for_garbage() {
-        assert_eq!(parse_version_triple("no version here"), None);
-    }
-
-    // -- version gate tests --
-
-    #[test]
-    fn version_gate_accepts_exact_minimum() {
-        assert!(parse_version_triple("1.1.24").unwrap() >= MIN_OPERATOR_VERSION);
-    }
-
-    #[test]
-    fn version_gate_rejects_below_minimum() {
-        assert!(parse_version_triple("1.1.23").unwrap() < MIN_OPERATOR_VERSION);
-    }
-
-    #[test]
-    fn version_gate_accepts_above_minimum() {
-        assert!(parse_version_triple("1.2.0").unwrap() >= MIN_OPERATOR_VERSION);
     }
 
     #[test]
