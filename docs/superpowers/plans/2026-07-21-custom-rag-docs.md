@@ -562,14 +562,19 @@ The `input_schema` and `output_schema` here must match the JSON schemas emitted 
 tool's parameter schema from the pack manifest, not from `describe()` — if these two drift, the
 model sees a different contract at runtime than the composer previewed.
 
-- [ ] **Step 2: Build through the CLI (gate 2 prerequisite)**
+- [ ] **Step 2: Build through the CLI**
 
 ```bash
-greentic-component build --manifest ./component.manifest.json
+greentic-component build --manifest ./component.manifest.json --no-flow
 ```
 
-Expected: succeeds, refreshes hashes, embeds the manifest as CBOR into the
-`greentic.component.manifest.v1` custom section, and emits `dist/*.describe.cbor` + `.json`.
+`--no-flow` is required here: without it the build fails at dev-flow generation with `Required
+field query has no default; cannot generate default dev_flow` — `query` is required and has no
+sensible default. With `--no-flow` the wasm builds and the blake3 hashes refresh. Note the build
+also prints `warning: skipping describe artifacts (... greentic:http/http-client@1.1.0 ... not
+found in the linker)` and does **not** emit `dist/*.describe.cbor` — the same linker gap
+documented in Step 3. That is expected for an HTTP component and does not block packaging
+(Task 5 uses the wasm + manifest, not the describe artifacts). Both gotchas belong in the docs.
 
 - [ ] **Step 3: Run doctor (gate 2) — and record that it cannot instantiate an http component**
 
@@ -812,15 +817,17 @@ Then the ten sections from the spec, in order. Content requirements per section:
    corpus carried in config. Do not present `component-rag` as copyable; mention it only as
    logic reference, with its ABI caveat.
 5. **Path 3** — point at Knowledge Base collections in the designer.
-6. **Build, test, package** — the verified command list from the spec, `packc` named correctly.
-   State the harness limitation plainly as an `<Aside type="caution">`: `greentic-component
-   doctor`/`test` (as of CLI 1.3.0-research.1) cannot instantiate a component that imports
-   `greentic:http/http-client@1.1.0` — it fails with `matching implementation was not found in
-   the linker` because the local harness wires only the legacy runner-host HTTP surface. So for
-   an HTTP-using component, local verification is `cargo test` (the retrieve logic) plus the
-   export check (`wasm-tools component wit`); full instantiation is confirmed when the pack runs
-   in the runner. Do not tell the reader to run `greentic-component test` and expect a
-   `{context, chunks}` result — that command does not work for this component today.
+6. **Build, test, package** — `greentic-component build --manifest ... --no-flow` (explain why
+   `--no-flow`: a required-no-default field breaks dev-flow generation), then `packc` (named
+   correctly) for the pack. State the harness limitation plainly as an `<Aside type="caution">`:
+   as of CLI 1.3.0-research.1, a component that imports `greentic:http/http-client@1.1.0` cannot
+   be instantiated by `greentic-component doctor`/`test`, and `greentic-component build` skips
+   its describe artifacts — all three fail with `matching implementation was not found in the
+   linker` because the local harness wires only the legacy runner-host HTTP surface. So for an
+   HTTP component, local verification is `cargo test` (the retrieve logic) plus the export check
+   (`wasm-tools component wit`); full instantiation is confirmed only when the pack runs in the
+   runner. Do not tell the reader to run `greentic-component test` and expect a `{context,
+   chunks}` result — it does not work for this component today.
 7. **Use it: as a flow node** — the `schema_version: 2` example with the
    `greentic-example-rag.retrieve` key shape, and the warning that the key's component segment,
    the pack manifest id, and the `describe()` name must all be spelled identically.
