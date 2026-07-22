@@ -959,3 +959,8 @@ These surfaced during the audit and are real defects, but fixing them is out of 
    platform's own test harness — verified against both CLI 1.1.0 and 1.3.0-research.1. The
    harness should wire the dedicated host capability worlds (http-client, secrets 1.1) so
    components built against the current runner ABI can be tested locally.
+7. `greentic-pack sign` (v1.3.0-research.2) signs only the standalone `dist/manifest.cbor`, not
+   the `.gtpack` archive. `build` always writes a fresh unsigned manifest into the zip, so the
+   produced `.gtpack` stays unsigned even after a successful `sign` + `verify` pass (`greentic-pack
+   doctor <pack>.gtpack` reports "signature files missing"). `verify` also requires the **public**
+   key (`--key <pub.pem>`), not the private signing key. Distribution docs must account for both.
