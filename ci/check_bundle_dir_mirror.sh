@@ -18,7 +18,28 @@ set -euo pipefail
 #
 # Fails closed: exits non-zero when the sibling greentic-bundle checkout is
 # missing, when a source file is absent, or when a function body cannot be
-# extracted.
+# extracted. `local_check.sh` runs it by default; skipping requires an explicit
+# SKIP_BUNDLE_DIR_MIRROR_CHECK=1, so a missing sibling is never silently
+# equivalent to "no drift".
+#
+# Two limits a reader must not over-trust:
+#
+#   1. `extract_fn` takes the FIRST `fn <name>(` match in the file. There is
+#      exactly one definition of each in both files today, so it is correct as
+#      written; a second definition (a test helper, a doc example) would
+#      silently extract the wrong body.
+#   2. Textual identity is neither necessary nor sufficient for behavioural
+#      identity. A comment or a rustfmt reflow fails this check spuriously,
+#      while splitting the function into helpers — or
+#      `normalized_request_from_document` ceasing to call it at all — passes
+#      while real behaviour drifts.
+#
+# The durable fix is to stop mirroring: make the two functions `pub` in
+# greentic-bundle (its modules are already `pub`) and add that crate as a
+# DEV-dependency of gtc, then assert agreement over a vector table in a test.
+# Dev-dependencies are not shipped, so the heavy transitive tree costs
+# consumers nothing, and the comparison becomes behavioural. This script is
+# the interim local guard until that lands.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 bundle_repo="${GREENTIC_BUNDLE_REPO:-$repo_root/../greentic-bundle}"
