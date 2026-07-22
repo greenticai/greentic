@@ -710,6 +710,36 @@ mod tests {
         }))
     }
 
+    /// Build an absolute path out of `parts` that is absolute on EVERY platform
+    /// we release for.
+    ///
+    /// A literal like `/opt/bundles/demo` is absolute on Unix but not on
+    /// Windows, where a path needs a prefix (`C:\`) to satisfy `is_absolute()`.
+    /// Any test that hands such a literal to `absolutize` therefore takes the
+    /// `current_dir().join(..)` branch on Windows and compares against a path
+    /// that can never match. That is not hypothetical: it broke the
+    /// `x86_64-pc-windows-msvc` release build and kept 1.1.8 off crates.io.
+    /// PR CI runs Linux only, so nothing catches it before the tag.
+    ///
+    /// Rooting at `current_dir()`'s topmost ancestor yields `/` on Unix and the
+    /// drive prefix on Windows, and pushing the components one at a time lets
+    /// `PathBuf` pick the native separator.
+    fn absolute_path(parts: &[&str]) -> PathBuf {
+        let cwd = std::env::current_dir().expect("current_dir");
+        let mut path = cwd
+            .ancestors()
+            .last()
+            .expect("every absolute path has a root")
+            .to_path_buf();
+        path.extend(parts);
+        assert!(
+            path.is_absolute(),
+            "{} is not absolute on this platform — the helper's premise is wrong",
+            path.display()
+        );
+        path
+    }
+
     #[test]
     fn output_dir_is_taken_verbatim_from_the_create_document() {
         let doc = bundle_doc(json!({
@@ -807,8 +837,9 @@ mod tests {
 
     #[test]
     fn an_absolute_prediction_is_left_alone() {
-        let pinned = absolutize(Path::new("/opt/bundles/demo")).unwrap();
-        assert_eq!(pinned, PathBuf::from("/opt/bundles/demo"));
+        let already_absolute = absolute_path(&["opt", "bundles", "demo"]);
+        let pinned = absolutize(&already_absolute).unwrap();
+        assert_eq!(pinned, already_absolute);
     }
 
     #[test]
@@ -1025,13 +1056,15 @@ mod tests {
         // wizard_dir from the override, the document's directory becomes
         // overwritable without --force.
         let dir = TempDir::new().unwrap();
-        let plan = build_plan_from(dir.path(), &["--bundle-dir", "/work/override"]);
+        let override_dir = absolute_path(&["work", "override"]);
+        let override_arg = override_dir.display().to_string();
+        let plan = build_plan_from(dir.path(), &["--bundle-dir", &override_arg]);
         assert!(
             plan.wizard_dir.ends_with("from-document"),
             "wizard_dir must come from the document, got {}",
             plan.wizard_dir.display()
         );
-        assert_eq!(plan.bundle_dir, PathBuf::from("/work/override"));
+        assert_eq!(plan.bundle_dir, override_dir);
         assert_eq!(guarded_dirs(&plan).len(), 2);
     }
 
