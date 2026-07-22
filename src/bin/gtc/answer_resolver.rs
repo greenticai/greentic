@@ -1,4 +1,5 @@
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -95,11 +96,32 @@ impl AnswerSourceLoader for DefaultAnswerSourceLoader {
                     .and_then(|v| v.to_str().ok()),
                 source,
             )?;
-            let bytes = response.bytes().map_err(|err| {
-                GtcError::message(format!("failed to read answers {source}: {err}"))
-            })?;
-            validate_response_size(bytes.len(), source)?;
-            return Ok(bytes.to_vec());
+            // Fast-path: reject immediately when Content-Length declares a
+            // body larger than the cap, avoiding any body read.
+            if let Some(declared) = response
+                .content_length()
+                .filter(|&len| len > HTTP_MAX_BYTES as u64)
+            {
+                return Err(GtcError::invalid_data(
+                    "answers fetch",
+                    format!(
+                        "{source} Content-Length is {declared} bytes, \
+                         exceeding the {HTTP_MAX_BYTES} byte limit",
+                    ),
+                ));
+            }
+            // Stream at most cap+1 bytes so a hostile or misconfigured
+            // endpoint cannot exhaust memory regardless of what
+            // Content-Length claims (or whether it is present at all).
+            let mut buf = Vec::new();
+            response
+                .take(HTTP_MAX_BYTES as u64 + 1)
+                .read_to_end(&mut buf)
+                .map_err(|err| {
+                    GtcError::message(format!("failed to read answers {source}: {err}"))
+                })?;
+            validate_response_size(buf.len(), source)?;
+            return Ok(buf);
         }
 
         Err(GtcError::invalid_data(
@@ -758,5 +780,177 @@ mod tests {
         let err = map_oci_answers_reference("repo:///answers:stable", &options).unwrap_err();
 
         assert!(err.to_string().contains("GREENTIC_REPO_REGISTRY_BASE"));
+    }
+
+    // -- call-site integration tests (drive load_http against a local server) --
+    //
+    // These prove the guards are wired into DefaultAnswerSourceLoader::load_http,
+    // not just that the validation functions work in isolation.
+
+    use std::io::Write;
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+    use std::thread;
+
+    fn drain_http_request(stream: &mut std::net::TcpStream) {
+        let mut buf = [0u8; 4096];
+        let mut request = Vec::new();
+        loop {
+            let n = std::io::Read::read(stream, &mut buf).expect("read request");
+            request.extend_from_slice(&buf[..n]);
+            if request.windows(4).any(|w| w == b"\r\n\r\n") {
+                break;
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "requires local socket binding"]
+    fn load_http_rejects_html_content_type() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            drain_http_request(&mut stream);
+            let body = r#"<html><body>Not Found</body></html>"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: text/html\r\n\
+                 Content-Length: {}\r\n\r\n\
+                 {body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+        });
+
+        let loader = super::DefaultAnswerSourceLoader;
+        let err = loader
+            .load_http(&format!("http://{addr}/answers.json"))
+            .unwrap_err();
+
+        assert!(err.to_string().contains("Content-Type"));
+        handle.join().expect("join");
+    }
+
+    #[test]
+    #[ignore = "requires local socket binding"]
+    fn load_http_rejects_oversized_content_length() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            drain_http_request(&mut stream);
+            // Declare a Content-Length far above the cap. The client should
+            // reject before reading any body, so we never send body bytes.
+            let response = format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {}\r\n\r\n",
+                super::HTTP_MAX_BYTES + 1_000_000,
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+        });
+
+        let loader = super::DefaultAnswerSourceLoader;
+        let err = loader
+            .load_http(&format!("http://{addr}/answers.json"))
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("Content-Length"),
+            "expected Content-Length rejection, got: {err}"
+        );
+        handle.join().expect("join");
+    }
+
+    #[test]
+    #[ignore = "requires local socket binding"]
+    fn load_http_caps_body_without_content_length() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let (tx, rx) = mpsc::channel::<usize>();
+        let cap = super::HTTP_MAX_BYTES;
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            drain_http_request(&mut stream);
+            // No Content-Length header. The client must enforce the cap via
+            // the streaming .take() guard.
+            stream
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\n\
+                      Content-Type: application/json\r\n\
+                      Transfer-Encoding: identity\r\n\r\n",
+                )
+                .unwrap();
+            let chunk = vec![b'x'; 8192];
+            let mut written = 0usize;
+            // Send cap + 8192 bytes — more than the cap but not so much that
+            // the test is slow.
+            let target = cap + 8192;
+            while written < target {
+                let n = std::cmp::min(8192, target - written);
+                if stream.write_all(&chunk[..n]).is_err() {
+                    break; // client closed the connection
+                }
+                written += n;
+            }
+            tx.send(written).ok();
+        });
+
+        let loader = super::DefaultAnswerSourceLoader;
+        let err = loader
+            .load_http(&format!("http://{addr}/answers.json"))
+            .unwrap_err();
+
+        assert!(
+            err.to_string().contains("exceeding"),
+            "expected size-cap rejection, got: {err}"
+        );
+        // The server may or may not have finished sending before the client
+        // closed. Either way, the client read at most cap+1 bytes.
+        let _ = rx.recv();
+        handle.join().expect("join");
+    }
+
+    #[test]
+    #[ignore = "requires local socket binding"]
+    fn load_http_follows_redirect_to_json() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = thread::spawn(move || {
+            // First request: redirect.
+            let (mut stream, _) = listener.accept().expect("accept first");
+            drain_http_request(&mut stream);
+            let response = "HTTP/1.1 302 Found\r\n\
+                            Location: /final\r\n\
+                            Connection: close\r\n\
+                            Content-Length: 0\r\n\r\n";
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.flush().unwrap();
+
+            // Second request: serve JSON.
+            let (mut stream, _) = listener.accept().expect("accept second");
+            drain_http_request(&mut stream);
+            let body = br#"{"ok":true}"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\n\
+                 Content-Type: application/json\r\n\
+                 Content-Length: {}\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.write_all(body).unwrap();
+            stream.flush().unwrap();
+        });
+
+        let loader = super::DefaultAnswerSourceLoader;
+        let bytes = loader
+            .load_http(&format!("http://{addr}/start"))
+            .expect("should follow redirect and return JSON");
+
+        assert_eq!(bytes, br#"{"ok":true}"#);
+        handle.join().expect("join");
     }
 }
