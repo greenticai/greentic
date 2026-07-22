@@ -17,8 +17,9 @@ if [[ "${SKIP_BUNDLE_DIR_MIRROR_CHECK:-}" == "1" ]]; then
   echo "[1c/6] bundle-dir mirror check (skipped: SKIP_BUNDLE_DIR_MIRROR_CHECK=1)"
 else
   echo "[1c/6] bundle-dir mirror check"
-  bundle_mirror_repo="${GREENTIC_BUNDLE_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)/greentic-bundle}"
-  GREENTIC_BUNDLE_REPO="$bundle_mirror_repo" bash ci/check_bundle_dir_mirror.sh
+  # Let the script resolve the sibling: it also handles the linked-worktree
+  # layout. Forcing GREENTIC_BUNDLE_REPO here would defeat that fallback.
+  bash ci/check_bundle_dir_mirror.sh
 fi
 
 echo "[2/6] cargo fmt --all -- --check"

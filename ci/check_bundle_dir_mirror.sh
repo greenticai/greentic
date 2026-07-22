@@ -42,11 +42,33 @@ set -euo pipefail
 # the interim local guard until that lands.
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-bundle_repo="${GREENTIC_BUNDLE_REPO:-$repo_root/../greentic-bundle}"
+
+# Locate the sibling checkout. An explicit GREENTIC_BUNDLE_REPO always wins and
+# is never second-guessed: a wrong explicit path must fail loudly rather than
+# silently resolve to some other checkout.
+#
+# Otherwise try beside this checkout, then beside the MAIN worktree. The second
+# candidate is what makes the check usable from a linked worktree
+# (`gt-worktrees/<branch>/`), where `..` is the worktree parent and holds no
+# sibling repos. Without it, running fail-closed would fail every worktree by
+# default — trading a silent skip for a false alarm, which trains people to
+# reach for the opt-out.
+if [[ -n "${GREENTIC_BUNDLE_REPO:-}" ]]; then
+  bundle_repo="$GREENTIC_BUNDLE_REPO"
+else
+  bundle_repo="$repo_root/../greentic-bundle"
+  if [[ ! -d "$bundle_repo" ]] && git -C "$repo_root" rev-parse --git-common-dir >/dev/null 2>&1; then
+    main_worktree="$(cd "$(git -C "$repo_root" rev-parse --git-common-dir)/.." && pwd)"
+    if [[ -d "$main_worktree/../greentic-bundle" ]]; then
+      bundle_repo="$main_worktree/../greentic-bundle"
+    fi
+  fi
+fi
 
 if [[ ! -d "$bundle_repo" ]]; then
   echo "error: greentic-bundle checkout not found at $bundle_repo" >&2
-  echo "  Set GREENTIC_BUNDLE_REPO or check out greentic-bundle as a sibling." >&2
+  echo "  Set GREENTIC_BUNDLE_REPO, or check out greentic-bundle beside this repo." >&2
+  echo "  To run without this check: SKIP_BUNDLE_DIR_MIRROR_CHECK=1" >&2
   exit 1
 fi
 
