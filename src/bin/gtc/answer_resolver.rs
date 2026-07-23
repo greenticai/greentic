@@ -415,8 +415,9 @@ fn validate_response_size(len: usize, source: &str) -> GtcResult<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        AnswerSourceKind, AnswerSourceLoader, answer_pack_fetch_options, classify_answers_source,
-        is_json_media_type, load_answer_bytes, load_answers_with, map_oci_answers_reference,
+        AnswerSourceKind, AnswerSourceLoader, DefaultAnswerSourceLoader, answer_pack_fetch_options,
+        classify_answers_source, is_json_media_type, load_answer_bytes, load_answers,
+        load_answers_with, map_oci_answers_reference,
     };
     use greentic_distributor_client::DistOptions;
     use gtc::error::{GtcError, GtcResult};
@@ -952,5 +953,107 @@ mod tests {
 
         assert_eq!(bytes, br#"{"ok":true}"#);
         handle.join().expect("join");
+    }
+
+    // -- network-free coverage of the default loader + error branches --
+    //
+    // These exercise DefaultAnswerSourceLoader::{load_http, load_distributor}
+    // and the mapping/validation helpers without binding a socket or making a
+    // real network call, so they run in every environment.
+
+    fn test_dist_options(repo_registry_base: Option<&str>) -> DistOptions {
+        DistOptions {
+            cache_dir: PathBuf::from("/tmp/gtc-answer-test-cache"),
+            allow_tags: true,
+            offline: true,
+            allow_insecure_local_http: false,
+            cache_max_bytes: 42,
+            repo_registry_base: repo_registry_base.map(str::to_string),
+            store_registry_base: None,
+            store_auth_path: PathBuf::from("/tmp/store-auth.json"),
+            store_state_path: PathBuf::from("/tmp/store-state.json"),
+        }
+    }
+
+    #[test]
+    fn default_loader_http_rejects_invalid_url() {
+        let loader = DefaultAnswerSourceLoader;
+        let err = loader.load_http("not-a-valid-url").unwrap_err();
+        assert!(matches!(err, GtcError::InvalidData { .. }));
+        assert!(err.to_string().contains("invalid URL"));
+    }
+
+    #[test]
+    fn default_loader_http_reports_connection_failure() {
+        // Port 1 has nothing listening, so the connection is refused fast and
+        // we exercise the client build + request + send-error branch.
+        let loader = DefaultAnswerSourceLoader;
+        let err = loader
+            .load_http("http://127.0.0.1:1/answers.json")
+            .unwrap_err();
+        assert!(err.to_string().contains("failed to fetch answers"));
+    }
+
+    #[test]
+    fn default_loader_distributor_rejects_invalid_oci_reference() {
+        // Reaches DefaultAnswerSourceLoader::load_distributor and fails inside
+        // reference mapping before any network I/O.
+        let loader = DefaultAnswerSourceLoader;
+        let err = loader
+            .load_distributor("oci://not a reference")
+            .unwrap_err();
+        assert!(matches!(err, GtcError::InvalidData { .. }));
+        assert!(err.to_string().contains("not a valid OCI reference"));
+    }
+
+    #[test]
+    fn map_oci_answers_reference_rejects_unsupported_scheme() {
+        let err =
+            map_oci_answers_reference("store://acme/answers:stable", &test_dist_options(None))
+                .unwrap_err();
+        assert!(matches!(err, GtcError::InvalidData { .. }));
+        assert!(
+            err.to_string()
+                .contains("unsupported distributor answers source")
+        );
+    }
+
+    #[test]
+    fn map_registry_target_passes_through_valid_reference() {
+        // A repo:// target that is already a valid OCI reference is returned
+        // as-is, even without a registry base configured.
+        let mapped = map_oci_answers_reference(
+            "repo://ghcr.io/acme/answers:stable",
+            &test_dist_options(None),
+        )
+        .unwrap();
+        assert_eq!(mapped, "ghcr.io/acme/answers:stable");
+    }
+
+    #[test]
+    fn load_answers_reports_missing_local_file() {
+        // Drives the public load_answers wrapper (DefaultAnswerSourceLoader) down
+        // the local-path branch to a filesystem error.
+        let err = load_answers("/nonexistent/gtc-answers-does-not-exist.json").unwrap_err();
+        assert!(matches!(err, GtcError::Io { .. }));
+        assert!(err.to_string().contains("failed to read answers file"));
+    }
+
+    #[test]
+    fn file_url_with_empty_path_is_rejected() {
+        let err = load_answer_bytes("file://", &MockLoader::default()).unwrap_err();
+        assert!(matches!(err, GtcError::InvalidData { .. }));
+        assert!(err.to_string().contains("invalid file URL"));
+    }
+
+    #[test]
+    fn file_url_missing_file_reports_io_error() {
+        let err = load_answer_bytes(
+            "file:///nonexistent/gtc-answers-does-not-exist.json",
+            &MockLoader::default(),
+        )
+        .unwrap_err();
+        assert!(matches!(err, GtcError::Io { .. }));
+        assert!(err.to_string().contains("failed to read answers file"));
     }
 }
