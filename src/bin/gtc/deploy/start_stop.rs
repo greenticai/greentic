@@ -71,16 +71,33 @@ fn read_bundle_id(bundle_dir: &Path) -> Option<String> {
 /// Suppressed when:
 /// - the user passed `--no-browser`
 /// - the capability probe says the installed greentic-start does not support it
+/// - a named bundle was given but its `bundle_id` could not be read (opening
+///   the default bundle would be wrong; a warning is printed instead)
 fn open_webchat_arg(
     bundle_dir: Option<&Path>,
     no_browser: bool,
     supported: bool,
+    locale: &str,
 ) -> Option<String> {
     if no_browser || !supported {
         return None;
     }
-    match bundle_dir.and_then(read_bundle_id) {
-        Some(id) => Some(format!("--open-webchat={id}")),
+    match bundle_dir {
+        Some(dir) => match read_bundle_id(dir) {
+            Some(id) => Some(format!("--open-webchat={id}")),
+            None => {
+                eprintln!(
+                    "{}: {}",
+                    t_or(
+                        locale,
+                        "gtc.start.warn.webchat_no_bundle_id",
+                        "webchat browser-open skipped (could not read bundle_id)",
+                    ),
+                    dir.join("bundle.yaml").display()
+                );
+                None
+            }
+        },
         None => Some("--open-webchat".to_string()),
     }
 }
@@ -169,6 +186,7 @@ fn run_start_runtime_config(tail: &[String], debug: bool, locale: &str) -> i32 {
         None,
         request.no_browser,
         start_supports_open_webchat(debug, locale),
+        locale,
     ) {
         args.push(flag);
     }
@@ -417,6 +435,7 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
         Some(&resolved.bundle_dir),
         request.no_browser,
         start_supports_open_webchat(debug, locale),
+        locale,
     ) {
         args.push(flag);
     }
@@ -1581,7 +1600,7 @@ mod tests {
     #[test]
     fn open_webchat_arg_emits_bare_flag_without_bundle() {
         assert_eq!(
-            super::open_webchat_arg(None, false, true),
+            super::open_webchat_arg(None, false, true, "en"),
             Some("--open-webchat".to_string())
         );
     }
@@ -1591,28 +1610,49 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         fs::write(dir.path().join("bundle.yaml"), "bundle_id: helpdesk-demo\n").expect("write");
         assert_eq!(
-            super::open_webchat_arg(Some(dir.path()), false, true),
+            super::open_webchat_arg(Some(dir.path()), false, true, "en"),
             Some("--open-webchat=helpdesk-demo".to_string())
         );
     }
 
     #[test]
-    fn open_webchat_arg_degrades_to_bare_flag_when_yaml_unreadable() {
+    fn open_webchat_arg_suppressed_when_named_bundle_yaml_missing() {
         let dir = tempfile::tempdir().expect("tempdir");
-        // No bundle.yaml on purpose — degrade rather than fail.
+        // No bundle.yaml — must NOT fall back to the bare flag (that would
+        // open the default bundle, not the one the user asked for).
         assert_eq!(
-            super::open_webchat_arg(Some(dir.path()), false, true),
-            Some("--open-webchat".to_string())
+            super::open_webchat_arg(Some(dir.path()), false, true, "en"),
+            None
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_when_named_bundle_id_blank() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "bundle_id: '  '\n").expect("write");
+        assert_eq!(
+            super::open_webchat_arg(Some(dir.path()), false, true, "en"),
+            None
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_when_named_bundle_id_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "name: demo\n").expect("write");
+        assert_eq!(
+            super::open_webchat_arg(Some(dir.path()), false, true, "en"),
+            None
         );
     }
 
     #[test]
     fn open_webchat_arg_suppressed_by_no_browser() {
-        assert_eq!(super::open_webchat_arg(None, true, true), None);
+        assert_eq!(super::open_webchat_arg(None, true, true, "en"), None);
     }
 
     #[test]
     fn open_webchat_arg_suppressed_when_unsupported() {
-        assert_eq!(super::open_webchat_arg(None, false, false), None);
+        assert_eq!(super::open_webchat_arg(None, false, false, "en"), None);
     }
 }
