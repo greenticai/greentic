@@ -15,7 +15,9 @@ use super::prepared_bundle::{prepare_bundle_for_start, print_prepared_bundle_deb
 use super::{ChildProcessEnv, StartCliOptions, StartTarget, StopCliOptions};
 use crate::admin::ensure_admin_certs_ready;
 use crate::i18n_support::t_or;
-use crate::process::{run_binary_checked, run_binary_checked_with_target_and_env};
+use crate::process::{
+    run_binary_capture, run_binary_checked, run_binary_checked_with_target_and_env,
+};
 use crate::{SETUP_BIN, START_BIN};
 
 /// Environment served when neither `--env` nor `$GREENTIC_ENV` is set. Must
@@ -29,6 +31,59 @@ const START_USAGE: &str = "usage: gtc start [BUNDLE_REF] [start flags...]\n\
               --extension-start-handoff <path>\n\
   runtime flags are forwarded to greentic-start (e.g. --env, --tenant, --team, --nats, --cloudflared, --ngrok,\n\
   --admin, --restart, --verbose, --quiet, --no-updates); see `greentic-start start --help` for the full list";
+
+/// Probe whether the installed greentic-start supports `--open-webchat`.
+///
+/// Runs `greentic-start start --help` and checks if the output mentions the
+/// flag. Fails closed: any error running the probe is treated as "not
+/// supported", so an older binary that does not know the flag is never sent it.
+///
+/// Same pattern as [`crate::up::operator_supports_updates`]: a capability probe
+/// via `--help` output rather than a brittle version comparison.
+fn start_supports_open_webchat(debug: bool, locale: &str) -> bool {
+    let args = vec!["start".to_string(), "--help".to_string()];
+    match run_binary_capture(START_BIN, &args, debug, locale) {
+        Ok(output) => output.contains("--open-webchat"),
+        Err(_) => false,
+    }
+}
+
+/// Read `bundle_id` from a bundle directory's `bundle.yaml`.
+///
+/// Returns `None` if the file is missing, unreadable, or does not contain a
+/// `bundle_id` field. The caller degrades to the bare `--open-webchat` flag
+/// rather than failing the start.
+fn read_bundle_id(bundle_dir: &Path) -> Option<String> {
+    #[derive(Deserialize)]
+    struct BundleYaml {
+        bundle_id: Option<String>,
+    }
+
+    let path = bundle_dir.join("bundle.yaml");
+    let raw = fs::read_to_string(&path).ok()?;
+    let doc: BundleYaml = serde_yaml_bw::from_str(&raw).ok()?;
+    doc.bundle_id.filter(|id| !id.trim().is_empty())
+}
+
+/// Build the `--open-webchat[=BUNDLE_ID]` argument for greentic-start, or
+/// `None` when the flag should be suppressed.
+///
+/// Suppressed when:
+/// - the user passed `--no-browser`
+/// - the capability probe says the installed greentic-start does not support it
+fn open_webchat_arg(
+    bundle_dir: Option<&Path>,
+    no_browser: bool,
+    supported: bool,
+) -> Option<String> {
+    if no_browser || !supported {
+        return None;
+    }
+    match bundle_dir.and_then(read_bundle_id) {
+        Some(id) => Some(format!("--open-webchat={id}")),
+        None => Some("--open-webchat".to_string()),
+    }
+}
 
 const STOP_USAGE: &str = "usage: gtc stop [BUNDLE_REF] [stop flags...]\n\
   BUNDLE_REF: bundle to stop (omit to stop the active env's serving runtime)\n\
@@ -109,7 +164,14 @@ fn run_start_runtime_config(tail: &[String], debug: bool, locale: &str) -> i32 {
         request.tenant.as_deref().unwrap_or("demo"),
         request.team.as_deref().unwrap_or("default")
     );
-    let args = request.to_runtime_start_args(locale);
+    let mut args = request.to_runtime_start_args(locale);
+    if let Some(flag) = open_webchat_arg(
+        None,
+        request.no_browser,
+        start_supports_open_webchat(debug, locale),
+    ) {
+        args.push(flag);
+    }
     match run_binary_checked(START_BIN, &args, debug, locale, "start runtime-config") {
         Ok(()) => 0,
         Err(err) => {
@@ -350,7 +412,14 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     if request.log_dir.is_none() {
         request.log_dir = Some(resolved.bundle_dir.join("logs"));
     }
-    let args = request.to_runtime_start_args(locale);
+    let mut args = request.to_runtime_start_args(locale);
+    if let Some(flag) = open_webchat_arg(
+        Some(&resolved.bundle_dir),
+        request.no_browser,
+        start_supports_open_webchat(debug, locale),
+    ) {
+        args.push(flag);
+    }
     let runtime_env = local_runtime_secret_env(&resolved.bundle_dir);
     match run_binary_checked_with_target_and_env(
         START_BIN,
@@ -1468,5 +1537,82 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         // No `.greentic/dev/.dev.secrets.env` file created on purpose.
         assert!(super::local_runtime_secret_env(dir.path()).is_none());
+    }
+
+    // --- webchat open flag ---
+
+    #[test]
+    fn read_bundle_id_extracts_id_from_valid_yaml() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "bundle_id: helpdesk-demo\n").expect("write");
+        assert_eq!(
+            super::read_bundle_id(dir.path()),
+            Some("helpdesk-demo".to_string())
+        );
+    }
+
+    #[test]
+    fn read_bundle_id_returns_none_when_file_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(super::read_bundle_id(dir.path()), None);
+    }
+
+    #[test]
+    fn read_bundle_id_returns_none_when_yaml_invalid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), ":::not valid yaml").expect("write");
+        assert_eq!(super::read_bundle_id(dir.path()), None);
+    }
+
+    #[test]
+    fn read_bundle_id_returns_none_when_field_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "name: demo\n").expect("write");
+        assert_eq!(super::read_bundle_id(dir.path()), None);
+    }
+
+    #[test]
+    fn read_bundle_id_returns_none_when_field_blank() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "bundle_id: '  '\n").expect("write");
+        assert_eq!(super::read_bundle_id(dir.path()), None);
+    }
+
+    #[test]
+    fn open_webchat_arg_emits_bare_flag_without_bundle() {
+        assert_eq!(
+            super::open_webchat_arg(None, false, true),
+            Some("--open-webchat".to_string())
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_emits_scoped_flag_with_bundle_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "bundle_id: helpdesk-demo\n").expect("write");
+        assert_eq!(
+            super::open_webchat_arg(Some(dir.path()), false, true),
+            Some("--open-webchat=helpdesk-demo".to_string())
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_degrades_to_bare_flag_when_yaml_unreadable() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // No bundle.yaml on purpose — degrade rather than fail.
+        assert_eq!(
+            super::open_webchat_arg(Some(dir.path()), false, true),
+            Some("--open-webchat".to_string())
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_by_no_browser() {
+        assert_eq!(super::open_webchat_arg(None, true, true), None);
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_when_unsupported() {
+        assert_eq!(super::open_webchat_arg(None, false, false), None);
     }
 }
