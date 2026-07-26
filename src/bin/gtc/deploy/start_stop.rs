@@ -2,6 +2,7 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+use greentic_types::{DEFAULT_TEAM, DEFAULT_TENANT};
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{
     parse_runtime_config_start_request, parse_runtime_config_stop_request, parse_start_request,
@@ -178,8 +179,8 @@ fn run_start_runtime_config(tail: &[String], debug: bool, locale: &str) -> i32 {
     println!("Deployment mode: local runtime (no bundle — env runtime-config)");
     println!(
         "Starting tenant={} team={}",
-        request.tenant.as_deref().unwrap_or("demo"),
-        request.team.as_deref().unwrap_or("default")
+        request.tenant.as_deref().unwrap_or(DEFAULT_TENANT),
+        request.team.as_deref().unwrap_or(DEFAULT_TEAM)
     );
     let mut args = request.to_runtime_start_args(locale);
     if let Some(flag) = open_webchat_arg(
@@ -362,8 +363,8 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     println!("Deployment mode: local runtime (environment `{env_id}`)");
     println!(
         "Starting tenant={} team={}",
-        request.tenant.as_deref().unwrap_or("demo"),
-        request.team.as_deref().unwrap_or("default")
+        request.tenant.as_deref().unwrap_or(DEFAULT_TENANT),
+        request.team.as_deref().unwrap_or(DEFAULT_TEAM)
     );
     // `--admin` without an explicit cert dir generates a dev CA plus server and
     // client PRIVATE keys inside the prepared root. The legacy path kept that
@@ -1072,9 +1073,10 @@ fn prompt_start_target(targets: &[StartTarget], locale: &str) -> GtcResult<Start
 #[cfg(test)]
 mod tests {
     use super::{
-        env_deploy_args, load_default_deployment_target, parse_runtime_config_start_request,
-        parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
-        select_start_target, select_start_target_with_mode,
+        DEFAULT_TEAM, DEFAULT_TENANT, env_deploy_args, load_default_deployment_target,
+        parse_runtime_config_start_request, parse_start_cli_options, parse_start_request,
+        parse_stop_cli_options, parse_stop_request, select_start_target,
+        select_start_target_with_mode,
     };
     use crate::deploy::StartTarget;
     use gtc::start_stop_parsing::{
@@ -1710,6 +1712,27 @@ mod tests {
     }
 
     // ── env-deploy argv forwards the tenant/team the user asked for ─────
+
+    /// The other half of the same defect: with no `--tenant`, this crate
+    /// PRINTED `Starting tenant=demo` while greentic-setup — which actually
+    /// writes the binding — applied its own default. Both ends now read
+    /// `greentic_types::DEFAULT_TENANT`, so the banner cannot claim a tenant
+    /// the deployment did not get.
+    ///
+    /// `env_deploy_args` omitting the flag is what makes that work: setup then
+    /// applies the same constant rather than a value this crate guessed.
+    #[test]
+    fn the_reported_tenant_is_the_one_setup_will_apply() {
+        assert_eq!(DEFAULT_TENANT, "default");
+        assert_eq!(DEFAULT_TEAM, "default");
+
+        let argv = env_deploy_args(Path::new("b.gtbundle"), "local", None, None, "en");
+        assert!(
+            !argv.iter().any(|arg| arg == "--tenant"),
+            "with no tenant the flag must be omitted so setup applies \
+             DEFAULT_TENANT itself, got {argv:?}"
+        );
+    }
 
     /// `gtc start <bundle> --tenant X` used to print `Starting tenant=X`, run
     /// the runtime under X, and bind the deployment under setup's own default

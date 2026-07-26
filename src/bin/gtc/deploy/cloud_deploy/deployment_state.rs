@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::BaseDirs;
+use greentic_types::DEFAULT_TENANT;
 use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{StartRequest, StopRequest};
@@ -272,7 +273,10 @@ fn run_multi_target_deployer_apply(
         target,
         cli_options.provider_pack.as_ref(),
     )?;
-    let tenant = request.tenant.clone().unwrap_or_else(|| "demo".to_string());
+    let tenant = request
+        .tenant
+        .clone()
+        .unwrap_or_else(|| DEFAULT_TENANT.to_string());
     let target_name = target.as_str().to_string();
     println!("Deployment artifact: {}", bundle_artifact.display());
     println!("Deployment bundle source: {deploy_bundle_source}");
