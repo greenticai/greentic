@@ -405,7 +405,14 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
             }
         }
     }
-    if let Err(err) = deploy_bundle_into_env(&prepared.prepared_root, &env_id, debug, locale) {
+    if let Err(err) = deploy_bundle_into_env(
+        &prepared.prepared_root,
+        &env_id,
+        request.tenant.as_deref(),
+        request.team.as_deref(),
+        debug,
+        locale,
+    ) {
         eprintln!(
             "{}: {err}",
             t_or(
@@ -478,19 +485,65 @@ fn resolve_env_id(explicit: Option<&str>) -> String {
 
 /// Deploy a prepared bundle into `env_id` via `greentic-setup env-deploy`.
 ///
-/// `--env` and `--non-interactive` are global flags on the setup CLI, so they
-/// precede the subcommand.
-fn deploy_bundle_into_env(bundle: &Path, env_id: &str, debug: bool, locale: &str) -> GtcResult<()> {
-    let args = vec![
+/// `--env`, `--tenant`, `--team` and `--non-interactive` are global flags on the
+/// setup CLI, so they precede the subcommand.
+///
+/// `tenant`/`team` MUST be forwarded here, not just to the greentic-start
+/// process. This step is what decides where the deployment BINDS
+/// (`route_binding.tenant_selector`), and setup applies its own default —
+/// `demo` — to whatever it is not told. Omitting them made `gtc start <bundle>
+/// --tenant X` print `Starting tenant=X`, run the runtime under X, and bind the
+/// deployment under `demo` anyway: the flag appeared to work and changed
+/// nothing that mattered.
+///
+/// That is not cosmetic. `revision_boot`'s activation gate refuses to serve an
+/// environment whose deployments span tenants outside the secrets backend's
+/// scope, so a bundle silently bound to a second tenant makes the whole
+/// environment fail to activate under Vault.
+///
+/// `None` forwards nothing and lets setup apply its default, keeping the
+/// no-flags invocation byte-identical to before.
+fn deploy_bundle_into_env(
+    bundle: &Path,
+    env_id: &str,
+    tenant: Option<&str>,
+    team: Option<&str>,
+    debug: bool,
+    locale: &str,
+) -> GtcResult<()> {
+    let args = env_deploy_args(bundle, env_id, tenant, team, locale);
+    run_binary_checked(SETUP_BIN, &args, debug, locale, "env-deploy bundle")
+}
+
+/// Build the `greentic-setup env-deploy` argv.
+///
+/// Split out so tests exercise the REAL construction rather than re-deriving
+/// it. A test that rebuilds the expected argv itself passes even when the
+/// production path forgets a flag — which is exactly how the missing
+/// `--tenant`/`--team` survived here.
+fn env_deploy_args(
+    bundle: &Path,
+    env_id: &str,
+    tenant: Option<&str>,
+    team: Option<&str>,
+    locale: &str,
+) -> Vec<String> {
+    let mut args = vec![
         "--locale".to_string(),
         locale.to_string(),
         "--env".to_string(),
         env_id.to_string(),
-        "--non-interactive".to_string(),
-        "env-deploy".to_string(),
-        bundle.display().to_string(),
     ];
-    run_binary_checked(SETUP_BIN, &args, debug, locale, "env-deploy bundle")
+    for (flag, value) in [("--tenant", tenant), ("--team", team)] {
+        if let Some(value) = value {
+            args.push(flag.to_string());
+            args.push(value.to_string());
+        }
+    }
+    args.push("--non-interactive".to_string());
+    args.push("env-deploy".to_string());
+    args.push(bundle.display().to_string());
+    args
 }
 
 fn local_runtime_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
@@ -1019,7 +1072,7 @@ fn prompt_start_target(targets: &[StartTarget], locale: &str) -> GtcResult<Start
 #[cfg(test)]
 mod tests {
     use super::{
-        load_default_deployment_target, parse_runtime_config_start_request,
+        env_deploy_args, load_default_deployment_target, parse_runtime_config_start_request,
         parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
         select_start_target, select_start_target_with_mode,
     };
@@ -1029,7 +1082,7 @@ mod tests {
         parse_runtime_config_stop_request, start_flag_takes_value, stop_flag_takes_value,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -1654,5 +1707,74 @@ mod tests {
     #[test]
     fn open_webchat_arg_suppressed_when_unsupported() {
         assert_eq!(super::open_webchat_arg(None, false, false, "en"), None);
+    }
+
+    // ── env-deploy argv forwards the tenant/team the user asked for ─────
+
+    /// `gtc start <bundle> --tenant X` used to print `Starting tenant=X`, run
+    /// the runtime under X, and bind the deployment under setup's own default
+    /// (`demo`) anyway — the flag looked like it worked and changed nothing
+    /// that mattered. These assert the argv this crate actually builds.
+    #[test]
+    fn env_deploy_argv_forwards_tenant_and_team() {
+        let args = env_deploy_args(
+            Path::new("/tmp/prepared"),
+            "staging",
+            Some("acme"),
+            Some("billing"),
+            "en",
+        );
+        assert_eq!(
+            args,
+            vec![
+                "--locale",
+                "en",
+                "--env",
+                "staging",
+                "--tenant",
+                "acme",
+                "--team",
+                "billing",
+                "--non-interactive",
+                "env-deploy",
+                "/tmp/prepared",
+            ]
+        );
+    }
+
+    /// The setup CLI takes these as GLOBAL flags, so they must precede the
+    /// subcommand. Placing them after `env-deploy` makes clap reject them.
+    #[test]
+    fn env_deploy_argv_puts_globals_before_the_subcommand() {
+        let args = env_deploy_args(Path::new("/tmp/b"), "local", Some("acme"), None, "en");
+        let subcommand = args
+            .iter()
+            .position(|a| a == "env-deploy")
+            .expect("subcommand");
+        let tenant = args.iter().position(|a| a == "--tenant").expect("--tenant");
+        assert!(
+            tenant < subcommand,
+            "--tenant is a global setup flag and must precede `env-deploy`: {args:?}"
+        );
+    }
+
+    /// No flags given must stay byte-identical to the pre-fix invocation, so
+    /// the default path cannot regress.
+    #[test]
+    fn env_deploy_argv_omits_absent_tenant_and_team() {
+        let args = env_deploy_args(Path::new("/tmp/b"), "local", None, None, "en");
+        assert_eq!(
+            args,
+            vec![
+                "--locale",
+                "en",
+                "--env",
+                "local",
+                "--non-interactive",
+                "env-deploy",
+                "/tmp/b",
+            ],
+            "with no tenant/team the argv must be exactly what it was before"
+        );
     }
 }
