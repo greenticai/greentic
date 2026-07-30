@@ -264,6 +264,14 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .action(ArgAction::SetTrue)
                         .help_heading(options_heading)
                         .help("Skip replacing the gtc binary itself; only install companion binaries and artifacts."),
+                )
+                .arg(
+                    Arg::new("airgap")
+                        .long("airgap")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with_all(["channel", "release", "manifest"])
+                        .help_heading(options_heading)
+                        .help("Install the airgapped toolchain: the dev-lane binaries carrying the `op updates export/import/--push-to` verbs. Shorthand for `--channel airgapped`; never self-updates gtc."),
                 ),
         )
         .subcommand(

@@ -22,6 +22,11 @@ const TOOLCHAIN_MANIFEST_SCHEMA: &str = "greentic.toolchain-manifest.v1";
 const INSTALLED_TOOLCHAIN_SCHEMA: &str = "greentic.installed-toolchain.v1";
 const TOOLCHAIN_MANIFEST_MEDIA_TYPE: &str = "application/vnd.greentic.toolchain.manifest.v1+json";
 const DEFAULT_GHCR_PREFIX: &str = "ghcr.io/greenticai/greentic-versions/gtc";
+/// GHCR tag holding the dev-lane toolchain used for air-gapped workflows —
+/// the `-dev` binaries that carry `op updates export`/`import`/`--push-to`.
+/// Its packages pin `"latest"`, so each install resolves the newest dev
+/// publish rather than a frozen set.
+const AIRGAP_CHANNEL: &str = "airgapped";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ToolchainManifest {
@@ -104,6 +109,20 @@ pub(crate) enum ToolchainSource {
     LocalManifest(PathBuf),
 }
 
+impl ToolchainSource {
+    /// Whether this source resolves the air-gap channel, however it was
+    /// reached (`--airgap`, `--channel airgapped`, or `--release <r> --channel
+    /// airgapped`). A local manifest is never the air-gap channel — it already
+    /// suppresses self-update on its own.
+    fn targets_airgap_channel(&self) -> bool {
+        match self {
+            Self::Channel(channel) => channel == AIRGAP_CHANNEL,
+            Self::Release { channel, .. } => channel == AIRGAP_CHANNEL,
+            Self::LocalManifest(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolchainInstallPhases {
     pub binaries: bool,
@@ -127,7 +146,9 @@ impl ToolchainInstallPhases {
 
 impl ToolchainInstallOptions {
     pub(crate) fn from_matches(matches: &ArgMatches, default_channel: &str) -> GtcResult<Self> {
-        let source = if let Some(path) = matches.get_one::<String>("manifest") {
+        let source = if matches.get_flag("airgap") {
+            ToolchainSource::Channel(AIRGAP_CHANNEL.to_string())
+        } else if let Some(path) = matches.get_one::<String>("manifest") {
             ToolchainSource::LocalManifest(PathBuf::from(path))
         } else if let Some(release) = matches
             .get_one::<String>("release")
@@ -165,12 +186,21 @@ impl ToolchainInstallOptions {
             ToolchainInstallPhases::all()
         };
 
+        // Keyed on the resolved channel, not on `--airgap`, so `--channel
+        // airgapped` behaves identically. That path is what operators use
+        // before a gtc carrying `--airgap` reaches them, and a self-update
+        // attempt there is guaranteed to fail: the dev lane's release assets
+        // are named `gtc-dev-v<version>-<target>.tgz`, which
+        // `gtc_release_asset_url` does not build.
+        let skip_self_update =
+            matches.get_flag("skip-self-update") || source.targets_airgap_channel();
+
         Ok(Self {
             source,
             force: matches.get_flag("force"),
             dry_run: matches.get_flag("dry-run"),
             phases,
-            skip_self_update: matches.get_flag("skip-self-update"),
+            skip_self_update,
         })
     }
 }
@@ -2301,6 +2331,11 @@ mod tests {
                         .long("skip-self-update")
                         .action(clap::ArgAction::SetTrue),
                 )
+                .arg(
+                    clap::Arg::new("airgap")
+                        .long("airgap")
+                        .action(clap::ArgAction::SetTrue),
+                )
         };
 
         let release_matches = cmd()
@@ -2350,6 +2385,49 @@ mod tests {
             channel_options.source,
             ToolchainSource::Channel(ref channel) if channel == "dev"
         ));
+        // The default channel must NOT pick up the air-gap self-update skip.
+        assert!(!channel_options.skip_self_update);
+
+        // `--airgap` resolves the airgapped channel even though the caller
+        // passed a different default, and suppresses self-update.
+        let airgap_matches = cmd()
+            .try_get_matches_from(["install", "--airgap"])
+            .expect("matches");
+        let airgap_options =
+            ToolchainInstallOptions::from_matches(&airgap_matches, "stable").expect("options");
+        assert!(matches!(
+            airgap_options.source,
+            ToolchainSource::Channel(ref channel) if channel == AIRGAP_CHANNEL
+        ));
+        assert!(airgap_options.skip_self_update);
+
+        // Reaching the same channel the long way must behave identically —
+        // operators use this before a gtc carrying `--airgap` reaches them.
+        let explicit_matches = cmd()
+            .try_get_matches_from(["install", "--channel", "airgapped"])
+            .expect("matches");
+        let explicit_options =
+            ToolchainInstallOptions::from_matches(&explicit_matches, "stable").expect("options");
+        assert!(explicit_options.skip_self_update);
+    }
+
+    #[test]
+    fn airgap_channel_detection_is_scoped_to_that_channel() {
+        assert!(ToolchainSource::Channel(AIRGAP_CHANNEL.to_string()).targets_airgap_channel());
+        assert!(
+            ToolchainSource::Release {
+                release: "1.0.4".to_string(),
+                channel: AIRGAP_CHANNEL.to_string(),
+            }
+            .targets_airgap_channel()
+        );
+        // Neighbouring channels must not inherit the skip.
+        assert!(!ToolchainSource::Channel("stable".to_string()).targets_airgap_channel());
+        assert!(!ToolchainSource::Channel("latest".to_string()).targets_airgap_channel());
+        assert!(!ToolchainSource::Channel("airgap".to_string()).targets_airgap_channel());
+        assert!(
+            !ToolchainSource::LocalManifest(PathBuf::from("/tmp/m.json")).targets_airgap_channel()
+        );
     }
 
     #[test]
