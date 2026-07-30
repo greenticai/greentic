@@ -11,8 +11,8 @@ use super::{
     resolve_local_mutable_bundle_dir, resolve_target_provider_pack, resolve_tenant_key,
     rewrite_store_tenant_placeholder, route_passthrough_subcommand, run_admin_access,
     run_admin_health, run_admin_token, run_admin_tunnel, save_admin_registry, select_start_target,
-    should_send_auth_header, start_k8s_rewrite, tenant_env_var_name, upsert_admin_registry_entry,
-    verify_sha256_digest,
+    should_send_auth_header, start_cloudrun_rewrite, start_k8s_rewrite, tenant_env_var_name,
+    upsert_admin_registry_entry, verify_sha256_digest,
 };
 #[cfg(unix)]
 use super::{apply_default_deploy_env_for_target, extract_zip_bytes, validate_cloud_deploy_inputs};
@@ -1895,6 +1895,78 @@ fn start_k8s_rewrite_preserves_trailing_flags_in_order() {
             "--dry-run".to_string(),
         ]
     );
+}
+
+#[test]
+fn start_cloudrun_rewrite_rewrites_leading_cloudrun_token() {
+    let tail = vec!["cloudrun".to_string()];
+    let rewritten = start_cloudrun_rewrite(&tail).expect("should rewrite");
+    assert_eq!(
+        rewritten,
+        vec!["op".to_string(), "env".to_string(), "up".to_string()]
+    );
+}
+
+#[test]
+fn start_cloudrun_rewrite_does_not_rewrite_cloudrun_after_flag() {
+    let tail = vec!["--answers".to_string(), "cloudrun".to_string()];
+    assert!(start_cloudrun_rewrite(&tail).is_none());
+}
+
+#[test]
+fn start_cloudrun_rewrite_returns_none_without_cloudrun() {
+    let tail = vec!["my-bundle.gtbundle".to_string()];
+    assert!(start_cloudrun_rewrite(&tail).is_none());
+}
+
+/// Only the exact token `cloudrun` is reserved. A bundle named `cloudrun` stays
+/// reachable through any path form, so the sugar cannot swallow a real bundle ref.
+#[test]
+fn start_cloudrun_rewrite_leaves_path_form_bundle_refs_to_run_start() {
+    for bundle_ref in [
+        "./cloudrun",
+        "cloudrun/",
+        "cloudrun.gtbundle",
+        "/opt/bundles/cloudrun",
+        "CloudRun",
+    ] {
+        let tail = vec![bundle_ref.to_string()];
+        assert!(
+            start_cloudrun_rewrite(&tail).is_none(),
+            "`{bundle_ref}` must reach run_start as a bundle ref"
+        );
+    }
+}
+
+#[test]
+fn start_cloudrun_rewrite_preserves_trailing_flags_in_order() {
+    let tail = vec![
+        "cloudrun".to_string(),
+        "--answers".to_string(),
+        "/tmp/answers.json".to_string(),
+        "--dry-run".to_string(),
+    ];
+    let rewritten = start_cloudrun_rewrite(&tail).expect("should rewrite");
+    assert_eq!(
+        rewritten,
+        vec![
+            "op".to_string(),
+            "env".to_string(),
+            "up".to_string(),
+            "--answers".to_string(),
+            "/tmp/answers.json".to_string(),
+            "--dry-run".to_string(),
+        ]
+    );
+}
+
+/// The two target rewrites share one helper but must not cross-match: `k8s`
+/// only routes k8s, `cloudrun` only routes cloudrun. Guards the shared
+/// `start_env_up_rewrite` against a token-set regression.
+#[test]
+fn start_target_rewrites_do_not_cross_match() {
+    assert!(start_k8s_rewrite(&["cloudrun".to_string()]).is_none());
+    assert!(start_cloudrun_rewrite(&["k8s".to_string()]).is_none());
 }
 
 struct HttpRequest {
