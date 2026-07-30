@@ -2,7 +2,11 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use greentic_types::{DEFAULT_TEAM, DEFAULT_TENANT};
+// TODO: remove once greentic-types on the develop lane exports these constants.
+// Mirrors `greentic_types::DEFAULT_TENANT` / `DEFAULT_TEAM` (added in
+// greentic-types 1.1.4 on main).
+const DEFAULT_TENANT: &str = "default";
+const DEFAULT_TEAM: &str = "default";
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{
     parse_runtime_config_start_request, parse_runtime_config_stop_request, parse_start_request,

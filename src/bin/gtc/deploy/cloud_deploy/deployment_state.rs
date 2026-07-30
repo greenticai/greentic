@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::BaseDirs;
-use greentic_types::DEFAULT_TENANT;
+// TODO: remove once greentic-types on the develop lane exports this constant.
+// Mirrors `greentic_types::DEFAULT_TENANT` (added in greentic-types 1.1.4 on main).
+const DEFAULT_TENANT: &str = "default";
 use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{StartRequest, StopRequest};
