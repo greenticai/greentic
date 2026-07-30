@@ -21,11 +21,19 @@ pub enum NgrokModeArg {
     Off,
 }
 
+/// Greentic's own managed tunnel (Cloudflare Worker + in-process agent).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GtunnelModeArg {
+    On,
+    Off,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RestartTarget {
     All,
     Cloudflared,
     Ngrok,
+    Gtunnel,
     Nats,
     Gateway,
     Egress,
@@ -53,6 +61,13 @@ pub struct StartRequest {
     pub cloudflared_binary: Option<PathBuf>,
     pub ngrok: NgrokModeArg,
     pub ngrok_binary: Option<PathBuf>,
+    pub gtunnel: GtunnelModeArg,
+    pub gtunnel_worker_url: Option<String>,
+    pub gtunnel_tunnel_id: Option<String>,
+    /// Whether the user explicitly set `--gtunnel`. Kept apart from
+    /// [`StartRequest::tunnel_explicit`] so gtc only ever forwards `--gtunnel`
+    /// when asked to: a greentic-start that predates the flag would reject it.
+    pub gtunnel_explicit: bool,
     pub runner_binary: Option<PathBuf>,
     pub restart: Vec<RestartTarget>,
     pub log_dir: Option<PathBuf>,
@@ -133,6 +148,21 @@ impl StartRequest {
         if let Some(binary) = self.ngrok_binary.as_deref() {
             args.push("--ngrok-binary".to_string());
             args.push(binary.display().to_string());
+        }
+        // gtunnel is forwarded only on explicit request (see
+        // `gtunnel_explicit`); its worker-url/tunnel-id overrides self-gate on
+        // being set, so greentic-start keeps resolving them zero-config.
+        if self.gtunnel_explicit {
+            args.push("--gtunnel".to_string());
+            args.push(self.gtunnel.as_cli_value().to_string());
+        }
+        if let Some(worker_url) = self.gtunnel_worker_url.as_deref() {
+            args.push("--gtunnel-worker-url".to_string());
+            args.push(worker_url.to_string());
+        }
+        if let Some(tunnel_id) = self.gtunnel_tunnel_id.as_deref() {
+            args.push("--gtunnel-tunnel-id".to_string());
+            args.push(tunnel_id.to_string());
         }
         if let Some(binary) = self.runner_binary.as_deref() {
             args.push("--runner-binary".to_string());
@@ -228,6 +258,10 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
         cloudflared_binary: None,
         ngrok: NgrokModeArg::Off,
         ngrok_binary: None,
+        gtunnel: GtunnelModeArg::Off,
+        gtunnel_worker_url: None,
+        gtunnel_tunnel_id: None,
+        gtunnel_explicit: false,
         runner_binary: None,
         restart: Vec::new(),
         log_dir: None,
@@ -294,6 +328,20 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
                 idx += 1;
                 request.ngrok_binary =
                     Some(PathBuf::from(required_value(tail, idx, "--ngrok-binary")?));
+            }
+            "--gtunnel" => {
+                idx += 1;
+                request.gtunnel = parse_gtunnel_mode(&required_value(tail, idx, "--gtunnel")?)?;
+                request.gtunnel_explicit = true;
+            }
+            "--gtunnel-worker-url" => {
+                idx += 1;
+                request.gtunnel_worker_url =
+                    Some(required_value(tail, idx, "--gtunnel-worker-url")?);
+            }
+            "--gtunnel-tunnel-id" => {
+                idx += 1;
+                request.gtunnel_tunnel_id = Some(required_value(tail, idx, "--gtunnel-tunnel-id")?);
             }
             "--runner-binary" => {
                 idx += 1;
@@ -368,6 +416,13 @@ pub fn parse_start_request(tail: &[String], bundle_dir: PathBuf) -> GtcResult<St
                     request.tunnel_explicit = true;
                 } else if let Some(value) = other.strip_prefix("--ngrok-binary=") {
                     request.ngrok_binary = Some(PathBuf::from(value));
+                } else if let Some(value) = other.strip_prefix("--gtunnel=") {
+                    request.gtunnel = parse_gtunnel_mode(value)?;
+                    request.gtunnel_explicit = true;
+                } else if let Some(value) = other.strip_prefix("--gtunnel-worker-url=") {
+                    request.gtunnel_worker_url = Some(value.to_string());
+                } else if let Some(value) = other.strip_prefix("--gtunnel-tunnel-id=") {
+                    request.gtunnel_tunnel_id = Some(value.to_string());
                 } else if let Some(value) = other.strip_prefix("--runner-binary=") {
                     request.runner_binary = Some(PathBuf::from(value));
                 } else if let Some(value) = other.strip_prefix("--restart=") {
@@ -496,6 +551,9 @@ pub fn start_flag_takes_value(flag: &str) -> bool {
             | "--cloudflared-binary"
             | "--ngrok"
             | "--ngrok-binary"
+            | "--gtunnel"
+            | "--gtunnel-worker-url"
+            | "--gtunnel-tunnel-id"
             | "--runner-binary"
             | "--restart"
             | "--log-dir"
@@ -582,11 +640,31 @@ impl NgrokModeArg {
     }
 }
 
+fn parse_gtunnel_mode(value: &str) -> GtcResult<GtunnelModeArg> {
+    match value.trim() {
+        "on" => Ok(GtunnelModeArg::On),
+        "off" => Ok(GtunnelModeArg::Off),
+        other => Err(GtcError::message(format!(
+            "unsupported --gtunnel value: {other}"
+        ))),
+    }
+}
+
+impl GtunnelModeArg {
+    fn as_cli_value(self) -> &'static str {
+        match self {
+            GtunnelModeArg::On => "on",
+            GtunnelModeArg::Off => "off",
+        }
+    }
+}
+
 fn parse_restart_target(value: &str) -> GtcResult<RestartTarget> {
     match value.trim() {
         "all" => Ok(RestartTarget::All),
         "cloudflared" => Ok(RestartTarget::Cloudflared),
         "ngrok" => Ok(RestartTarget::Ngrok),
+        "gtunnel" => Ok(RestartTarget::Gtunnel),
         "nats" => Ok(RestartTarget::Nats),
         "gateway" => Ok(RestartTarget::Gateway),
         "egress" => Ok(RestartTarget::Egress),
@@ -603,6 +681,7 @@ impl RestartTarget {
             RestartTarget::All => "all",
             RestartTarget::Cloudflared => "cloudflared",
             RestartTarget::Ngrok => "ngrok",
+            RestartTarget::Gtunnel => "gtunnel",
             RestartTarget::Nats => "nats",
             RestartTarget::Gateway => "gateway",
             RestartTarget::Egress => "egress",

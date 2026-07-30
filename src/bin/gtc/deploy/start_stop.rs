@@ -31,7 +31,8 @@ const START_USAGE: &str = "usage: gtc start [BUNDLE_REF] [start flags...]\n\
               --deploy-bundle-source <src> --upload-bundle <url> --upload-bundle-presign-expires <secs>\n\
               --extension-start-handoff <path>\n\
   runtime flags are forwarded to greentic-start (e.g. --env, --tenant, --team, --nats, --cloudflared, --ngrok,\n\
-  --admin, --restart, --verbose, --quiet, --no-updates); see `greentic-start start --help` for the full list";
+  --gtunnel, --gtunnel-worker-url, --gtunnel-tunnel-id, --admin, --restart, --verbose, --quiet, --no-updates);\n\
+  see `greentic-start start --help` for the full list";
 
 /// Probe whether the installed greentic-start supports `--open-webchat`.
 ///
@@ -1080,8 +1081,9 @@ mod tests {
     };
     use crate::deploy::StartTarget;
     use gtc::start_stop_parsing::{
-        CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
-        parse_runtime_config_stop_request, start_flag_takes_value, stop_flag_takes_value,
+        CloudflaredModeArg, GtunnelModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest,
+        StopRequest, parse_runtime_config_stop_request, start_flag_takes_value,
+        stop_flag_takes_value,
     };
     use std::fs;
     use std::path::{Path, PathBuf};
@@ -1212,6 +1214,10 @@ mod tests {
             cloudflared_binary: Some(PathBuf::from("/tmp/cloudflared")),
             ngrok: NgrokModeArg::On,
             ngrok_binary: Some(PathBuf::from("/tmp/ngrok")),
+            gtunnel: GtunnelModeArg::Off,
+            gtunnel_worker_url: None,
+            gtunnel_tunnel_id: None,
+            gtunnel_explicit: false,
             runner_binary: Some(PathBuf::from("/tmp/runner")),
             restart: vec![RestartTarget::Gateway, RestartTarget::Nats],
             log_dir: Some(PathBuf::from("/tmp/logs")),
@@ -1365,6 +1371,87 @@ mod tests {
     }
 
     #[test]
+    fn gtunnel_flags_survive_both_spellings_after_a_bundle_ref() {
+        // The 2026-07-30 repro: `gtc start ./bundle --gtunnel on` died with
+        // "unexpected positional argument `on`" because the router did not
+        // know --gtunnel takes a value, so `on` looked like a second bundle
+        // ref. The `=` spelling only *looked* fine — it slipped past the
+        // splitter and then died in `parse_start_request` as an unsupported
+        // argument. Both spellings must reach greentic-start intact.
+        for spaced in [true, false] {
+            let tail = if spaced {
+                args(&[
+                    "bundle.gtbundle",
+                    "--gtunnel",
+                    "on",
+                    "--gtunnel-worker-url",
+                    "https://tunnel.example.com",
+                    "--gtunnel-tunnel-id",
+                    "acme",
+                ])
+            } else {
+                args(&[
+                    "bundle.gtbundle",
+                    "--gtunnel=on",
+                    "--gtunnel-worker-url=https://tunnel.example.com",
+                    "--gtunnel-tunnel-id=acme",
+                ])
+            };
+            let opts = parse_start_cli_options(&tail).expect("opts");
+            assert_eq!(opts.bundle_ref.as_deref(), Some("bundle.gtbundle"));
+            let request =
+                parse_start_request(&opts.start_args, PathBuf::from("/tmp/bundle")).expect("req");
+            assert_eq!(request.gtunnel, GtunnelModeArg::On);
+            assert!(request.gtunnel_explicit);
+            assert_eq!(
+                request.gtunnel_worker_url.as_deref(),
+                Some("https://tunnel.example.com")
+            );
+            assert_eq!(request.gtunnel_tunnel_id.as_deref(), Some("acme"));
+            let child = request.to_runtime_start_args("en");
+            assert_eq!(
+                child.windows(2).find(|pair| pair[0] == "--gtunnel"),
+                Some(["--gtunnel".to_string(), "on".to_string()].as_slice())
+            );
+            assert!(child.contains(&"--gtunnel-worker-url".to_string()));
+            assert!(child.contains(&"--gtunnel-tunnel-id".to_string()));
+        }
+    }
+
+    #[test]
+    fn gtunnel_is_not_forwarded_unless_asked_for() {
+        // A greentic-start that predates --gtunnel would reject the flag, so
+        // gtc must stay silent about it when the user never mentioned it —
+        // even when --cloudflared made the other tunnel flags explicit.
+        let request = parse_start_request(
+            &args(&["--cloudflared", "on"]),
+            PathBuf::from("/tmp/bundle"),
+        )
+        .expect("req");
+        assert!(!request.gtunnel_explicit);
+        assert!(
+            !request
+                .to_runtime_start_args("en")
+                .contains(&"--gtunnel".to_string())
+        );
+    }
+
+    #[test]
+    fn restart_accepts_the_gtunnel_target() {
+        // greentic-start's `--restart` lists gtunnel among its possible
+        // values; the router must not reject it on the way through.
+        let request =
+            parse_start_request(&args(&["--restart", "gtunnel"]), PathBuf::from("/tmp/b"))
+                .expect("gtunnel is a restart target");
+        assert_eq!(request.restart, vec![RestartTarget::Gtunnel]);
+        assert!(
+            request
+                .to_runtime_start_args("en")
+                .contains(&"gtunnel".to_string())
+        );
+    }
+
+    #[test]
     fn parse_start_cli_options_extracts_gtc_flags_after_positional() {
         // Pre-collapse these only worked in this position because the tail
         // parser duplicated the clap layer; pin the single-parser behavior.
@@ -1440,6 +1527,9 @@ mod tests {
             "--cloudflared-binary",
             "--ngrok",
             "--ngrok-binary",
+            "--gtunnel",
+            "--gtunnel-worker-url",
+            "--gtunnel-tunnel-id",
             "--runner-binary",
             "--restart",
             "--log-dir",
@@ -1485,6 +1575,9 @@ mod tests {
             "--cloudflared-binary",
             "--ngrok",
             "--ngrok-binary",
+            "--gtunnel",
+            "--gtunnel-worker-url",
+            "--gtunnel-tunnel-id",
             "--runner-binary",
             "--restart",
             "--log-dir",
