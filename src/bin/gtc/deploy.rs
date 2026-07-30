@@ -4,6 +4,8 @@ mod bundle_resolution;
 pub(crate) mod bundle_upload_orchestrator;
 #[path = "deploy/cloud_deploy.rs"]
 mod cloud_deploy;
+#[path = "deploy/env_packs_target.rs"]
+mod env_packs_target;
 #[path = "deploy/prepared_bundle.rs"]
 mod prepared_bundle;
 #[path = "deploy/refresh.rs"]
