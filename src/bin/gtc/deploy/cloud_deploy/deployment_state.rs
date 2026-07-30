@@ -474,7 +474,7 @@ mod tests {
     use crate::tests::fake_deployer_contract;
     #[cfg(unix)]
     use gtc::start_stop_parsing::{
-        CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
+        CloudflaredModeArg, GtunnelModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
     };
     use std::env;
     use std::fs;
@@ -610,6 +610,10 @@ mod tests {
             cloudflared_binary: None,
             ngrok: NgrokModeArg::Off,
             ngrok_binary: None,
+            gtunnel: GtunnelModeArg::Off,
+            gtunnel_worker_url: None,
+            gtunnel_tunnel_id: None,
+            gtunnel_explicit: false,
             runner_binary: None,
             restart: Vec::new(),
             log_dir: None,
