@@ -1631,6 +1631,7 @@ name = "gtc"
 version = "1.2.0-dev.0"
 dependencies = [
  "backhand",
+ "chrono",
  "clap",
  "criterion",
  "directories",

@@ -548,39 +548,50 @@ fn print_missing_op_message(locale: &str) {
 
 fn resolve_binary_command(binary: &str) -> String {
     let invocation = env::args().next();
-    if let Some(path) = resolve_companion_binary_from_parts(
+    let command = if let Some(path) = resolve_companion_binary_from_parts(
         invocation.as_deref(),
         env::current_exe().ok().as_deref(),
         binary,
     ) {
-        return path.display().to_string();
-    }
-    let physical_binary = companion_binary_for_invocation(invocation.as_deref(), binary);
-    match binary {
-        DEV_BIN => GtcConfig::from_env()
-            .dev_bin_override()
-            .map(|value| value.to_string_lossy().to_string())
-            .unwrap_or(physical_binary),
-        _ => physical_binary,
-    }
+        path.display().to_string()
+    } else {
+        let physical_binary = companion_binary_for_invocation(invocation.as_deref(), binary);
+        match binary {
+            DEV_BIN => GtcConfig::from_env()
+                .dev_bin_override()
+                .map(|value| value.to_string_lossy().to_string())
+                .unwrap_or(physical_binary),
+            _ => physical_binary,
+        }
+    };
+    // Bookkeeping: snapshot this companion's version + checksum into system.log
+    // just before gtc runs it. Best-effort and deduped per binary per process.
+    super::syslog::record_invocation(binary, &command);
+    command
 }
 
 pub(super) fn resolve_companion_binary(binary: &str) -> Option<PathBuf> {
     let invocation = env::args().next();
-    resolve_companion_binary_from_parts(
+    let resolved = resolve_companion_binary_from_parts(
         invocation.as_deref(),
         env::current_exe().ok().as_deref(),
         binary,
-    )
+    );
+    if let Some(path) = resolved.as_deref() {
+        super::syslog::record_invocation(binary, &path.display().to_string());
+    }
+    resolved
 }
 
 pub(super) fn resolve_companion_command(binary: &str) -> PathBuf {
     resolve_companion_binary(binary).unwrap_or_else(|| {
         let invocation = env::args().next();
-        PathBuf::from(companion_binary_for_invocation(
+        let fallback = PathBuf::from(companion_binary_for_invocation(
             invocation.as_deref(),
             binary,
-        ))
+        ));
+        super::syslog::record_invocation(binary, &fallback.display().to_string());
+        fallback
     })
 }
 

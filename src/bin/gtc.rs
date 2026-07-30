@@ -26,8 +26,12 @@ mod prompt;
 mod release_cache;
 #[path = "gtc/router.rs"]
 mod router;
+#[path = "gtc/syslog.rs"]
+mod syslog;
 #[path = "gtc/toolchain.rs"]
 mod toolchain;
+#[path = "gtc/up.rs"]
+mod up;
 
 use std::path::Path;
 

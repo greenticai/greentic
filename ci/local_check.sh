@@ -13,6 +13,15 @@ fi
 echo "[1b/6] validate canonical doc examples"
 bash ci/validate_doc_examples.sh
 
+if [[ "${SKIP_BUNDLE_DIR_MIRROR_CHECK:-}" == "1" ]]; then
+  echo "[1c/6] bundle-dir mirror check (skipped: SKIP_BUNDLE_DIR_MIRROR_CHECK=1)"
+else
+  echo "[1c/6] bundle-dir mirror check"
+  # Let the script resolve the sibling: it also handles the linked-worktree
+  # layout. Forcing GREENTIC_BUNDLE_REPO here would defeat that fallback.
+  bash ci/check_bundle_dir_mirror.sh
+fi
+
 echo "[2/6] cargo fmt --all -- --check"
 cargo fmt --all -- --check
 
@@ -24,6 +33,14 @@ cargo test --all-targets --all-features
 
 echo "[4b/6] cargo test --test perf_scaling hashing_scaling_should_not_collapse -- --ignored --exact"
 cargo test --test perf_scaling hashing_scaling_should_not_collapse -- --ignored --exact
+
+# The socket-binding tests are `#[ignore]`d so a sandbox without loopback can
+# still run `cargo test`. They are also the ONLY tests that drive the real HTTP
+# fetch paths end to end — everything else calls the validation helpers
+# directly, so a guard could be deleted from its call site with the whole suite
+# still green. Run them here or they never run at all.
+echo "[4c/6] cargo test --bin gtc -- --ignored (socket-binding fetch tests)"
+cargo test --bin gtc -- --ignored
 
 echo "[5/6] cargo publish --dry-run --allow-dirty"
 cargo publish --dry-run --allow-dirty

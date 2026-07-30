@@ -2,6 +2,11 @@ use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
+// TODO: remove once greentic-types on the develop lane exports these constants.
+// Mirrors `greentic_types::DEFAULT_TENANT` / `DEFAULT_TEAM` (added in
+// greentic-types 1.1.4 on main).
+const DEFAULT_TENANT: &str = "default";
+const DEFAULT_TEAM: &str = "default";
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{
     parse_runtime_config_start_request, parse_runtime_config_stop_request, parse_start_request,
@@ -16,7 +21,9 @@ use super::prepared_bundle::{prepare_bundle_for_start, print_prepared_bundle_deb
 use super::{ChildProcessEnv, StartCliOptions, StartTarget, StopCliOptions};
 use crate::admin::ensure_admin_certs_ready;
 use crate::i18n_support::t_or;
-use crate::process::{run_binary_checked, run_binary_checked_with_target_and_env};
+use crate::process::{
+    run_binary_capture, run_binary_checked, run_binary_checked_with_target_and_env,
+};
 use crate::{SETUP_BIN, START_BIN};
 
 /// Environment served when neither `--env` nor `$GREENTIC_ENV` is set. Must
@@ -29,7 +36,78 @@ const START_USAGE: &str = "usage: gtc start [BUNDLE_REF] [start flags...]\n\
               --deploy-bundle-source <src> --upload-bundle <url> --upload-bundle-presign-expires <secs>\n\
               --extension-start-handoff <path>\n\
   runtime flags are forwarded to greentic-start (e.g. --env, --tenant, --team, --nats, --cloudflared, --ngrok,\n\
-  --admin, --restart, --verbose, --quiet, --no-updates); see `greentic-start start --help` for the full list";
+  --gtunnel, --gtunnel-worker-url, --gtunnel-tunnel-id, --admin, --restart, --verbose, --quiet, --no-updates);\n\
+  see `greentic-start start --help` for the full list";
+
+/// Probe whether the installed greentic-start supports `--open-webchat`.
+///
+/// Runs `greentic-start start --help` and checks if the output mentions the
+/// flag. Fails closed: any error running the probe is treated as "not
+/// supported", so an older binary that does not know the flag is never sent it.
+///
+/// Same pattern as [`crate::up::operator_supports_updates`]: a capability probe
+/// via `--help` output rather than a brittle version comparison.
+fn start_supports_open_webchat(debug: bool, locale: &str) -> bool {
+    let args = vec!["start".to_string(), "--help".to_string()];
+    match run_binary_capture(START_BIN, &args, debug, locale) {
+        Ok(output) => output.contains("--open-webchat"),
+        Err(_) => false,
+    }
+}
+
+/// Read `bundle_id` from a bundle directory's `bundle.yaml`.
+///
+/// Returns `None` if the file is missing, unreadable, or does not contain a
+/// `bundle_id` field. The caller degrades to the bare `--open-webchat` flag
+/// rather than failing the start.
+fn read_bundle_id(bundle_dir: &Path) -> Option<String> {
+    #[derive(Deserialize)]
+    struct BundleYaml {
+        bundle_id: Option<String>,
+    }
+
+    let path = bundle_dir.join("bundle.yaml");
+    let raw = fs::read_to_string(&path).ok()?;
+    let doc: BundleYaml = serde_yaml_bw::from_str(&raw).ok()?;
+    doc.bundle_id.filter(|id| !id.trim().is_empty())
+}
+
+/// Build the `--open-webchat[=BUNDLE_ID]` argument for greentic-start, or
+/// `None` when the flag should be suppressed.
+///
+/// Suppressed when:
+/// - the user passed `--no-browser`
+/// - the capability probe says the installed greentic-start does not support it
+/// - a named bundle was given but its `bundle_id` could not be read (opening
+///   the default bundle would be wrong; a warning is printed instead)
+fn open_webchat_arg(
+    bundle_dir: Option<&Path>,
+    no_browser: bool,
+    supported: bool,
+    locale: &str,
+) -> Option<String> {
+    if no_browser || !supported {
+        return None;
+    }
+    match bundle_dir {
+        Some(dir) => match read_bundle_id(dir) {
+            Some(id) => Some(format!("--open-webchat={id}")),
+            None => {
+                eprintln!(
+                    "{}: {}",
+                    t_or(
+                        locale,
+                        "gtc.start.warn.webchat_no_bundle_id",
+                        "webchat browser-open skipped (could not read bundle_id)",
+                    ),
+                    dir.join("bundle.yaml").display()
+                );
+                None
+            }
+        },
+        None => Some("--open-webchat".to_string()),
+    }
+}
 
 const STOP_USAGE: &str = "usage: gtc stop [BUNDLE_REF] [stop flags...]\n\
   BUNDLE_REF: bundle to stop (omit to stop the active env's serving runtime)\n\
@@ -107,10 +185,18 @@ fn run_start_runtime_config(tail: &[String], debug: bool, locale: &str) -> i32 {
     println!("Deployment mode: local runtime (no bundle — env runtime-config)");
     println!(
         "Starting tenant={} team={}",
-        request.tenant.as_deref().unwrap_or("demo"),
-        request.team.as_deref().unwrap_or("default")
+        request.tenant.as_deref().unwrap_or(DEFAULT_TENANT),
+        request.team.as_deref().unwrap_or(DEFAULT_TEAM)
     );
-    let args = request.to_runtime_start_args(locale);
+    let mut args = request.to_runtime_start_args(locale);
+    if let Some(flag) = open_webchat_arg(
+        None,
+        request.no_browser,
+        start_supports_open_webchat(debug, locale),
+        locale,
+    ) {
+        args.push(flag);
+    }
     match run_binary_checked(START_BIN, &args, debug, locale, "start runtime-config") {
         Ok(()) => 0,
         Err(err) => {
@@ -318,8 +404,8 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     println!("Deployment mode: local runtime (environment `{env_id}`)");
     println!(
         "Starting tenant={} team={}",
-        request.tenant.as_deref().unwrap_or("demo"),
-        request.team.as_deref().unwrap_or("default")
+        request.tenant.as_deref().unwrap_or(DEFAULT_TENANT),
+        request.team.as_deref().unwrap_or(DEFAULT_TEAM)
     );
     // `--admin` without an explicit cert dir generates a dev CA plus server and
     // client PRIVATE keys inside the prepared root. The legacy path kept that
@@ -361,7 +447,14 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
             }
         }
     }
-    if let Err(err) = deploy_bundle_into_env(&prepared.prepared_root, &env_id, debug, locale) {
+    if let Err(err) = deploy_bundle_into_env(
+        &prepared.prepared_root,
+        &env_id,
+        request.tenant.as_deref(),
+        request.team.as_deref(),
+        debug,
+        locale,
+    ) {
         eprintln!(
             "{}: {err}",
             t_or(
@@ -386,7 +479,15 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     if request.log_dir.is_none() {
         request.log_dir = Some(resolved.bundle_dir.join("logs"));
     }
-    let args = request.to_runtime_start_args(locale);
+    let mut args = request.to_runtime_start_args(locale);
+    if let Some(flag) = open_webchat_arg(
+        Some(&resolved.bundle_dir),
+        request.no_browser,
+        start_supports_open_webchat(debug, locale),
+        locale,
+    ) {
+        args.push(flag);
+    }
     let runtime_env = local_runtime_secret_env(&resolved.bundle_dir);
     match run_binary_checked_with_target_and_env(
         START_BIN,
@@ -426,19 +527,65 @@ fn resolve_env_id(explicit: Option<&str>) -> String {
 
 /// Deploy a prepared bundle into `env_id` via `greentic-setup env-deploy`.
 ///
-/// `--env` and `--non-interactive` are global flags on the setup CLI, so they
-/// precede the subcommand.
-fn deploy_bundle_into_env(bundle: &Path, env_id: &str, debug: bool, locale: &str) -> GtcResult<()> {
-    let args = vec![
+/// `--env`, `--tenant`, `--team` and `--non-interactive` are global flags on the
+/// setup CLI, so they precede the subcommand.
+///
+/// `tenant`/`team` MUST be forwarded here, not just to the greentic-start
+/// process. This step is what decides where the deployment BINDS
+/// (`route_binding.tenant_selector`), and setup applies its own default —
+/// `demo` — to whatever it is not told. Omitting them made `gtc start <bundle>
+/// --tenant X` print `Starting tenant=X`, run the runtime under X, and bind the
+/// deployment under `demo` anyway: the flag appeared to work and changed
+/// nothing that mattered.
+///
+/// That is not cosmetic. `revision_boot`'s activation gate refuses to serve an
+/// environment whose deployments span tenants outside the secrets backend's
+/// scope, so a bundle silently bound to a second tenant makes the whole
+/// environment fail to activate under Vault.
+///
+/// `None` forwards nothing and lets setup apply its default, keeping the
+/// no-flags invocation byte-identical to before.
+fn deploy_bundle_into_env(
+    bundle: &Path,
+    env_id: &str,
+    tenant: Option<&str>,
+    team: Option<&str>,
+    debug: bool,
+    locale: &str,
+) -> GtcResult<()> {
+    let args = env_deploy_args(bundle, env_id, tenant, team, locale);
+    run_binary_checked(SETUP_BIN, &args, debug, locale, "env-deploy bundle")
+}
+
+/// Build the `greentic-setup env-deploy` argv.
+///
+/// Split out so tests exercise the REAL construction rather than re-deriving
+/// it. A test that rebuilds the expected argv itself passes even when the
+/// production path forgets a flag — which is exactly how the missing
+/// `--tenant`/`--team` survived here.
+fn env_deploy_args(
+    bundle: &Path,
+    env_id: &str,
+    tenant: Option<&str>,
+    team: Option<&str>,
+    locale: &str,
+) -> Vec<String> {
+    let mut args = vec![
         "--locale".to_string(),
         locale.to_string(),
         "--env".to_string(),
         env_id.to_string(),
-        "--non-interactive".to_string(),
-        "env-deploy".to_string(),
-        bundle.display().to_string(),
     ];
-    run_binary_checked(SETUP_BIN, &args, debug, locale, "env-deploy bundle")
+    for (flag, value) in [("--tenant", tenant), ("--team", team)] {
+        if let Some(value) = value {
+            args.push(flag.to_string());
+            args.push(value.to_string());
+        }
+    }
+    args.push("--non-interactive".to_string());
+    args.push("env-deploy".to_string());
+    args.push(bundle.display().to_string());
+    args
 }
 
 fn local_runtime_secret_env(bundle_dir: &Path) -> Option<ChildProcessEnv> {
@@ -988,17 +1135,19 @@ fn prompt_start_target(targets: &[StartTarget], locale: &str) -> GtcResult<Start
 #[cfg(test)]
 mod tests {
     use super::{
-        load_default_deployment_target, parse_runtime_config_start_request,
-        parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
-        select_start_target, select_start_target_with_mode,
+        DEFAULT_TEAM, DEFAULT_TENANT, env_deploy_args, load_default_deployment_target,
+        parse_runtime_config_start_request, parse_start_cli_options, parse_start_request,
+        parse_stop_cli_options, parse_stop_request, select_start_target,
+        select_start_target_with_mode,
     };
     use crate::deploy::StartTarget;
     use gtc::start_stop_parsing::{
-        CloudflaredModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest, StopRequest,
-        parse_runtime_config_stop_request, start_flag_takes_value, stop_flag_takes_value,
+        CloudflaredModeArg, GtunnelModeArg, NatsModeArg, NgrokModeArg, RestartTarget, StartRequest,
+        StopRequest, parse_runtime_config_stop_request, start_flag_takes_value,
+        stop_flag_takes_value,
     };
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -1126,6 +1275,10 @@ mod tests {
             cloudflared_binary: Some(PathBuf::from("/tmp/cloudflared")),
             ngrok: NgrokModeArg::On,
             ngrok_binary: Some(PathBuf::from("/tmp/ngrok")),
+            gtunnel: GtunnelModeArg::Off,
+            gtunnel_worker_url: None,
+            gtunnel_tunnel_id: None,
+            gtunnel_explicit: false,
             runner_binary: Some(PathBuf::from("/tmp/runner")),
             restart: vec![RestartTarget::Gateway, RestartTarget::Nats],
             log_dir: Some(PathBuf::from("/tmp/logs")),
@@ -1279,6 +1432,87 @@ mod tests {
     }
 
     #[test]
+    fn gtunnel_flags_survive_both_spellings_after_a_bundle_ref() {
+        // The 2026-07-30 repro: `gtc start ./bundle --gtunnel on` died with
+        // "unexpected positional argument `on`" because the router did not
+        // know --gtunnel takes a value, so `on` looked like a second bundle
+        // ref. The `=` spelling only *looked* fine — it slipped past the
+        // splitter and then died in `parse_start_request` as an unsupported
+        // argument. Both spellings must reach greentic-start intact.
+        for spaced in [true, false] {
+            let tail = if spaced {
+                args(&[
+                    "bundle.gtbundle",
+                    "--gtunnel",
+                    "on",
+                    "--gtunnel-worker-url",
+                    "https://tunnel.example.com",
+                    "--gtunnel-tunnel-id",
+                    "acme",
+                ])
+            } else {
+                args(&[
+                    "bundle.gtbundle",
+                    "--gtunnel=on",
+                    "--gtunnel-worker-url=https://tunnel.example.com",
+                    "--gtunnel-tunnel-id=acme",
+                ])
+            };
+            let opts = parse_start_cli_options(&tail).expect("opts");
+            assert_eq!(opts.bundle_ref.as_deref(), Some("bundle.gtbundle"));
+            let request =
+                parse_start_request(&opts.start_args, PathBuf::from("/tmp/bundle")).expect("req");
+            assert_eq!(request.gtunnel, GtunnelModeArg::On);
+            assert!(request.gtunnel_explicit);
+            assert_eq!(
+                request.gtunnel_worker_url.as_deref(),
+                Some("https://tunnel.example.com")
+            );
+            assert_eq!(request.gtunnel_tunnel_id.as_deref(), Some("acme"));
+            let child = request.to_runtime_start_args("en");
+            assert_eq!(
+                child.windows(2).find(|pair| pair[0] == "--gtunnel"),
+                Some(["--gtunnel".to_string(), "on".to_string()].as_slice())
+            );
+            assert!(child.contains(&"--gtunnel-worker-url".to_string()));
+            assert!(child.contains(&"--gtunnel-tunnel-id".to_string()));
+        }
+    }
+
+    #[test]
+    fn gtunnel_is_not_forwarded_unless_asked_for() {
+        // A greentic-start that predates --gtunnel would reject the flag, so
+        // gtc must stay silent about it when the user never mentioned it —
+        // even when --cloudflared made the other tunnel flags explicit.
+        let request = parse_start_request(
+            &args(&["--cloudflared", "on"]),
+            PathBuf::from("/tmp/bundle"),
+        )
+        .expect("req");
+        assert!(!request.gtunnel_explicit);
+        assert!(
+            !request
+                .to_runtime_start_args("en")
+                .contains(&"--gtunnel".to_string())
+        );
+    }
+
+    #[test]
+    fn restart_accepts_the_gtunnel_target() {
+        // greentic-start's `--restart` lists gtunnel among its possible
+        // values; the router must not reject it on the way through.
+        let request =
+            parse_start_request(&args(&["--restart", "gtunnel"]), PathBuf::from("/tmp/b"))
+                .expect("gtunnel is a restart target");
+        assert_eq!(request.restart, vec![RestartTarget::Gtunnel]);
+        assert!(
+            request
+                .to_runtime_start_args("en")
+                .contains(&"gtunnel".to_string())
+        );
+    }
+
+    #[test]
     fn parse_start_cli_options_extracts_gtc_flags_after_positional() {
         // Pre-collapse these only worked in this position because the tail
         // parser duplicated the clap layer; pin the single-parser behavior.
@@ -1354,6 +1588,9 @@ mod tests {
             "--cloudflared-binary",
             "--ngrok",
             "--ngrok-binary",
+            "--gtunnel",
+            "--gtunnel-worker-url",
+            "--gtunnel-tunnel-id",
             "--runner-binary",
             "--restart",
             "--log-dir",
@@ -1399,6 +1636,9 @@ mod tests {
             "--cloudflared-binary",
             "--ngrok",
             "--ngrok-binary",
+            "--gtunnel",
+            "--gtunnel-worker-url",
+            "--gtunnel-tunnel-id",
             "--runner-binary",
             "--restart",
             "--log-dir",
@@ -1525,5 +1765,193 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         // No `.greentic/dev/.dev.secrets.env` file created on purpose.
         assert!(super::local_runtime_secret_env(dir.path()).is_none());
+    }
+
+    // --- webchat open flag ---
+
+    #[test]
+    fn read_bundle_id_extracts_id_from_valid_yaml() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "bundle_id: helpdesk-demo\n").expect("write");
+        assert_eq!(
+            super::read_bundle_id(dir.path()),
+            Some("helpdesk-demo".to_string())
+        );
+    }
+
+    #[test]
+    fn read_bundle_id_returns_none_when_file_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(super::read_bundle_id(dir.path()), None);
+    }
+
+    #[test]
+    fn read_bundle_id_returns_none_when_yaml_invalid() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), ":::not valid yaml").expect("write");
+        assert_eq!(super::read_bundle_id(dir.path()), None);
+    }
+
+    #[test]
+    fn read_bundle_id_returns_none_when_field_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "name: demo\n").expect("write");
+        assert_eq!(super::read_bundle_id(dir.path()), None);
+    }
+
+    #[test]
+    fn read_bundle_id_returns_none_when_field_blank() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "bundle_id: '  '\n").expect("write");
+        assert_eq!(super::read_bundle_id(dir.path()), None);
+    }
+
+    #[test]
+    fn open_webchat_arg_emits_bare_flag_without_bundle() {
+        assert_eq!(
+            super::open_webchat_arg(None, false, true, "en"),
+            Some("--open-webchat".to_string())
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_emits_scoped_flag_with_bundle_id() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "bundle_id: helpdesk-demo\n").expect("write");
+        assert_eq!(
+            super::open_webchat_arg(Some(dir.path()), false, true, "en"),
+            Some("--open-webchat=helpdesk-demo".to_string())
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_when_named_bundle_yaml_missing() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // No bundle.yaml — must NOT fall back to the bare flag (that would
+        // open the default bundle, not the one the user asked for).
+        assert_eq!(
+            super::open_webchat_arg(Some(dir.path()), false, true, "en"),
+            None
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_when_named_bundle_id_blank() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "bundle_id: '  '\n").expect("write");
+        assert_eq!(
+            super::open_webchat_arg(Some(dir.path()), false, true, "en"),
+            None
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_when_named_bundle_id_absent() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("bundle.yaml"), "name: demo\n").expect("write");
+        assert_eq!(
+            super::open_webchat_arg(Some(dir.path()), false, true, "en"),
+            None
+        );
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_by_no_browser() {
+        assert_eq!(super::open_webchat_arg(None, true, true, "en"), None);
+    }
+
+    #[test]
+    fn open_webchat_arg_suppressed_when_unsupported() {
+        assert_eq!(super::open_webchat_arg(None, false, false, "en"), None);
+    }
+
+    // ── env-deploy argv forwards the tenant/team the user asked for ─────
+
+    /// The other half of the same defect: with no `--tenant`, this crate
+    /// PRINTED `Starting tenant=demo` while greentic-setup — which actually
+    /// writes the binding — applied its own default. Both ends now read
+    /// `greentic_types::DEFAULT_TENANT`, so the banner cannot claim a tenant
+    /// the deployment did not get.
+    ///
+    /// `env_deploy_args` omitting the flag is what makes that work: setup then
+    /// applies the same constant rather than a value this crate guessed.
+    #[test]
+    fn the_reported_tenant_is_the_one_setup_will_apply() {
+        assert_eq!(DEFAULT_TENANT, "default");
+        assert_eq!(DEFAULT_TEAM, "default");
+
+        let argv = env_deploy_args(Path::new("b.gtbundle"), "local", None, None, "en");
+        assert!(
+            !argv.iter().any(|arg| arg == "--tenant"),
+            "with no tenant the flag must be omitted so setup applies \
+             DEFAULT_TENANT itself, got {argv:?}"
+        );
+    }
+
+    /// `gtc start <bundle> --tenant X` used to print `Starting tenant=X`, run
+    /// the runtime under X, and bind the deployment under setup's own default
+    /// (`demo`) anyway — the flag looked like it worked and changed nothing
+    /// that mattered. These assert the argv this crate actually builds.
+    #[test]
+    fn env_deploy_argv_forwards_tenant_and_team() {
+        let args = env_deploy_args(
+            Path::new("/tmp/prepared"),
+            "staging",
+            Some("acme"),
+            Some("billing"),
+            "en",
+        );
+        assert_eq!(
+            args,
+            vec![
+                "--locale",
+                "en",
+                "--env",
+                "staging",
+                "--tenant",
+                "acme",
+                "--team",
+                "billing",
+                "--non-interactive",
+                "env-deploy",
+                "/tmp/prepared",
+            ]
+        );
+    }
+
+    /// The setup CLI takes these as GLOBAL flags, so they must precede the
+    /// subcommand. Placing them after `env-deploy` makes clap reject them.
+    #[test]
+    fn env_deploy_argv_puts_globals_before_the_subcommand() {
+        let args = env_deploy_args(Path::new("/tmp/b"), "local", Some("acme"), None, "en");
+        let subcommand = args
+            .iter()
+            .position(|a| a == "env-deploy")
+            .expect("subcommand");
+        let tenant = args.iter().position(|a| a == "--tenant").expect("--tenant");
+        assert!(
+            tenant < subcommand,
+            "--tenant is a global setup flag and must precede `env-deploy`: {args:?}"
+        );
+    }
+
+    /// No flags given must stay byte-identical to the pre-fix invocation, so
+    /// the default path cannot regress.
+    #[test]
+    fn env_deploy_argv_omits_absent_tenant_and_team() {
+        let args = env_deploy_args(Path::new("/tmp/b"), "local", None, None, "en");
+        assert_eq!(
+            args,
+            vec![
+                "--locale",
+                "en",
+                "--env",
+                "local",
+                "--non-interactive",
+                "env-deploy",
+                "/tmp/b",
+            ],
+            "with no tenant/team the argv must be exactly what it was before"
+        );
     }
 }

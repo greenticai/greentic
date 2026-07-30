@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use directories::BaseDirs;
+// TODO: remove once greentic-types on the develop lane exports this constant.
+// Mirrors `greentic_types::DEFAULT_TENANT` (added in greentic-types 1.1.4 on main).
+const DEFAULT_TENANT: &str = "default";
 use gtc::config::GtcConfig;
 use gtc::error::{GtcError, GtcResult};
 use gtc::start_stop_parsing::{StartRequest, StopRequest};
@@ -272,7 +275,10 @@ fn run_multi_target_deployer_apply(
         target,
         cli_options.provider_pack.as_ref(),
     )?;
-    let tenant = request.tenant.clone().unwrap_or_else(|| "demo".to_string());
+    let tenant = request
+        .tenant
+        .clone()
+        .unwrap_or_else(|| DEFAULT_TENANT.to_string());
     let target_name = target.as_str().to_string();
     println!("Deployment artifact: {}", bundle_artifact.display());
     println!("Deployment bundle source: {deploy_bundle_source}");
@@ -470,7 +476,7 @@ mod tests {
     use crate::tests::fake_deployer_contract;
     #[cfg(unix)]
     use gtc::start_stop_parsing::{
-        CloudflaredModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
+        CloudflaredModeArg, GtunnelModeArg, NatsModeArg, NgrokModeArg, StartRequest, StopRequest,
     };
     use std::env;
     use std::fs;
@@ -606,6 +612,10 @@ mod tests {
             cloudflared_binary: None,
             ngrok: NgrokModeArg::Off,
             ngrok_binary: None,
+            gtunnel: GtunnelModeArg::Off,
+            gtunnel_worker_url: None,
+            gtunnel_tunnel_id: None,
+            gtunnel_explicit: false,
             runner_binary: None,
             restart: Vec::new(),
             log_dir: None,
