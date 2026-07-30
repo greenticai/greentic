@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 use super::bundle_resolution::resolve_bundle_reference;
 use super::cloud_deploy::{destroy_deployment, ensure_started_or_deployed};
+use super::env_packs_target::{destroy_cloudrun_env_pack, start_via_cloudrun_env_pack};
 use super::prepared_bundle::{prepare_bundle_for_start, print_prepared_bundle_debug};
 use super::{ChildProcessEnv, StartCliOptions, StartTarget, StopCliOptions};
 use crate::admin::ensure_admin_certs_ready;
@@ -205,6 +206,41 @@ pub(crate) fn run_start_with_bundle_ref_and_tail(
     println!("Selected deployment target: {}", target.as_str());
     println!("Bundle source: {}", bundle_ref);
     println!("Resolved bundle dir: {}", resolved.bundle_dir.display());
+    // `--target gcp` is an env-packs deploy: bind the deployer slot to
+    // `greentic.deployer.gcp-cloudrun` and let `op env up` converge it, exactly
+    // as `--target local` runs on `greentic.deployer.local-process`. No
+    // terraform, no provider pack. `aws` and `azure` keep the legacy IaC path
+    // below — there is no azure env-pack to route to.
+    //
+    // Routed BEFORE `prepare_bundle_for_start` on purpose: Cloud Run pulls the
+    // published artifact itself, so warming a local build of it is wasted work
+    // — and would make a buildable working copy a precondition for deploying a
+    // bundle someone else published. Only the declared `bundle_id` is needed,
+    // and that is metadata in the resolved dir.
+    if target == StartTarget::Gcp {
+        let env_id = resolve_env_id(request.env.as_deref());
+        return match start_via_cloudrun_env_pack(
+            bundle_ref,
+            &resolved.bundle_dir,
+            &env_id,
+            &cli_options,
+            debug,
+            locale,
+        ) {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!(
+                    "{}: {err}",
+                    t_or(
+                        locale,
+                        "gtc.start.err.deploy_failed",
+                        "failed to deploy bundle before start"
+                    )
+                );
+                1
+            }
+        };
+    }
     let prepared = match prepare_bundle_for_start(bundle_ref, &resolved, debug, locale) {
         Ok(value) => value,
         Err(err) => {
@@ -579,6 +615,27 @@ pub(crate) fn run_stop(tail: &[String], debug: bool, locale: &str) -> i32 {
                     )
                 );
                 return 2;
+            }
+            // `--target gcp` deploys through env-packs, so it must tear down
+            // through them too. `destroy_deployment` renders a Terraform
+            // destroy and hard-requires a provider pack this deployment never
+            // used — it would fail and orphan a billing Cloud Run service.
+            if target == StartTarget::Gcp {
+                let env_id = resolve_env_id(request.env.as_deref());
+                return match destroy_cloudrun_env_pack(&env_id, debug, locale) {
+                    Ok(()) => 0,
+                    Err(err) => {
+                        eprintln!(
+                            "{}: {err}",
+                            t_or(
+                                locale,
+                                "gtc.stop.err.destroy_failed",
+                                "failed to destroy deployed bundle"
+                            )
+                        );
+                        1
+                    }
+                };
             }
             match destroy_deployment(
                 bundle_ref,
