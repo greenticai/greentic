@@ -34,15 +34,25 @@ jobs:
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install coverage toolchain
+        # Without a token, binstall queries api.github.com anonymously and gets
+        # rate-limited (403 Forbidden) per runner IP. It does not fail on that:
+        # it silently falls back to building from source via `cargo install`
+        # without --locked, which cargo-nextest rejects with a deliberate
+        # compile_error!, so the job burns ~11 minutes and exits 70 looking like
+        # a Rust build break. --disable-strategies compile makes that fallback
+        # fatal at the install step instead of silent.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # rust-cache restores ~/.cargo/.crates.toml but prunes ~/.cargo/bin of
           # binstall-installed binaries, so binstall says "already installed"
           # while the binary is gone. --force sidesteps that.
-          cargo binstall -y --force cargo-llvm-cov
-          cargo binstall -y --force cargo-nextest
-          cargo binstall -y --force greentic-dev
+          cargo binstall -y --force --disable-strategies compile cargo-llvm-cov
+          cargo binstall -y --force --disable-strategies compile cargo-nextest
+          cargo binstall -y --force --disable-strategies compile greentic-dev
           command -v cargo-llvm-cov
           command -v cargo-nextest
+          command -v greentic-dev
           greentic-dev --version
 
       - name: Install llvm-tools-preview
