@@ -64,11 +64,25 @@ jobs:
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install deployer pack tooling
+        # Without a token, binstall queries api.github.com anonymously and gets
+        # rate-limited (403 Forbidden) per runner IP. It does not fail on that:
+        # it silently falls back to building the crate from source, so the step
+        # burns ~10 extra minutes with nothing in the log naming the cause. In a
+        # release workflow that means a slow, silent, non-reproducible build.
+        # --disable-strategies compile makes that fallback fatal at the install
+        # step instead of silent. Both crates publish a prebuilt
+        # x86_64-unknown-linux-gnu tarball on their GitHub releases
+        # (greentic-pack v1.1.5, greentic-flow v1.1.4 verified), so forbidding
+        # the compile strategy costs nothing on the happy path.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          cargo binstall -y greentic-pack
-          cargo binstall -y greentic-flow
+          cargo binstall -y --disable-strategies compile greentic-pack
+          cargo binstall -y --disable-strategies compile greentic-flow
+          command -v greentic-pack
+          command -v greentic-flow
 
       - name: Build and sync deployer pack
         shell: bash
