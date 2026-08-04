@@ -8,7 +8,7 @@ use directories::BaseDirs;
 use greentic_distributor_client::{
     CachePolicy, DistClient, DistOptions, ReleaseArtifactKind, ResolvePolicy,
 };
-use gtc::error::{GtcError, GtcResult};
+use gtc::error::{GtcError, GtcResult, error_chain};
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, WWW_AUTHENTICATE};
 use serde::{Deserialize, Serialize};
@@ -312,11 +312,17 @@ pub(crate) fn run_toolchain_install(
             options.phases,
             options.force,
         ) {
-            eprintln!("failed to prefetch release artifacts: {err}");
+            eprintln!(
+                "failed to prefetch release artifacts: {}",
+                error_chain(&err)
+            );
             return 1;
         }
         if let Err(err) = write_current_release_context(&ctx) {
-            eprintln!("failed to write current release context: {err}");
+            eprintln!(
+                "failed to write current release context: {}",
+                error_chain(&err)
+            );
             return 1;
         }
     }
@@ -1083,16 +1089,27 @@ fn prefetch_release_artifacts_and_write_index(
         );
         let resolved = if let Some(prefetch_ref) = mock_prefetch_source_ref(&version_ref)? {
             let source = client.parse_source(&prefetch_ref).map_err(|err| {
-                GtcError::message(format!("failed to parse {prefetch_ref}: {err}"))
+                GtcError::message(format!(
+                    "failed to parse {prefetch_ref}: {}",
+                    error_chain(&err)
+                ))
             })?;
             let descriptor = runtime
                 .block_on(client.resolve(source, ResolvePolicy))
                 .map_err(|err| {
-                    GtcError::message(format!("failed to resolve {version_ref}: {err}"))
+                    GtcError::message(format!(
+                        "failed to resolve {version_ref}: {}",
+                        error_chain(&err)
+                    ))
                 })?;
             runtime
                 .block_on(client.fetch(&descriptor, CachePolicy))
-                .map_err(|err| GtcError::message(format!("failed to fetch {version_ref}: {err}")))?
+                .map_err(|err| {
+                    GtcError::message(format!(
+                        "failed to fetch {version_ref}: {}",
+                        error_chain(&err)
+                    ))
+                })?
         } else {
             runtime
                 .block_on(client.prefetch_release_artifact(
@@ -1101,7 +1118,10 @@ fn prefetch_release_artifacts_and_write_index(
                     CachePolicy,
                 ))
                 .map_err(|err| {
-                    GtcError::message(format!("failed to prefetch {version_ref}: {err}"))
+                    GtcError::message(format!(
+                        "failed to prefetch {version_ref}: {}",
+                        error_chain(&err)
+                    ))
                 })?
         };
         let entry = client
@@ -1364,11 +1384,19 @@ fn send_ghcr_get(
         .try_clone()
         .ok_or_else(|| GtcError::message("failed to clone GHCR request"))?
         .send()
-        .map_err(|err| GtcError::message(format!("failed to fetch GHCR artifact: {err}")))?;
+        .map_err(|err| {
+            GtcError::message(format!(
+                "failed to fetch GHCR artifact: {}",
+                error_chain(&err)
+            ))
+        })?;
     if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-        return response
-            .error_for_status()
-            .map_err(|err| GtcError::message(format!("failed to fetch GHCR artifact: {err}")));
+        return response.error_for_status().map_err(|err| {
+            GtcError::message(format!(
+                "failed to fetch GHCR artifact: {}",
+                error_chain(&err)
+            ))
+        });
     }
     let Some(challenge) = response
         .headers()
@@ -1386,9 +1414,19 @@ fn send_ghcr_get(
     }
     authed
         .send()
-        .map_err(|err| GtcError::message(format!("failed to fetch GHCR artifact: {err}")))?
+        .map_err(|err| {
+            GtcError::message(format!(
+                "failed to fetch GHCR artifact: {}",
+                error_chain(&err)
+            ))
+        })?
         .error_for_status()
-        .map_err(|err| GtcError::message(format!("failed to fetch GHCR artifact: {err}")))
+        .map_err(|err| {
+            GtcError::message(format!(
+                "failed to fetch GHCR artifact: {}",
+                error_chain(&err)
+            ))
+        })
 }
 
 fn fetch_bearer_token(client: &Client, challenge: &str) -> GtcResult<String> {
@@ -1411,7 +1449,10 @@ fn fetch_bearer_token(client: &Client, challenge: &str) -> GtcResult<String> {
     }
     let response_text = request
         .send()
-        .map_err(|err| GtcError::message(format!("failed to fetch GHCR auth token: {err}")))?
+        .map_err(|err| GtcError::message(format!(
+                    "failed to fetch GHCR auth token: {}",
+                    error_chain(&err)
+                )))?
         .error_for_status()
         .map_err(|err| {
             if err.status() == Some(reqwest::StatusCode::FORBIDDEN) {
@@ -1425,7 +1466,10 @@ fn fetch_bearer_token(client: &Client, challenge: &str) -> GtcResult<String> {
                     )
                 }
             } else {
-                GtcError::message(format!("failed to fetch GHCR auth token: {err}"))
+                GtcError::message(format!(
+                    "failed to fetch GHCR auth token: {}",
+                    error_chain(&err)
+                ))
             }
         })?
         .text()
