@@ -27,6 +27,9 @@ const DEFAULT_GHCR_PREFIX: &str = "ghcr.io/greenticai/greentic-versions/gtc";
 /// Its packages pin `"latest"`, so each install resolves the newest dev
 /// publish rather than a frozen set.
 const AIRGAP_CHANNEL: &str = "airgapped";
+/// Channel whose gtc releases carry dev-lane asset names — see
+/// [`ToolchainSource::skips_self_update`].
+const DEV_CHANNEL: &str = "dev";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ToolchainManifest {
@@ -114,6 +117,30 @@ impl ToolchainSource {
     /// reached (`--airgap`, `--channel airgapped`, or `--release <r> --channel
     /// airgapped`). A local manifest is never the air-gap channel — it already
     /// suppresses self-update on its own.
+    /// Whether self-update must be skipped for this source because the
+    /// channel's gtc releases carry dev-lane asset names.
+    ///
+    /// `gtc_release_asset_url` builds `gtc-<target>.tgz`, the STABLE naming.
+    /// Both the air-gap and dev lanes publish `gtc-dev-v<version>-<target>.tgz`
+    /// instead, so a self-update there fetches a 404.
+    ///
+    /// Dev was not covered before because its channel manifest pinned a stable
+    /// gtc release (1.1.1): the URL resolved, so self-update appeared to work —
+    /// while quietly DOWNGRADING a 1.2 gtc to 1.1. Pointing the channel at a
+    /// current dev build turned that into a visible 404. Skipping is the same
+    /// answer this code already reached for air-gap, and it leaves gtc itself
+    /// to be installed from its release archive.
+    fn skips_self_update(&self) -> bool {
+        if self.targets_airgap_channel() {
+            return true;
+        }
+        match self {
+            Self::Channel(channel) => channel == DEV_CHANNEL,
+            Self::Release { channel, .. } => channel == DEV_CHANNEL,
+            Self::LocalManifest(_) => false,
+        }
+    }
+
     fn targets_airgap_channel(&self) -> bool {
         match self {
             Self::Channel(channel) => channel == AIRGAP_CHANNEL,
@@ -192,8 +219,7 @@ impl ToolchainInstallOptions {
         // attempt there is guaranteed to fail: the dev lane's release assets
         // are named `gtc-dev-v<version>-<target>.tgz`, which
         // `gtc_release_asset_url` does not build.
-        let skip_self_update =
-            matches.get_flag("skip-self-update") || source.targets_airgap_channel();
+        let skip_self_update = matches.get_flag("skip-self-update") || source.skips_self_update();
 
         Ok(Self {
             source,
@@ -2424,12 +2450,15 @@ mod tests {
 
         let channel_matches = cmd().try_get_matches_from(["install"]).expect("matches");
         let channel_options =
-            ToolchainInstallOptions::from_matches(&channel_matches, "dev").expect("options");
+            ToolchainInstallOptions::from_matches(&channel_matches, "stable").expect("options");
         assert!(matches!(
             channel_options.source,
-            ToolchainSource::Channel(ref channel) if channel == "dev"
+            ToolchainSource::Channel(ref channel) if channel == "stable"
         ));
-        // The default channel must NOT pick up the air-gap self-update skip.
+        // A channel whose gtc releases carry STABLE asset names must not pick
+        // up the self-update skip. This used `dev` as the stand-in until dev
+        // started skipping in its own right — see
+        // `the_dev_channel_skips_self_update_like_airgapped`.
         assert!(!channel_options.skip_self_update);
 
         // `--airgap` resolves the airgapped channel even though the caller
@@ -2453,6 +2482,32 @@ mod tests {
         let explicit_options =
             ToolchainInstallOptions::from_matches(&explicit_matches, "stable").expect("options");
         assert!(explicit_options.skip_self_update);
+    }
+
+    /// The dev lane publishes gtc as `gtc-dev-v<version>-<target>.tgz`, which
+    /// `gtc_release_asset_url` cannot build — so a self-update on this channel
+    /// fetches a 404. The airgapped channel already skips for exactly this
+    /// reason; dev has the same property.
+    ///
+    /// It went unnoticed while the dev channel manifest pinned a STABLE gtc
+    /// release (1.1.1): that URL resolved, so self-update "worked" — by
+    /// downgrading. Pointing the channel at a current dev build made the 404
+    /// visible.
+    #[test]
+    fn the_dev_channel_skips_self_update_like_airgapped() {
+        assert!(ToolchainSource::Channel("dev".to_string()).skips_self_update());
+        assert!(
+            ToolchainSource::Release {
+                release: "1.2.32336074206".to_string(),
+                channel: "dev".to_string(),
+            }
+            .skips_self_update()
+        );
+        assert!(ToolchainSource::Channel(AIRGAP_CHANNEL.to_string()).skips_self_update());
+
+        // Lanes whose releases carry stable-named assets must keep updating.
+        assert!(!ToolchainSource::Channel("stable".to_string()).skips_self_update());
+        assert!(!ToolchainSource::Channel("latest".to_string()).skips_self_update());
     }
 
     #[test]
