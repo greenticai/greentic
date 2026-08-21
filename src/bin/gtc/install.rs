@@ -56,12 +56,6 @@ pub(super) fn run_install(
         if toolchain_status != 0 {
             return toolchain_status;
         }
-        if dry_run {
-            return 0;
-        }
-    }
-    if dry_run {
-        return 0;
     }
 
     let tenant = sub_matches
@@ -78,6 +72,20 @@ pub(super) fn run_install(
     };
 
     if !phases.tenant {
+        return 0;
+    }
+
+    // A dry run used to `return 0` above, BEFORE this block — so `--dry-run`
+    // reported success while exercising none of the tenant path, and
+    // `--install-tenant-only --dry-run` printed nothing whatsoever. Anyone
+    // validating a tenant manifest that way concluded it was fine. Describe the
+    // hand-off instead; the key is deliberately not resolved or printed.
+    if dry_run {
+        println!(
+            "Dry run: would install tenant-authorized artifacts for `{tenant}` via `{DEV_BIN} \
+             install --tenant {tenant} --token env:{}`",
+            tenant_env_var_name(&tenant)
+        );
         return 0;
     }
 
