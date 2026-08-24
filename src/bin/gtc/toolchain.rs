@@ -44,6 +44,28 @@ pub(crate) struct ToolchainManifest {
     pub extension_packs: Option<Vec<ToolchainArtifactRef>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ToolchainArtifactRef>>,
+    /// The gtc binary this manifest pins, named per target by the publisher.
+    ///
+    /// Optional so older manifests keep working: absent means fall back to
+    /// reconstructing the asset name from the version, which is what this code
+    /// did unconditionally and is exactly how it broke. `gtc_release_asset_url`
+    /// builds the STABLE naming (`gtc-<target>.tgz`) while the dev lane
+    /// publishes `gtc-dev-v<version>-<target>.tgz`, so every dev self-update
+    /// fetched a 404 — one convention hardcoded in the consumer, two publishers
+    /// using different ones. A name the publisher states cannot drift from the
+    /// name the publisher used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gtc: Option<Vec<GtcArtifactRef>>,
+}
+
+/// One gtc release artifact, as named by whoever published it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct GtcArtifactRef {
+    pub target: String,
+    pub url: String,
+    /// Hex sha256 of the archive, WITHOUT a `sha256:` prefix — the same shape
+    /// the release checksums manifest carries, so both paths verify alike.
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -118,23 +140,27 @@ impl ToolchainSource {
     /// reached (`--airgap`, `--channel airgapped`, or `--release <r> --channel
     /// airgapped`). A local manifest is never the air-gap channel — it already
     /// suppresses self-update on its own.
-    /// Whether self-update must be skipped for this source because the
-    /// channel's gtc releases carry dev-lane asset names.
-    ///
-    /// `gtc_release_asset_url` builds `gtc-<target>.tgz`, the STABLE naming.
-    /// Both the air-gap and dev lanes publish `gtc-dev-v<version>-<target>.tgz`
-    /// instead, so a self-update there fetches a 404.
-    ///
-    /// Dev was not covered before because its channel manifest pinned a stable
-    /// gtc release (1.1.1): the URL resolved, so self-update appeared to work —
-    /// while quietly DOWNGRADING a 1.2 gtc to 1.1. Pointing the channel at a
-    /// current dev build turned that into a visible 404. Skipping is the same
-    /// answer this code already reached for air-gap, and it leaves gtc itself
-    /// to be installed from its release archive.
+    /// Whether self-update must be skipped for this source no matter what the
+    /// manifest says. Air-gap only: there is no reachable release to fetch.
     fn skips_self_update(&self) -> bool {
-        if self.targets_airgap_channel() {
-            return true;
-        }
+        self.targets_airgap_channel()
+    }
+
+    /// Whether this source may only self-update from an artifact the manifest
+    /// NAMES, never from a reconstructed asset name.
+    ///
+    /// `gtc_release_asset_url` builds `gtc-<target>.tgz`, the STABLE naming,
+    /// while the dev lane publishes `gtc-dev-v<version>-<target>.tgz` — so a
+    /// reconstructed URL there fetches a 404. This used to be a blanket
+    /// channel-level skip, which fixed the 404 by giving up: gtc could never
+    /// update itself on dev at all, and the guessing that caused it stayed in
+    /// place for the next lane to trip over.
+    ///
+    /// Keyed on the manifest instead, the behaviour for a manifest that names
+    /// nothing is UNCHANGED (still skipped, same message shape), and a manifest
+    /// that names its artifact makes self-update work — with no convention left
+    /// for the publisher and the consumer to disagree about.
+    fn requires_named_artifact(&self) -> bool {
         match self {
             Self::Channel(channel) => channel == DEV_CHANNEL,
             Self::Release { channel, .. } => channel == DEV_CHANNEL,
@@ -295,11 +321,25 @@ pub(crate) fn run_toolchain_install_detailed(
             &options.source,
             env::var_os("GTC_TOOLCHAIN_MANIFEST_PATH").is_some(),
         ) {
-        match try_self_update(&resolved, options.force, options.dry_run, debug, locale) {
-            Ok(_) => false,
-            Err(err) => {
-                eprintln!("error: gtc self-update failed: {err}");
-                true
+        let target = env!("GTC_TARGET_TRIPLE");
+        if options.source.requires_named_artifact()
+            && manifest_gtc_artifact(&resolved.manifest, target).is_none()
+        {
+            // Not a failure: this channel's asset names cannot be reconstructed,
+            // and this manifest does not state them. Install gtc from its
+            // release archive until a manifest carrying `gtc` is published.
+            println!(
+                "this channel's gtc releases are not named by convention and the manifest states \
+                 no artifact for {target}; skipping self-update"
+            );
+            false
+        } else {
+            match try_self_update(&resolved, options.force, options.dry_run, debug, locale) {
+                Ok(_) => false,
+                Err(err) => {
+                    eprintln!("error: gtc self-update failed: {err}");
+                    true
+                }
             }
         }
     } else {
@@ -1638,6 +1678,18 @@ struct BearerTokenResponse {
 // ---------------------------------------------------------------------------
 
 /// Build the URL for a gtc release tarball.
+/// The artifact this manifest names for `target`, if it names one.
+pub(crate) fn manifest_gtc_artifact<'a>(
+    manifest: &'a ToolchainManifest,
+    target: &str,
+) -> Option<&'a GtcArtifactRef> {
+    manifest
+        .gtc
+        .as_deref()?
+        .iter()
+        .find(|artifact| artifact.target == target)
+}
+
 pub(crate) fn gtc_release_asset_url(version: &str, target: &str) -> String {
     format!("https://github.com/greenticai/greentic/releases/download/v{version}/gtc-{target}.tgz")
 }
@@ -1806,7 +1858,13 @@ pub(crate) fn try_self_update(
 
     #[cfg(not(windows))]
     {
-        let tarball_url = gtc_release_asset_url(version, target);
+        // Prefer the artifact the manifest NAMES; fall back to reconstructing
+        // the stable-lane asset name only when it names none.
+        let named = manifest_gtc_artifact(&resolved.manifest, target);
+        let tarball_url = match named {
+            Some(artifact) => artifact.url.clone(),
+            None => gtc_release_asset_url(version, target),
+        };
 
         if dry_run {
             println!("would self-update gtc {running} -> {version} from {tarball_url}");
@@ -1823,22 +1881,30 @@ pub(crate) fn try_self_update(
             "application/octet-stream",
         )?;
 
-        // Fetch checksums manifest and verify tarball integrity in memory
-        // (sha256_bytes lives in this module — no need to round-trip via disk).
-        let asset_filename = format!("gtc-{target}.tgz");
-        let checksums_url = gtc_checksums_url(version);
-        if debug {
-            eprintln!("self-update: fetching checksums from {checksums_url}");
-        }
-        let checksums_bytes =
-            super::install::fetch_https_bytes(&checksums_url, "", locale, "text/plain")?;
-        let checksums_txt = String::from_utf8_lossy(&checksums_bytes);
-        let expected_hash =
-            parse_checksum_for_asset(&checksums_txt, &asset_filename).ok_or_else(|| {
-                GtcError::message(format!(
-                    "no checksum found for {asset_filename} in release checksums"
-                ))
-            })?;
+        // Verify integrity in memory (sha256_bytes lives in this module — no need
+        // to round-trip via disk). A named artifact carries its own digest; only
+        // the reconstructed path has to go and find a checksums manifest, which
+        // is a second convention that misses on the dev lane for the same reason
+        // the asset name does — those releases ship per-asset `.sha256` sidecars
+        // and no combined file at all.
+        let expected_hash = match named {
+            Some(artifact) => artifact.sha256.clone(),
+            None => {
+                let asset_filename = format!("gtc-{target}.tgz");
+                let checksums_url = gtc_checksums_url(version);
+                if debug {
+                    eprintln!("self-update: fetching checksums from {checksums_url}");
+                }
+                let checksums_bytes =
+                    super::install::fetch_https_bytes(&checksums_url, "", locale, "text/plain")?;
+                let checksums_txt = String::from_utf8_lossy(&checksums_bytes);
+                parse_checksum_for_asset(&checksums_txt, &asset_filename).ok_or_else(|| {
+                    GtcError::message(format!(
+                        "no checksum found for {asset_filename} in release checksums"
+                    ))
+                })?
+            }
+        };
         let actual_hash = sha256_bytes(&tarball_bytes);
         let expected_prefixed = format!("sha256:{expected_hash}");
         if actual_hash != expected_prefixed {
@@ -2571,20 +2637,57 @@ mod tests {
     /// downgrading. Pointing the channel at a current dev build made the 404
     /// visible.
     #[test]
-    fn the_dev_channel_skips_self_update_like_airgapped() {
-        assert!(ToolchainSource::Channel("dev".to_string()).skips_self_update());
+    fn only_airgap_skips_self_update_unconditionally() {
+        // Air-gap has no reachable release at all, so no manifest can change it.
+        assert!(ToolchainSource::Channel(AIRGAP_CHANNEL.to_string()).skips_self_update());
+
+        // Dev no longer blanket-skips. It is gated on the manifest naming an
+        // artifact instead — same outcome while none does, but it stops being a
+        // permanent surrender of self-update on that lane.
+        assert!(!ToolchainSource::Channel("dev".to_string()).skips_self_update());
+        assert!(ToolchainSource::Channel("dev".to_string()).requires_named_artifact());
         assert!(
             ToolchainSource::Release {
                 release: "1.2.32336074206".to_string(),
                 channel: "dev".to_string(),
             }
-            .skips_self_update()
+            .requires_named_artifact()
         );
-        assert!(ToolchainSource::Channel(AIRGAP_CHANNEL.to_string()).skips_self_update());
 
-        // Lanes whose releases carry stable-named assets must keep updating.
+        // Lanes whose releases carry stable-named assets reconstruct as before.
         assert!(!ToolchainSource::Channel("stable".to_string()).skips_self_update());
-        assert!(!ToolchainSource::Channel("latest".to_string()).skips_self_update());
+        assert!(!ToolchainSource::Channel("stable".to_string()).requires_named_artifact());
+        assert!(!ToolchainSource::Channel("latest".to_string()).requires_named_artifact());
+    }
+
+    #[test]
+    fn a_named_artifact_is_found_by_target_and_missing_otherwise() {
+        let json = r#"{"schema":"s","toolchain":"gtc","version":"1.2.3","packages":[]}"#;
+        let mut manifest: ToolchainManifest = serde_json::from_str(json).expect("decode");
+        assert!(manifest_gtc_artifact(&manifest, "x86_64-unknown-linux-gnu").is_none());
+
+        manifest.gtc = Some(vec![GtcArtifactRef {
+            target: "x86_64-unknown-linux-gnu".to_string(),
+            url: "https://github.com/greenticai/greentic/releases/download/v1.2.3/gtc-dev-v1.2.3-x86_64-unknown-linux-gnu.tgz".to_string(),
+            sha256: "a".repeat(64),
+        }]);
+
+        let hit = manifest_gtc_artifact(&manifest, "x86_64-unknown-linux-gnu").expect("named");
+        // The whole point: the URL is the publisher's, not one we rebuilt.
+        assert!(
+            hit.url
+                .contains("gtc-dev-v1.2.3-x86_64-unknown-linux-gnu.tgz")
+        );
+        assert!(manifest_gtc_artifact(&manifest, "aarch64-apple-darwin").is_none());
+    }
+
+    #[test]
+    fn a_manifest_without_the_gtc_field_still_decodes() {
+        // Every manifest published so far. Absent must stay absent, not error.
+        let json = r#"{"schema":"s","toolchain":"gtc","version":"1.1.13","packages":[]}"#;
+        let manifest: ToolchainManifest = serde_json::from_str(json).expect("decode");
+        assert!(manifest.gtc.is_none());
+        assert!(manifest_gtc_artifact(&manifest, "x86_64-unknown-linux-gnu").is_none());
     }
 
     #[test]
