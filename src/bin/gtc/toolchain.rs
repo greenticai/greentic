@@ -1973,6 +1973,7 @@ mod tests {
             ],
             extension_packs: None,
             components: None,
+            gtc: None,
         }
     }
 
