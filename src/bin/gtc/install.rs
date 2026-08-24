@@ -141,7 +141,8 @@ pub(super) fn run_install(
     let tenant_args = vec![
         "install".to_string(),
         "--tenant".to_string(),
-        tenant,
+        // Cloned: the store-asset step below needs the tenant too.
+        tenant.clone(),
         "--token".to_string(),
         format!("env:{env_name}"),
     ];
