@@ -1,3 +1,4 @@
+use semver::Version;
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
@@ -231,16 +232,48 @@ impl ToolchainInstallOptions {
     }
 }
 
+/// The result of a toolchain install, carrying WHICH kind of failure occurred.
+///
+/// `run_install` needs this because the toolchain phase and the tenant phase are
+/// only *conditionally* independent: a companion binary that failed to install
+/// is a good reason not to go on, but gtc failing to update ITSELF is not — and
+/// collapsing both into a bare `i32` meant a self-update 404 cancelled a tenant
+/// install that had nothing to do with it.
+pub(crate) struct ToolchainInstallOutcome {
+    pub status: i32,
+    /// True only when every other phase succeeded and gtc's own self-update was
+    /// the single failure.
+    pub self_update_only_failure: bool,
+}
+
+impl From<i32> for ToolchainInstallOutcome {
+    fn from(status: i32) -> Self {
+        Self {
+            status,
+            self_update_only_failure: false,
+        }
+    }
+}
+
+/// Thin `i32` wrapper for callers that do not distinguish the failure kinds.
 pub(crate) fn run_toolchain_install(
     options: ToolchainInstallOptions,
     debug: bool,
     locale: &str,
 ) -> i32 {
+    run_toolchain_install_detailed(options, debug, locale).status
+}
+
+pub(crate) fn run_toolchain_install_detailed(
+    options: ToolchainInstallOptions,
+    debug: bool,
+    locale: &str,
+) -> ToolchainInstallOutcome {
     let resolved = match resolve_toolchain_manifest(&options.source, debug, locale) {
         Ok(resolved) => resolved,
         Err(err) => {
             eprintln!("{}: {err}", t(locale, "gtc.err.invalid_toolchain_manifest"));
-            return 1;
+            return 1.into();
         }
     };
 
@@ -282,7 +315,7 @@ pub(crate) fn run_toolchain_install(
         && resolved.digest.is_some()
     {
         println!("{}", t(locale, "gtc.install.toolchain.up_to_date"));
-        return 0;
+        return 0.into();
     }
 
     if options.dry_run {
@@ -293,7 +326,7 @@ pub(crate) fn run_toolchain_install(
                     Ok(version) => version,
                     Err(err) => {
                         eprintln!("{err}");
-                        return 1;
+                        return 1.into();
                     }
                 };
                 for bin in &package.bins {
@@ -312,13 +345,13 @@ pub(crate) fn run_toolchain_install(
                 println!("prefetch component {}:{}", item.id, item.version);
             }
         }
-        return 0;
+        return 0.into();
     }
 
     if options.phases.binaries {
         let install_status = install_toolchain_manifest(&resolved, options.force, debug, locale);
         if install_status != 0 {
-            return install_status;
+            return install_status.into();
         }
     }
 
@@ -326,7 +359,7 @@ pub(crate) fn run_toolchain_install(
         Ok(ctx) => ctx,
         Err(err) => {
             eprintln!("{err}");
-            return 1;
+            return 1.into();
         }
     };
     if options.phases.any_artifacts()
@@ -342,14 +375,14 @@ pub(crate) fn run_toolchain_install(
                 "failed to prefetch release artifacts: {}",
                 error_chain(&err)
             );
-            return 1;
+            return 1.into();
         }
         if let Err(err) = write_current_release_context(&ctx) {
             eprintln!(
                 "failed to write current release context: {}",
                 error_chain(&err)
             );
-            return 1;
+            return 1.into();
         }
     }
 
@@ -360,7 +393,7 @@ pub(crate) fn run_toolchain_install(
                 "{}: {err}",
                 t(locale, "gtc.install.toolchain.state_write_failed")
             );
-            return 1;
+            return 1.into();
         }
     }
 
@@ -372,10 +405,13 @@ pub(crate) fn run_toolchain_install(
             resolved.manifest.version,
             env!("CARGO_PKG_VERSION"),
         );
-        return 1;
+        return ToolchainInstallOutcome {
+            status: 1,
+            self_update_only_failure: true,
+        };
     }
 
-    0
+    0.into()
 }
 
 pub(crate) fn install_toolchain_manifest(
@@ -1638,8 +1674,39 @@ pub(crate) fn parse_checksum_for_asset(manifest_txt: &str, asset_filename: &str)
 }
 
 /// Decide whether a self-update is needed.
+///
+/// A manifest version strictly OLDER than the running gtc is refused rather
+/// than applied. This was a bare string inequality, which made a backwards
+/// manifest a silent DOWNGRADE: the dev channel pinned a stable gtc 1.1.1 while
+/// a 1.2 was running, `running != manifest_version` was true, and gtc replaced
+/// itself with the older build and reported success. Nothing said so. It went
+/// unnoticed until the channel moved to a current dev build and the same code
+/// path began 404ing instead — the visible symptom of a bug that had been
+/// quietly doing the wrong thing for far longer.
+///
+/// `force` still overrides, so a deliberate rollback remains possible.
+///
+/// A version either side cannot parse falls back to the old inequality: we
+/// cannot reason about the ordering, and refusing an update on that basis would
+/// strand whoever is running it.
 pub(crate) fn should_self_update(running: &str, manifest_version: &str, force: bool) -> bool {
-    force || running != manifest_version
+    if force {
+        return true;
+    }
+    if running == manifest_version {
+        return false;
+    }
+    !is_self_update_downgrade(running, manifest_version)
+}
+
+/// Whether moving to `manifest_version` would move gtc BACKWARDS.
+///
+/// False whenever the comparison cannot be made — see `should_self_update`.
+pub(crate) fn is_self_update_downgrade(running: &str, manifest_version: &str) -> bool {
+    match (Version::parse(running), Version::parse(manifest_version)) {
+        (Ok(running), Ok(manifest)) => manifest < running,
+        _ => false,
+    }
 }
 
 /// Whether self-update applies to this install/update at all. It runs ONLY for
@@ -1717,7 +1784,17 @@ pub(crate) fn try_self_update(
     let version = &resolved.manifest.version;
 
     if !should_self_update(running, version, force) {
-        println!("gtc {running} is already current; skipping self-update");
+        if is_self_update_downgrade(running, version) {
+            // Not "already current" — saying that here would describe a refusal
+            // as a no-op and hide the thing worth knowing: the channel points
+            // somewhere older than what is installed.
+            println!(
+                "gtc {running} is newer than the {version} this channel pins; refusing to \
+                 self-update backwards (pass --force to override)"
+            );
+        } else {
+            println!("gtc {running} is already current; skipping self-update");
+        }
         return Ok(false);
     }
 
@@ -2679,6 +2756,34 @@ abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  gtc-x86_64-unk
     #[test]
     fn should_self_update_returns_true_when_force_on_equal() {
         assert!(should_self_update("1.1.0", "1.1.0", true));
+    }
+
+    #[test]
+    fn should_self_update_refuses_a_downgrade() {
+        // The exact shape that shipped: a dev channel pinning stable 1.1.1
+        // while a 1.2 dev build is running. The old string inequality said
+        // "update", and gtc replaced itself with the older binary.
+        assert!(!should_self_update("1.2.32336074206", "1.1.1", false));
+        assert!(!should_self_update("1.2.0", "1.1.13", false));
+    }
+
+    #[test]
+    fn should_self_update_still_moves_forward() {
+        assert!(should_self_update("1.2.0", "1.2.32336074206", false));
+        assert!(should_self_update("1.1.13", "1.2.0", false));
+    }
+
+    #[test]
+    fn force_overrides_a_downgrade_so_rollback_stays_possible() {
+        assert!(should_self_update("1.2.0", "1.1.13", true));
+    }
+
+    #[test]
+    fn an_unparseable_version_falls_back_to_the_old_inequality() {
+        // Neither ordering is knowable, so refusing would strand the caller.
+        assert!(should_self_update("not-a-version", "1.1.0", false));
+        assert!(should_self_update("1.1.0", "not-a-version", false));
+        assert!(!is_self_update_downgrade("not-a-version", "1.1.0"));
     }
 
     #[test]
