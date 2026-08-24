@@ -1744,6 +1744,7 @@ dependencies = [
  "rcgen",
  "reqwest 0.13.4",
  "rpassword",
+ "semver",
  "serde",
  "serde_json",
  "serde_yaml_bw",
