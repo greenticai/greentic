@@ -22,7 +22,9 @@ use super::archive::{
 use super::deploy::ChildProcessEnv;
 use super::i18n_support::{t, tf};
 use super::process::{passthrough_with_env, resolve_cargo_bin_dir, run_binary_capture};
-use super::toolchain::{ToolchainInstallOptions, ToolchainSource, run_toolchain_install};
+use super::toolchain::{
+    ToolchainInstallOptions, ToolchainSource, run_toolchain_install, run_toolchain_install_detailed,
+};
 use super::{DEPLOYER_BIN, DEV_BIN, sha256_file};
 
 pub(super) fn run_install(
@@ -45,16 +47,19 @@ pub(super) fn run_install(
 
     let dry_run = sub_matches.get_flag("dry-run");
 
-    // The toolchain phase and the tenant phase are INDEPENDENT, and a failure in
-    // the first must not cancel the second. It used to `return` here, which is
-    // how a gtc self-update 404 — a fault in gtc maintaining ITSELF — silently
-    // took the entire tenant install with it: thirteen companion binaries
-    // installed, then the command exited having fetched no tenant artifact at
-    // all, with nothing in the output naming the tenant. The toolchain phase
-    // even says "installed on a best-effort basis" while returning non-zero, so
-    // treating that as fatal to unrelated work contradicted its own message.
+    // The toolchain phase and the tenant phase are independent ONLY for a
+    // self-update failure, and the distinction matters in both directions.
     //
-    // The failure is still reported, and still decides the exit code below.
+    // A companion binary that failed to install is a real reason not to go on,
+    // and `install_skips_tenant_when_public_install_fails` pins that. But gtc
+    // failing to update ITSELF has nothing to do with the tenant's artifacts,
+    // and returning on it meant a self-update 404 silently cancelled the whole
+    // tenant install: thirteen companions installed, then the command exited
+    // having fetched nothing, with the tenant named nowhere in the output. The
+    // toolchain phase even reports that work as done "on a best-effort basis"
+    // while returning non-zero.
+    //
+    // The failure is still reported and still decides the exit code below.
     let mut toolchain_status = 0;
     if phases.binaries || phases.packs || phases.components {
         let options = match ToolchainInstallOptions::from_matches(sub_matches, default_channel) {
@@ -64,11 +69,15 @@ pub(super) fn run_install(
                 return 2;
             }
         };
-        toolchain_status = run_toolchain_install(options, debug, locale);
+        let outcome = run_toolchain_install_detailed(options, debug, locale);
+        toolchain_status = outcome.status;
         if toolchain_status != 0 {
+            if !outcome.self_update_only_failure {
+                return toolchain_status;
+            }
             eprintln!(
-                "note: the toolchain phase failed (exit {toolchain_status}); continuing to the \
-                 tenant install. The final exit code still reports this failure."
+                "note: gtc could not update itself, but the tenant install does not depend on \
+                 that; continuing. The final exit code still reports the failure."
             );
         }
     }

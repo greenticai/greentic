@@ -232,16 +232,48 @@ impl ToolchainInstallOptions {
     }
 }
 
+/// The result of a toolchain install, carrying WHICH kind of failure occurred.
+///
+/// `run_install` needs this because the toolchain phase and the tenant phase are
+/// only *conditionally* independent: a companion binary that failed to install
+/// is a good reason not to go on, but gtc failing to update ITSELF is not — and
+/// collapsing both into a bare `i32` meant a self-update 404 cancelled a tenant
+/// install that had nothing to do with it.
+pub(crate) struct ToolchainInstallOutcome {
+    pub status: i32,
+    /// True only when every other phase succeeded and gtc's own self-update was
+    /// the single failure.
+    pub self_update_only_failure: bool,
+}
+
+impl From<i32> for ToolchainInstallOutcome {
+    fn from(status: i32) -> Self {
+        Self {
+            status,
+            self_update_only_failure: false,
+        }
+    }
+}
+
+/// Thin `i32` wrapper for callers that do not distinguish the failure kinds.
 pub(crate) fn run_toolchain_install(
     options: ToolchainInstallOptions,
     debug: bool,
     locale: &str,
 ) -> i32 {
+    run_toolchain_install_detailed(options, debug, locale).status
+}
+
+pub(crate) fn run_toolchain_install_detailed(
+    options: ToolchainInstallOptions,
+    debug: bool,
+    locale: &str,
+) -> ToolchainInstallOutcome {
     let resolved = match resolve_toolchain_manifest(&options.source, debug, locale) {
         Ok(resolved) => resolved,
         Err(err) => {
             eprintln!("{}: {err}", t(locale, "gtc.err.invalid_toolchain_manifest"));
-            return 1;
+            return 1.into();
         }
     };
 
@@ -283,7 +315,7 @@ pub(crate) fn run_toolchain_install(
         && resolved.digest.is_some()
     {
         println!("{}", t(locale, "gtc.install.toolchain.up_to_date"));
-        return 0;
+        return 0.into();
     }
 
     if options.dry_run {
@@ -294,7 +326,7 @@ pub(crate) fn run_toolchain_install(
                     Ok(version) => version,
                     Err(err) => {
                         eprintln!("{err}");
-                        return 1;
+                        return 1.into();
                     }
                 };
                 for bin in &package.bins {
@@ -313,13 +345,13 @@ pub(crate) fn run_toolchain_install(
                 println!("prefetch component {}:{}", item.id, item.version);
             }
         }
-        return 0;
+        return 0.into();
     }
 
     if options.phases.binaries {
         let install_status = install_toolchain_manifest(&resolved, options.force, debug, locale);
         if install_status != 0 {
-            return install_status;
+            return install_status.into();
         }
     }
 
@@ -327,7 +359,7 @@ pub(crate) fn run_toolchain_install(
         Ok(ctx) => ctx,
         Err(err) => {
             eprintln!("{err}");
-            return 1;
+            return 1.into();
         }
     };
     if options.phases.any_artifacts()
@@ -343,14 +375,14 @@ pub(crate) fn run_toolchain_install(
                 "failed to prefetch release artifacts: {}",
                 error_chain(&err)
             );
-            return 1;
+            return 1.into();
         }
         if let Err(err) = write_current_release_context(&ctx) {
             eprintln!(
                 "failed to write current release context: {}",
                 error_chain(&err)
             );
-            return 1;
+            return 1.into();
         }
     }
 
@@ -361,7 +393,7 @@ pub(crate) fn run_toolchain_install(
                 "{}: {err}",
                 t(locale, "gtc.install.toolchain.state_write_failed")
             );
-            return 1;
+            return 1.into();
         }
     }
 
@@ -373,10 +405,13 @@ pub(crate) fn run_toolchain_install(
             resolved.manifest.version,
             env!("CARGO_PKG_VERSION"),
         );
-        return 1;
+        return ToolchainInstallOutcome {
+            status: 1,
+            self_update_only_failure: true,
+        };
     }
 
-    0
+    0.into()
 }
 
 pub(crate) fn install_toolchain_manifest(
