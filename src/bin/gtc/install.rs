@@ -44,6 +44,18 @@ pub(super) fn run_install(
     }
 
     let dry_run = sub_matches.get_flag("dry-run");
+
+    // The toolchain phase and the tenant phase are INDEPENDENT, and a failure in
+    // the first must not cancel the second. It used to `return` here, which is
+    // how a gtc self-update 404 — a fault in gtc maintaining ITSELF — silently
+    // took the entire tenant install with it: thirteen companion binaries
+    // installed, then the command exited having fetched no tenant artifact at
+    // all, with nothing in the output naming the tenant. The toolchain phase
+    // even says "installed on a best-effort basis" while returning non-zero, so
+    // treating that as fatal to unrelated work contradicted its own message.
+    //
+    // The failure is still reported, and still decides the exit code below.
+    let mut toolchain_status = 0;
     if phases.binaries || phases.packs || phases.components {
         let options = match ToolchainInstallOptions::from_matches(sub_matches, default_channel) {
             Ok(options) => options,
@@ -52,9 +64,12 @@ pub(super) fn run_install(
                 return 2;
             }
         };
-        let toolchain_status = run_toolchain_install(options, debug, locale);
+        toolchain_status = run_toolchain_install(options, debug, locale);
         if toolchain_status != 0 {
-            return toolchain_status;
+            eprintln!(
+                "note: the toolchain phase failed (exit {toolchain_status}); continuing to the \
+                 tenant install. The final exit code still reports this failure."
+            );
         }
     }
 
@@ -68,11 +83,11 @@ pub(super) fn run_install(
             eprintln!("--install-tenant-only requires --tenant <TENANT>");
             return 2;
         }
-        return 0;
+        return toolchain_status;
     };
 
     if !phases.tenant {
-        return 0;
+        return toolchain_status;
     }
 
     // A dry run used to `return 0` above, BEFORE this block — so `--dry-run`
@@ -86,7 +101,7 @@ pub(super) fn run_install(
              install --tenant {tenant} --token env:{}`",
             tenant_env_var_name(&tenant)
         );
-        return 0;
+        return toolchain_status;
     }
 
     println!(
@@ -118,7 +133,15 @@ pub(super) fn run_install(
         "--token".to_string(),
         format!("env:{env_name}"),
     ];
-    passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env)
+    let tenant_status = passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env);
+
+    // The tenant failure is the more actionable of the two, so it wins the exit
+    // code; a toolchain failure still surfaces when the tenant phase succeeded.
+    if tenant_status != 0 {
+        tenant_status
+    } else {
+        toolchain_status
+    }
 }
 
 pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
