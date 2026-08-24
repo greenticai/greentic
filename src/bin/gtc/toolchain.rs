@@ -1773,6 +1773,76 @@ fn self_update_applies(source: &ToolchainSource, manifest_path_override: bool) -
 
 /// Atomically replace `current_exe` with `new_bytes`, keeping a `.prev`
 /// backup of the old binary.
+/// Locate the gtc executable inside an extracted release archive.
+///
+/// Both published layouts are covered without naming either:
+///
+/// ```text
+/// gtc-<target>/gtc                       (stable)
+/// gtc-dev-v<version>-<target>/gtc-dev    (dev)
+/// ```
+///
+/// A candidate is a regular file called `gtc` or `gtc-<something>` that is not
+/// one of the documents shipped beside it. Ambiguity is an error rather than a
+/// guess: picking the wrong file here installs it as gtc.
+fn find_extracted_gtc_binary(root: &Path) -> GtcResult<PathBuf> {
+    fn looks_like_the_binary(name: &str) -> bool {
+        if !(name == "gtc" || name.starts_with("gtc-")) {
+            return false;
+        }
+        // Everything shipped alongside it carries an extension; the binary does
+        // not. Checked explicitly so a future sibling cannot be mistaken for it.
+        !name.contains('.')
+    }
+
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir)
+            .map_err(|err| GtcError::io(format!("failed to read {}", dir.display()), err))?;
+        for entry in entries {
+            let entry = entry
+                .map_err(|err| GtcError::io(format!("failed to read {}", dir.display()), err))?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(looks_like_the_binary)
+            {
+                found.push(path);
+            }
+        }
+    }
+
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(GtcError::invalid_data(
+            "self-update archive",
+            format!("no gtc binary found under {}", root.display()),
+        )),
+        _ => {
+            found.sort();
+            Err(GtcError::invalid_data(
+                "self-update archive",
+                format!(
+                    "expected one gtc binary under {}, found {}: {}",
+                    root.display(),
+                    found.len(),
+                    found
+                        .iter()
+                        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ))
+        }
+    }
+}
+
 pub(crate) fn swap_running_binary(current_exe: &Path, new_bytes: &[u8]) -> GtcResult<()> {
     use std::io::Write;
 
@@ -1919,8 +1989,17 @@ pub(crate) fn try_self_update(
             .map_err(|err| GtcError::io("failed to create self-update extract directory", err))?;
         super::archive::extract_targz_bytes(&tarball_bytes, extract_dir.path())?;
 
-        // Read the inner binary.
-        let inner_binary_path = extract_dir.path().join(format!("gtc-{target}")).join("gtc");
+        // Find the inner binary rather than rebuilding its path.
+        //
+        // This was `gtc-{target}/gtc`, the stable layout — and the dev lane
+        // ships `gtc-dev-v<version>-<target>/gtc-dev`, differing in BOTH the
+        // directory and the file name. Same mistake as the asset name one level
+        // up: a convention hardcoded in the consumer while two publishers use
+        // different ones. Fixing the download alone left self-update failing
+        // here instead, one step later and just as quietly — a failed
+        // self-update also skips the installed-toolchain write, so the machine
+        // keeps reporting whatever release it recorded last.
+        let inner_binary_path = find_extracted_gtc_binary(extract_dir.path())?;
         let binary_bytes = fs::read(&inner_binary_path).map_err(|err| {
             GtcError::io(
                 format!(
@@ -2888,6 +2967,68 @@ abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  gtc-x86_64-unk
         assert!(should_self_update("not-a-version", "1.1.0", false));
         assert!(should_self_update("1.1.0", "not-a-version", false));
         assert!(!is_self_update_downgrade("not-a-version", "1.1.0"));
+    }
+
+    fn lay_out(root: &Path, dir: &str, files: &[&str]) {
+        let d = root.join(dir);
+        fs::create_dir_all(&d).expect("mkdir");
+        for f in files {
+            fs::write(d.join(f), b"x").expect("write");
+        }
+    }
+
+    #[test]
+    fn finds_the_binary_in_the_stable_layout() {
+        let tmp = tempdir().expect("tempdir");
+        lay_out(
+            tmp.path(),
+            "gtc-x86_64-unknown-linux-gnu",
+            &["gtc", "README.md", "LICENSE.txt"],
+        );
+        let found = find_extracted_gtc_binary(tmp.path()).expect("found");
+        assert_eq!(found.file_name().unwrap(), "gtc");
+    }
+
+    #[test]
+    fn finds_the_binary_in_the_dev_layout() {
+        // The layout that broke self-update: BOTH the directory and the file
+        // name differ from the stable one.
+        let tmp = tempdir().expect("tempdir");
+        lay_out(
+            tmp.path(),
+            "gtc-dev-v1.2.32730887183-x86_64-unknown-linux-gnu",
+            &["gtc-dev"],
+        );
+        let found = find_extracted_gtc_binary(tmp.path()).expect("found");
+        assert_eq!(found.file_name().unwrap(), "gtc-dev");
+    }
+
+    #[test]
+    fn documents_shipped_beside_the_binary_are_not_mistaken_for_it() {
+        let tmp = tempdir().expect("tempdir");
+        lay_out(
+            tmp.path(),
+            "gtc-rnd-v1.2.0-aarch64-apple-darwin",
+            &["gtc-1.2.0-checksums.txt", "gtc-rnd", "gtc.spdx.json"],
+        );
+        let found = find_extracted_gtc_binary(tmp.path()).expect("found");
+        assert_eq!(found.file_name().unwrap(), "gtc-rnd");
+    }
+
+    #[test]
+    fn an_archive_with_no_binary_is_an_error_not_a_silent_miss() {
+        let tmp = tempdir().expect("tempdir");
+        lay_out(tmp.path(), "gtc-x86_64-unknown-linux-gnu", &["README.md"]);
+        assert!(find_extracted_gtc_binary(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn two_candidates_are_refused_rather_than_guessed() {
+        // Installing the wrong file here would replace gtc with it.
+        let tmp = tempdir().expect("tempdir");
+        lay_out(tmp.path(), "a", &["gtc"]);
+        lay_out(tmp.path(), "b", &["gtc-dev"]);
+        assert!(find_extracted_gtc_binary(tmp.path()).is_err());
     }
 
     #[test]
