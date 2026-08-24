@@ -133,6 +133,9 @@ pub(super) fn run_install(
 
     let env_name = tenant_env_var_name(&tenant);
     let mut child_env = ChildProcessEnv::new();
+    // The delegate takes the key by env indirection; the store step below needs
+    // it too, and it is never written anywhere or printed.
+    let store_key = key.clone();
     child_env.set(env_name.clone(), key);
 
     let tenant_args = vec![
@@ -142,7 +145,34 @@ pub(super) fn run_install(
         "--token".to_string(),
         format!("env:{env_name}"),
     ];
-    let tenant_status = passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env);
+    let mut tenant_status = passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env);
+
+    // `store_assets` are the one part of a tenant manifest the delegate does not
+    // install: greentic-dev has no distributor client for them, so it reports
+    // them and moves on. gtc does have one — this whole path already existed
+    // here and had simply become unreachable when the tenant phase was handed
+    // over. Running it after the delegate keeps one owner per artifact kind
+    // rather than teaching the delegate a second way to fetch things.
+    //
+    // Only attempted when the delegate succeeded: a failed tools install is not
+    // a state worth adding store artifacts to.
+    if tenant_status == 0 {
+        match install_tenant_store_assets(&tenant, &store_key, locale) {
+            Ok(installed) if installed.is_empty() => {}
+            Ok(installed) => {
+                println!("Installed store assets:");
+                for path in installed {
+                    println!("- {}", path.display());
+                }
+            }
+            Err(err) => {
+                // The tools are already on disk and are not undone by this. Say
+                // so plainly and let the exit code carry the failure.
+                eprintln!("error: store assets could not be installed: {err}");
+                tenant_status = 1;
+            }
+        }
+    }
 
     // The tenant failure is the more actionable of the two, so it wins the exit
     // code; a toolchain failure still surfaces when the tenant phase succeeded.
@@ -1060,7 +1090,15 @@ fn resolve_tenant_manifest_url(tenant: &str, key: &str, locale: &str) -> GtcResu
     if let Some(template) = GtcConfig::from_env().tenant_manifest_url_template() {
         return Ok(template.replace("{tenant}", tenant));
     }
-    let release = fetch_github_release("greentic-biz", "customers-tools", "latest", key, locale)?;
+    // `/releases/tags/latest`, NOT `/releases/latest`. They are different
+    // releases: the rolling `latest` TAG is force-moved on every main push and
+    // is a prerelease, while GitHub's "latest release" resolves to the newest
+    // non-prerelease (`v0.2.0` today). greentic-dev — which installs the tools
+    // from this same manifest — reads the rolling tag, so reading anything else
+    // here risks taking a tenant's store assets from a different manifest than
+    // its tools.
+    let release =
+        fetch_github_release_by_tag("greentic-biz", "customers-tools", "latest", key, locale)?;
     let asset_name = format!("{tenant}.json");
     release
         .assets
@@ -1112,6 +1150,24 @@ fn resolve_github_release_asset_api_url(
         .into_iter()
         .find(|asset| asset.name == asset_name)
         .map(|asset| asset.url))
+}
+
+/// Always `/releases/tags/{tag}` — never GitHub's "latest release" shortcut.
+///
+/// `fetch_github_release` special-cases the literal tag `latest` into
+/// `/releases/latest`, which is a different thing entirely when a repository
+/// also has a rolling tag NAMED `latest`.
+fn fetch_github_release_by_tag(
+    owner: &str,
+    repo: &str,
+    tag: &str,
+    key: &str,
+    locale: &str,
+) -> GtcResult<GithubRelease> {
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}");
+    let bytes = fetch_https_json_or_file_bytes(&url, key, locale)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| GtcError::json(format!("failed to parse release metadata from {url}"), e))
 }
 
 fn fetch_github_release(
@@ -1383,6 +1439,48 @@ pub(super) fn expand_into_target(source_dir: &Path, target_dir: &Path) -> GtcRes
     }
 
     Ok(())
+}
+
+/// Install every `store_assets` entry a tenant manifest declares.
+///
+/// Returns the paths written, empty when the tenant declares none.
+fn install_tenant_store_assets(tenant: &str, key: &str, locale: &str) -> GtcResult<Vec<PathBuf>> {
+    let manifest_url = resolve_tenant_manifest_url(tenant, key, locale)?;
+    // The URL is a release ASSET, so it must be fetched as octet-stream.
+    // `fetch_json_with_auth` sends `Accept: application/vnd.github+json`, which
+    // GitHub answers with the asset's METADATA — a clean JSON body that then
+    // fails to parse as a manifest, for a reason the error would not name.
+    let bytes = fetch_asset_bytes(&manifest_url, key, locale)?;
+    let manifest: TenantInstallManifest = serde_json::from_slice(&bytes).map_err(|e| {
+        GtcError::json(
+            format!("failed to parse the tenant manifest from {manifest_url}"),
+            e,
+        )
+    })?;
+    if manifest.tenant != tenant {
+        return Err(GtcError::invalid_data(
+            "tenant manifest",
+            format!(
+                "requested `{tenant}` but the manifest declares `{}`",
+                manifest.tenant
+            ),
+        ));
+    }
+    if manifest.store_assets.is_empty() {
+        return Ok(Vec::new());
+    }
+    let artifacts_root = resolve_artifacts_root()?;
+    let mut installed = Vec::new();
+    for asset in &manifest.store_assets {
+        installed.extend(install_store_asset_reference(
+            asset,
+            tenant,
+            key,
+            &artifacts_root,
+            locale,
+        )?);
+    }
+    Ok(installed)
 }
 
 fn resolve_artifacts_root() -> GtcResult<PathBuf> {
