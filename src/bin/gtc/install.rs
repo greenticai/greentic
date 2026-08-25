@@ -158,20 +158,34 @@ pub(super) fn run_install(
     // Only attempted when the delegate succeeded: a failed tools install is not
     // a state worth adding store artifacts to.
     if tenant_status == 0 {
-        match install_tenant_store_assets(&tenant, &store_key, locale) {
-            Ok(installed) if installed.is_empty() => {}
-            Ok(installed) => {
-                println!("Installed store assets:");
-                for path in installed {
-                    println!("- {}", path.display());
-                }
-            }
+        // Two failures, two meanings, and collapsing them was wrong.
+        //
+        // Failing to READ the manifest means we do not know whether this tenant
+        // declares any store assets — so it cannot be reported as "they failed
+        // to install". The tools are on disk and correct; warn and leave the
+        // exit code alone. Doing otherwise made an offline or unauthorized
+        // lookup fail an install that had entirely succeeded.
+        //
+        // Failing to PULL an asset the manifest DOES declare is a real failure
+        // of a declared entitlement, and carries the exit code.
+        match resolve_tenant_store_assets(&tenant, &store_key, locale) {
             Err(err) => {
-                // The tools are already on disk and are not undone by this. Say
-                // so plainly and let the exit code carry the failure.
-                eprintln!("error: store assets could not be installed: {err}");
-                tenant_status = 1;
+                eprintln!("warning: could not check {tenant}'s store assets: {err}");
             }
+            Ok(assets) if assets.is_empty() => {}
+            Ok(assets) => match install_resolved_store_assets(&assets, &tenant, &store_key, locale)
+            {
+                Ok(installed) => {
+                    println!("Installed store assets:");
+                    for path in installed {
+                        println!("- {}", path.display());
+                    }
+                }
+                Err(err) => {
+                    eprintln!("error: store assets could not be installed: {err}");
+                    tenant_status = 1;
+                }
+            },
         }
     }
 
@@ -1442,10 +1456,15 @@ pub(super) fn expand_into_target(source_dir: &Path, target_dir: &Path) -> GtcRes
     Ok(())
 }
 
-/// Install every `store_assets` entry a tenant manifest declares.
+/// The `store_assets` a tenant manifest declares, if it can be read.
 ///
-/// Returns the paths written, empty when the tenant declares none.
-fn install_tenant_store_assets(tenant: &str, key: &str, locale: &str) -> GtcResult<Vec<PathBuf>> {
+/// An error here means the manifest could not be READ — never that a tenant has
+/// none. Those are different answers and the caller treats them differently.
+fn resolve_tenant_store_assets(
+    tenant: &str,
+    key: &str,
+    locale: &str,
+) -> GtcResult<Vec<TenantManifestReference>> {
     let manifest_url = resolve_tenant_manifest_url(tenant, key, locale)?;
     // The URL is a release ASSET, so it must be fetched as octet-stream.
     // `fetch_json_with_auth` sends `Accept: application/vnd.github+json`, which
@@ -1467,12 +1486,20 @@ fn install_tenant_store_assets(tenant: &str, key: &str, locale: &str) -> GtcResu
             ),
         ));
     }
-    if manifest.store_assets.is_empty() {
-        return Ok(Vec::new());
-    }
+    Ok(manifest.store_assets)
+}
+
+/// Pull every declared store asset. A failure here is a declared entitlement
+/// that did not install.
+fn install_resolved_store_assets(
+    assets: &[TenantManifestReference],
+    tenant: &str,
+    key: &str,
+    locale: &str,
+) -> GtcResult<Vec<PathBuf>> {
     let artifacts_root = resolve_artifacts_root()?;
     let mut installed = Vec::new();
-    for asset in &manifest.store_assets {
+    for asset in assets {
         installed.extend(install_store_asset_reference(
             asset,
             tenant,
