@@ -1690,6 +1690,66 @@ pub(crate) fn manifest_gtc_artifact<'a>(
         .find(|artifact| artifact.target == target)
 }
 
+/// Locate the gtc binary inside an extracted release archive.
+///
+/// The archive's INNER layout is a second publisher convention, and it differs
+/// per lane exactly as the asset name does: stable ships
+/// `gtc-<target>/gtc`, the dev lane ships `gtc-dev-v<version>-<target>/gtc-dev`.
+/// Reconstructing either one hardcodes a guess that the other publisher does
+/// not honour — which is how a self-update that had already downloaded and
+/// sha256-verified the correct archive still died on `No such file or
+/// directory`. So find the binary instead of predicting its path.
+pub(crate) fn locate_extracted_gtc_binary(root: &Path) -> GtcResult<PathBuf> {
+    let mut found = Vec::new();
+    collect_gtc_candidates(root, &mut found)?;
+    found.sort();
+
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(GtcError::message(format!(
+            "no gtc binary found in the extracted release archive at {}",
+            root.display()
+        ))),
+        _ => Err(GtcError::message(format!(
+            "expected exactly one gtc binary in the extracted release archive at {}, found {}: {}",
+            root.display(),
+            found.len(),
+            found
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))),
+    }
+}
+
+/// Collect every regular file under `dir` whose name is `gtc` or `gtc-<lane>`.
+///
+/// The name filter is what keeps a future archive that also ships a README or a
+/// LICENSE from making the search ambiguous.
+fn collect_gtc_candidates(dir: &Path, out: &mut Vec<PathBuf>) -> GtcResult<()> {
+    let entries = fs::read_dir(dir)
+        .map_err(|err| GtcError::io(format!("failed to read {}", dir.display()), err))?;
+    for entry in entries {
+        let entry =
+            entry.map_err(|err| GtcError::io(format!("failed to read {}", dir.display()), err))?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|err| GtcError::io(format!("failed to stat {}", path.display()), err))?;
+        if file_type.is_dir() {
+            collect_gtc_candidates(&path, out)?;
+        } else if file_type.is_file() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if name == "gtc" || name.starts_with("gtc-") {
+                out.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn gtc_release_asset_url(version: &str, target: &str) -> String {
     format!("https://github.com/greenticai/greentic/releases/download/v{version}/gtc-{target}.tgz")
 }
@@ -1919,8 +1979,11 @@ pub(crate) fn try_self_update(
             .map_err(|err| GtcError::io("failed to create self-update extract directory", err))?;
         super::archive::extract_targz_bytes(&tarball_bytes, extract_dir.path())?;
 
-        // Read the inner binary.
-        let inner_binary_path = extract_dir.path().join(format!("gtc-{target}")).join("gtc");
+        // Read the inner binary. Its path inside the archive is the
+        // publisher's SECOND naming convention and diverges per lane exactly as
+        // the asset name does, so locate it rather than rebuild it — see
+        // `locate_extracted_gtc_binary`.
+        let inner_binary_path = locate_extracted_gtc_binary(extract_dir.path())?;
         let binary_bytes = fs::read(&inner_binary_path).map_err(|err| {
             GtcError::io(
                 format!(
@@ -2916,5 +2979,87 @@ abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  gtc-x86_64-unk
 
         let mode = fs::metadata(&exe).expect("metadata").permissions().mode();
         assert_ne!(mode & 0o111, 0, "binary should be executable");
+    }
+
+    /// The dev lane publishes `gtc-dev-v<version>-<target>.tgz`, whose single
+    /// entry is `gtc-dev-v<version>-<target>/gtc-dev`. Reconstructing
+    /// `gtc-<target>/gtc` misses it, which is how a self-update that had
+    /// already downloaded and verified the right archive still failed.
+    #[test]
+    fn locates_the_gtc_binary_in_a_dev_lane_archive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let inner = dir
+            .path()
+            .join("gtc-dev-v1.2.32730887183-x86_64-unknown-linux-gnu");
+        fs::create_dir_all(&inner).expect("create inner dir");
+        let bin = inner.join("gtc-dev");
+        fs::write(&bin, b"binary").expect("write binary");
+
+        let found = locate_extracted_gtc_binary(dir.path()).expect("dev-lane binary must be found");
+        assert_eq!(found, bin);
+    }
+
+    /// The stable lane's own layout must keep working — the point of searching
+    /// is that neither lane is hardcoded, not that dev replaced stable.
+    #[test]
+    fn locates_the_gtc_binary_in_a_stable_lane_archive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let inner = dir.path().join("gtc-x86_64-unknown-linux-gnu");
+        fs::create_dir_all(&inner).expect("create inner dir");
+        let bin = inner.join("gtc");
+        fs::write(&bin, b"binary").expect("write binary");
+
+        let found =
+            locate_extracted_gtc_binary(dir.path()).expect("stable-lane binary must be found");
+        assert_eq!(found, bin);
+    }
+
+    /// Refusing beats picking one at random: swapping the running binary for
+    /// the wrong file is not recoverable from, and a caller that sees an error
+    /// still installs its companions.
+    #[test]
+    fn refuses_an_archive_carrying_two_gtc_binaries() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        for lane in [
+            "gtc-x86_64-unknown-linux-gnu",
+            "gtc-dev-v1.2.3-x86_64-unknown-linux-gnu",
+        ] {
+            let inner = dir.path().join(lane);
+            fs::create_dir_all(&inner).expect("create inner dir");
+            fs::write(inner.join("gtc"), b"binary").expect("write binary");
+        }
+
+        let err = locate_extracted_gtc_binary(dir.path()).expect_err("ambiguity must be refused");
+        assert!(
+            err.to_string().contains("found 2"),
+            "error should name how many were found, got: {err}"
+        );
+    }
+
+    /// Non-gtc entries must not make a well-formed archive look ambiguous.
+    #[test]
+    fn ignores_non_gtc_files_beside_the_binary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let inner = dir.path().join("gtc-dev-v1.2.3-x86_64-unknown-linux-gnu");
+        fs::create_dir_all(&inner).expect("create inner dir");
+        let bin = inner.join("gtc-dev");
+        fs::write(&bin, b"binary").expect("write binary");
+        fs::write(inner.join("README.md"), b"docs").expect("write readme");
+        fs::write(inner.join("LICENSE"), b"license").expect("write licence");
+
+        let found = locate_extracted_gtc_binary(dir.path()).expect("binary must be found");
+        assert_eq!(found, bin);
+    }
+
+    #[test]
+    fn reports_an_archive_with_no_gtc_binary() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("README.md"), b"docs").expect("write readme");
+
+        let err = locate_extracted_gtc_binary(dir.path()).expect_err("absence must be reported");
+        assert!(
+            err.to_string().contains("no gtc binary found"),
+            "error should say nothing was found, got: {err}"
+        );
     }
 }
