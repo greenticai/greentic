@@ -15,7 +15,8 @@ use super::{
     BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, DW_BIN, FLOW_BIN, OP_BIN, PACK_BIN,
     RUNNER_BIN, SECRETS_BIN, SETUP_BIN, START_BIN,
 };
-use crate::i18n_support::{t, t_or};
+use crate::i18n_support::{t, t_or, tf_or};
+use crate::min_versions::{self, VersionVerdict};
 
 pub(super) fn run_binary_checked(
     binary: &str,
@@ -238,15 +239,22 @@ pub(super) fn run_doctor(locale: &str) -> i32 {
         let command = resolve_binary_command(binary);
         match ProcessCommand::new(&command).arg("--version").output() {
             Ok(output) => {
-                let status_label = if output.status.success() {
-                    t(locale, "gtc.doctor.ok")
-                } else {
-                    t(locale, "gtc.doctor.warn")
-                };
                 let version = first_non_empty_line(&String::from_utf8_lossy(&output.stdout))
                     .or_else(|| first_non_empty_line(&String::from_utf8_lossy(&output.stderr)))
                     .unwrap_or_else(|| t(locale, "gtc.doctor.version_unavailable").into_owned());
-                println!("{binary}: {status_label} ({version}) [{}]", command);
+                if !output.status.success() {
+                    println!(
+                        "{binary}: {} ({version}) [{}]",
+                        t(locale, "gtc.doctor.warn"),
+                        command
+                    );
+                } else if report_minimum_version(binary, &version, &command, locale) {
+                    // The binary runs, but it is older than the pack format
+                    // needs. This FAILS doctor on purpose: reporting it while
+                    // still exiting 0 would reproduce the original bug, where
+                    // every gate said pass and the flow died at its second node.
+                    failed = true;
+                }
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 failed = true;
@@ -300,6 +308,77 @@ pub(super) fn run_doctor(locale: &str) -> i32 {
     print_knowledge_memory_readiness(locale);
 
     if failed { 1 } else { 0 }
+}
+
+/// Prints one companion binary's doctor line, judged against the
+/// minimum-version table in [`crate::min_versions`].
+///
+/// Returns `true` when the binary is present and BELOW its declared floor —
+/// the one verdict that fails `gtc doctor`.
+///
+/// Three statuses are printed, and only the third fails the run:
+///
+/// * `OK` — no floor is declared for this binary, or it meets the one that is.
+///   These two are deliberately the same status: from the operator's side there
+///   is nothing to do about either.
+/// * `UNKNOWN` — a floor is declared and `--version` printed nothing this can
+///   parse. A locally built or `GREENTIC_*_BIN`-overridden companion prints
+///   exactly that, which is legitimate, so it must not fail the run; but "we
+///   could not check" is not "we checked and it is fine", and the original bug
+///   is what collapsing those two produces.
+/// * `OUTDATED` — a floor is declared and this binary is below it.
+///
+/// The version line reported is the binary's raw `--version` output, unchanged,
+/// so this stays readable next to the pre-existing lines.
+fn report_minimum_version(binary: &str, version: &str, command: &str, locale: &str) -> bool {
+    match min_versions::verdict(binary, version) {
+        VersionVerdict::NoMinimum | VersionVerdict::Satisfied => {
+            println!(
+                "{binary}: {} ({version}) [{command}]",
+                t(locale, "gtc.doctor.ok")
+            );
+            false
+        }
+        VersionVerdict::Unreadable { minimum } => {
+            println!(
+                "{binary}: {} ({version}) [{command}]",
+                t_or(locale, "gtc.doctor.min_version.unknown", "UNKNOWN")
+            );
+            println!(
+                "  {}",
+                tf_or(
+                    locale,
+                    "gtc.doctor.min_version.unreadable",
+                    "could not read a version from this binary, so the {minimum} minimum this \
+                     toolchain needs could not be checked. If the flow fails at run time with \
+                     `component '<name>' not found in pack`, this binary is the first thing to \
+                     upgrade.",
+                    &[("minimum", minimum)],
+                )
+            );
+            false
+        }
+        VersionVerdict::TooOld { installed, minimum } => {
+            println!(
+                "{binary}: {} ({version}) [{command}]",
+                t_or(locale, "gtc.doctor.min_version.outdated", "OUTDATED")
+            );
+            println!(
+                "  {}",
+                tf_or(
+                    locale,
+                    "gtc.doctor.min_version.needs",
+                    "needs {minimum} or newer; found {installed}.",
+                    &[("minimum", minimum), ("installed", &installed)],
+                )
+            );
+            if let Some(row) = min_versions::minimum_for(binary) {
+                println!("  {}", row.reason);
+                println!("  {}", row.upgrade_hint);
+            }
+            true
+        }
+    }
 }
 
 /// Prints the "Knowledge & Memory readiness" section of `gtc doctor`.
