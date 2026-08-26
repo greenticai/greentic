@@ -34,6 +34,26 @@ pub(super) fn tf(locale: &str, key: &'static str, replacements: &[(&str, &str)])
     value
 }
 
+/// [`tf`] with the [`t_or`] fallback: substitutes into the catalog string when
+/// the key resolves, and into `fallback` when it does not.
+///
+/// Needed for a placeholder-carrying string added to `en.json` alone: `tf` would
+/// hand back the raw key with the placeholders unsubstituted, so the operator
+/// reads `gtc.doctor.min_version.needs` instead of a sentence.
+pub(super) fn tf_or(
+    locale: &str,
+    key: &'static str,
+    fallback: &'static str,
+    replacements: &[(&str, &str)],
+) -> String {
+    let mut value = t_or(locale, key, fallback);
+    for (name, replace) in replacements {
+        let token = format!("{{{name}}}");
+        value = value.replace(&token, replace);
+    }
+    value
+}
+
 // clap's builder APIs still want &'static str for several fields, so we keep
 // these localized strings alive for the whole CLI process.
 pub(super) fn leak_str(value: String) -> &'static str {
