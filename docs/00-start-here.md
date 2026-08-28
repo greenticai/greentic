@@ -94,6 +94,8 @@ Start with these repo-local docs:
   Canonical install entrypoint, release channels, and stable OCI reference guidance.
 - [`docs/02-cli/greentic-flow.md`](./02-cli/greentic-flow.md)
   Repo-local guidance for using `greentic-flow component-schema` before wiring steps.
+- [`docs/02-cli/gtc-platform.md`](./02-cli/gtc-platform.md)
+  Canonical `gtc platform` routing boundary and how to obtain its companion binary.
 - [`docs/03-authoring/happy-path-build-an-app.md`](./03-authoring/happy-path-build-an-app.md)
   Linear repo-local path from authoring into setup and start.
 - [`docs/03-authoring/answers-json-patterns.md`](./03-authoring/answers-json-patterns.md)

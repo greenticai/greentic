@@ -1063,7 +1063,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.provider.about",
                     "Manage messaging providers (passthrough to greentic-setup).",
                 ))
-                .arg(cmd_args),
+                .arg(cmd_args.clone()),
         )
         .subcommand(
             Command::new("deploy")
@@ -1113,6 +1113,23 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .help(t(locale, "gtc.arg.upload_bundle_presign_expires.help").into_owned()),
                         ),
                 ),
+        )
+        .subcommand(
+            // Declared with no flags of its own on purpose. Every verb, option
+            // and default belongs to greentic-deploy-platform, and mirroring
+            // them here would be a second copy that goes stale the first time
+            // that binary adds a flag.
+            Command::new("platform")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.platform.about",
+                    "Install the Greentic platform: admin, designer, tenant-manager, edge and their datastore.",
+                ))
+                .arg(cmd_args),
         )
         .subcommand(
             Command::new("help")

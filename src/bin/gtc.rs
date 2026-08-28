@@ -111,6 +111,10 @@ const DEV_BIN: &str = "greentic-dev";
 const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
+/// Installs the Greentic platform itself — admin, designer, tenant-manager,
+/// edge and their datastore. Distinct from DEPLOYER_BIN, which deploys a
+/// bundle onto a platform that already exists.
+const PLATFORM_BIN: &str = "greentic-deploy-platform";
 const SETUP_BIN: &str = "greentic-setup";
 const START_BIN: &str = "greentic-start";
 const COMPONENT_BIN: &str = "greentic-component";
