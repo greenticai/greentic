@@ -1,11 +1,11 @@
 use super::{
-    AdminRegistryDocument, DEV_BIN, DW_BIN, FLOW_BIN, SETUP_BIN, StartTarget, admin_registry_path,
-    build_cli, build_wizard_args, collect_tail, default_install_channel_for_invocation,
-    detect_bundle_root, detect_locale, ensure_admin_certs_ready, extract_tar_archive,
-    fingerprint_bundle_dir, locale_from_args, normalize_bundle_fingerprint,
-    normalize_expected_sha256, normalize_install_arch, parse_prompt_choice,
-    parse_start_cli_options, parse_start_request, parse_stop_cli_options, parse_stop_request,
-    remove_admin_registry_entry, resolve_admin_cert_dir,
+    AdminRegistryDocument, DEV_BIN, DW_BIN, FLOW_BIN, PLATFORM_BIN, SETUP_BIN, StartTarget,
+    admin_registry_path, build_cli, build_wizard_args, collect_tail,
+    default_install_channel_for_invocation, detect_bundle_root, detect_locale,
+    ensure_admin_certs_ready, extract_tar_archive, fingerprint_bundle_dir, locale_from_args,
+    normalize_bundle_fingerprint, normalize_expected_sha256, normalize_install_arch,
+    parse_prompt_choice, parse_start_cli_options, parse_start_request, parse_stop_cli_options,
+    parse_stop_request, remove_admin_registry_entry, resolve_admin_cert_dir,
     resolve_canonical_target_provider_pack_from, resolve_companion_binary_from,
     resolve_companion_binary_from_invocation, resolve_deploy_app_pack_path,
     resolve_local_mutable_bundle_dir, resolve_target_provider_pack, resolve_tenant_key,
@@ -275,6 +275,98 @@ fn route_passthrough_subcommand_routes_provider_to_greentic_setup() {
             "telegram".to_string()
         ]
     );
+}
+
+#[test]
+fn route_passthrough_subcommand_routes_platform_to_the_platform_binary() {
+    let tail = vec![
+        "apply".to_string(),
+        "--kube-context".to_string(),
+        "prod".to_string(),
+    ];
+    let (binary, args) =
+        route_passthrough_subcommand("platform", &tail, "en").expect("platform route");
+
+    assert_eq!(binary, PLATFORM_BIN);
+    // Verbatim, unlike `worker`/`provider`: greentic-deploy-platform's verbs
+    // are its own top level, so there is no token to re-add. Prepending one
+    // would hand it a subcommand it does not have.
+    assert_eq!(args, tail);
+}
+
+#[test]
+fn platform_forwards_a_flag_the_router_has_never_heard_of() {
+    // The subcommand declares no flags of its own, so the router must not be
+    // the thing that rejects one. Whether --another-env means anything is the
+    // companion's question to answer, and it can only answer it if the flag
+    // arrives.
+    let tail = vec![
+        "deploy".to_string(),
+        "--target".to_string(),
+        "aws".to_string(),
+        "--another-env".to_string(),
+    ];
+    let (binary, args) =
+        route_passthrough_subcommand("platform", &tail, "en").expect("platform route");
+
+    assert_eq!(binary, PLATFORM_BIN);
+    assert_eq!(args, tail);
+}
+
+#[test]
+fn deploy_stays_in_process_and_does_not_route_out() {
+    // `gtc deploy refresh-bundle-url` is handled by gtc itself. `platform` used
+    // to live under `deploy`, and routing the group out would send every one of
+    // its verbs to a binary that has never heard of them.
+    let tail = vec![
+        "refresh-bundle-url".to_string(),
+        "acme.gtbundle".to_string(),
+    ];
+    assert!(route_passthrough_subcommand("deploy", &tail, "en").is_none());
+    assert!(route_passthrough_subcommand("deploy", &[], "en").is_none());
+}
+
+#[test]
+fn platform_takes_the_verb_line_verbatim() {
+    // The subcommand declares no flags of its own, so clap must hand every
+    // token through — including ones it would otherwise reject.
+    let matches = build_cli("en")
+        .try_get_matches_from([
+            "gtc",
+            "platform",
+            "init",
+            "--target",
+            "aws-ecs",
+            "--region",
+            "ap-southeast-1",
+        ])
+        .expect("platform parses");
+    let platform = matches.subcommand_matches("platform").expect("platform");
+
+    assert_eq!(
+        collect_tail(platform),
+        vec![
+            "init".to_string(),
+            "--target".to_string(),
+            "aws-ecs".to_string(),
+            "--region".to_string(),
+            "ap-southeast-1".to_string()
+        ]
+    );
+}
+
+#[test]
+fn resolve_companion_binary_uses_platform_env_override() {
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    unsafe {
+        std::env::set_var("GREENTIC_PLATFORM_BIN", "/tmp/custom-deploy-platform");
+    }
+    let resolved =
+        resolve_companion_binary_from(Some(Path::new("/tmp/gtc")), PLATFORM_BIN).expect("path");
+    assert_eq!(resolved, PathBuf::from("/tmp/custom-deploy-platform"));
+    unsafe {
+        std::env::remove_var("GREENTIC_PLATFORM_BIN");
+    }
 }
 
 #[test]

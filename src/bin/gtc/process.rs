@@ -13,7 +13,7 @@ use super::toolchain::{
 };
 use super::{
     BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, DW_BIN, FLOW_BIN, OP_BIN, PACK_BIN,
-    RUNNER_BIN, SECRETS_BIN, SETUP_BIN, START_BIN,
+    PLATFORM_BIN, RUNNER_BIN, SECRETS_BIN, SETUP_BIN, START_BIN,
 };
 use crate::i18n_support::{t, t_or, tf_or};
 use crate::min_versions::{self, VersionVerdict};
@@ -205,6 +205,7 @@ fn passthrough_in_dir_with_env(
                     DEV_BIN => print_missing_dev_message(locale),
                     OP_BIN => print_missing_op_message(locale),
                     SETUP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_setup")),
+                    PLATFORM_BIN => print_missing_platform_message(locale),
                     _ => eprintln!("{}", t(locale, "gtc.err.exec_failed")),
                 }
             } else {
@@ -625,6 +626,23 @@ fn print_missing_op_message(locale: &str) {
     );
 }
 
+/// `greentic-deploy-platform` is not part of the installed toolchain set, so a
+/// missing one is a normal state rather than a broken install. Saying where it
+/// comes from is the whole message: the generic "exec failed" line names a
+/// binary the operator has never heard of and gives them nothing to act on.
+fn print_missing_platform_message(locale: &str) {
+    eprintln!(
+        "{}",
+        t_or(
+            locale,
+            "gtc.err.bin_missing_platform",
+            "greentic-deploy-platform not found. It is released from the \
+             greentic-deploy-platform repository as a single binary: copy it next to gtc (or \
+             into ~/.cargo/bin), or point GREENTIC_PLATFORM_BIN at a local build.",
+        )
+    );
+}
+
 fn resolve_binary_command(binary: &str) -> String {
     let invocation = env::args().next();
     let command = if let Some(path) = resolve_companion_binary_from_parts(
@@ -745,6 +763,7 @@ fn is_greentic_companion_binary(binary: &str) -> bool {
             | BUNDLE_BIN
             | COMPONENT_BIN
             | DEPLOYER_BIN
+            | PLATFORM_BIN
             | FLOW_BIN
             | PACK_BIN
             | RUNNER_BIN
@@ -808,6 +827,7 @@ fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
         BUNDLE_BIN => cfg.bundle_bin_override(),
         COMPONENT_BIN => cfg.component_bin_override(),
         DEPLOYER_BIN => cfg.deployer_bin_override(),
+        PLATFORM_BIN => cfg.platform_bin_override(),
         FLOW_BIN => cfg.flow_bin_override(),
         PACK_BIN => cfg.pack_bin_override(),
         RUNNER_BIN => cfg.runner_bin_override(),
