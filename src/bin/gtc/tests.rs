@@ -356,6 +356,28 @@ fn platform_takes_the_verb_line_verbatim() {
 }
 
 #[test]
+fn gtc_dev_looks_for_the_dev_build_of_the_platform_binary() {
+    // The launcher's `-dev` suffix propagates to every companion. If
+    // PLATFORM_BIN were left out of `is_greentic_companion_binary`, a developer
+    // running gtc-dev would silently get the STABLE wizard next to their dev
+    // toolchain — the one arrangement the suffix convention exists to prevent.
+    let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempdir().expect("tempdir");
+    let dev_build = dir.path().join("greentic-deploy-platform-dev");
+    fs::write(&dev_build, "").expect("write");
+    #[cfg(unix)]
+    fs::set_permissions(&dev_build, fs::Permissions::from_mode(0o755)).expect("chmod");
+
+    let resolved = resolve_companion_binary_from_invocation(
+        Some("gtc-dev"),
+        Some(dir.path().join("gtc-dev").as_path()),
+        PLATFORM_BIN,
+    )
+    .expect("gtc-dev must resolve the -dev build");
+    assert_eq!(resolved, dev_build);
+}
+
+#[test]
 fn resolve_companion_binary_uses_platform_env_override() {
     let _guard = env_test_lock().lock().unwrap_or_else(|e| e.into_inner());
     unsafe {

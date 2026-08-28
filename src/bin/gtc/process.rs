@@ -205,7 +205,7 @@ fn passthrough_in_dir_with_env(
                     DEV_BIN => print_missing_dev_message(locale),
                     OP_BIN => print_missing_op_message(locale),
                     SETUP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_setup")),
-                    PLATFORM_BIN => print_missing_platform_message(locale),
+                    PLATFORM_BIN => print_missing_platform_message(locale, &command),
                     _ => eprintln!("{}", t(locale, "gtc.err.exec_failed")),
                 }
             } else {
@@ -630,17 +630,40 @@ fn print_missing_op_message(locale: &str) {
 /// missing one is a normal state rather than a broken install. Saying where it
 /// comes from is the whole message: the generic "exec failed" line names a
 /// binary the operator has never heard of and gives them nothing to act on.
-fn print_missing_platform_message(locale: &str) {
+///
+/// `sought` is the name that was actually looked for, not the logical constant.
+/// Under `gtc-dev` those differ — the launcher's `-dev` suffix propagates to
+/// every companion — and naming the constant there would tell the operator to
+/// install the one file that cannot satisfy the lookup.
+fn print_missing_platform_message(locale: &str, sought: &str) {
+    let sought = Path::new(sought)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(sought);
     eprintln!(
         "{}",
-        t_or(
+        tf_or(
             locale,
             "gtc.err.bin_missing_platform",
-            "greentic-deploy-platform not found. It is released from the \
-             greentic-deploy-platform repository as a single binary: copy it next to gtc (or \
-             into ~/.cargo/bin), or point GREENTIC_PLATFORM_BIN at a local build.",
+            "{binary} not found. It is released from the greentic-deploy-platform repository: \
+             copy it next to gtc (or into ~/.cargo/bin), or point GREENTIC_PLATFORM_BIN at a \
+             local build.",
+            &[("binary", sought)],
         )
     );
+    if sought.ends_with("-dev") {
+        eprintln!(
+            "{}",
+            tf_or(
+                locale,
+                "gtc.err.bin_missing_platform_dev",
+                "This launcher is gtc-dev, so it looked for the dev-channel build \
+                 ({binary}) and not greentic-deploy-platform. The release attaches both \
+                 names; installing only the unsuffixed one leaves gtc-dev unable to find it.",
+                &[("binary", sought)],
+            )
+        );
+    }
 }
 
 fn resolve_binary_command(binary: &str) -> String {

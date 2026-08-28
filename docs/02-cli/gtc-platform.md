@@ -45,6 +45,17 @@ export GREENTIC_PLATFORM_BIN="/path/to/target/debug/greentic-deploy-platform"
 When it is missing, `gtc platform` says so by name and repeats both of those
 options rather than reporting a generic exec failure.
 
+### The dev channel
+
+`gtc-dev` looks for `greentic-deploy-platform-dev`, not
+`greentic-deploy-platform` — the launcher's suffix propagates to every companion,
+which is what keeps a dev toolchain from silently reaching for stable tools. The
+release attaches both names for that reason; installing only the unsuffixed one
+leaves `gtc-dev platform` unable to find anything.
+
+The missing-binary message names whichever one was actually looked for, and says
+so explicitly when the two differ.
+
 ## Verbs
 
 The pipeline, in order; each stage writes what the next reads.
