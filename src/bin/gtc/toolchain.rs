@@ -2,10 +2,13 @@ use semver::Version;
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::ArgMatches;
 use directories::BaseDirs;
+use greentic_distributor_client::dist::DistError;
 use greentic_distributor_client::{
     CachePolicy, DistClient, DistOptions, ReleaseArtifactKind, ResolvePolicy,
 };
@@ -1213,18 +1216,10 @@ fn prefetch_release_artifacts_and_write_index(
                     ))
                 })?
         } else {
-            runtime
-                .block_on(client.prefetch_release_artifact(
-                    release_ref.kind,
-                    &version_ref,
-                    CachePolicy,
-                ))
-                .map_err(|err| {
-                    GtcError::message(format!(
-                        "failed to prefetch {version_ref}: {}",
-                        error_chain(&err)
-                    ))
-                })?
+            pull_with_retry(&runtime, &version_ref, PREFETCH_RETRY, || {
+                client.prefetch_release_artifact(release_ref.kind, &version_ref, CachePolicy)
+            })
+            .map_err(|failure| GtcError::message(failure.describe(&version_ref)))?
         };
         let entry = client
             .stat_cache(&resolved.descriptor.digest)
@@ -1390,6 +1385,132 @@ fn artifact_repo(id: &str) -> GtcResult<String> {
         return Err(GtcError::message(format!("invalid artifact id '{id}'")));
     }
     Ok(format!("ghcr.io/greenticai/{trimmed}"))
+}
+
+/// Bounded retry for ONE release-artifact pull.
+///
+/// `gtc install --release` prefetches every pack and component in the release
+/// — ~110 pulls, all-or-nothing, and the release index is written only after
+/// the last one succeeds. Before this existed, each pull was made exactly once,
+/// so a single registry hiccup failed the whole install and every artifact had
+/// to be re-resolved on the next attempt. greentic-e2e run 34075162802 lost a
+/// nightly leg to exactly that: one `401 Not authorized` on the 101st manifest
+/// GET for a public package that the other five platforms pulled in the same
+/// run.
+///
+/// Three attempts with linear backoff (2s, 4s). A transient failure clears in
+/// seconds; one that does not is better surfaced than waited out.
+const PREFETCH_RETRY: RetryPolicy = RetryPolicy {
+    attempts: 3,
+    base_delay: Duration::from_secs(2),
+};
+
+#[derive(Clone, Copy, Debug)]
+struct RetryPolicy {
+    attempts: u32,
+    base_delay: Duration,
+}
+
+/// Why a pull gave up: the last error, and how many times it was tried.
+///
+/// `attempts` is part of the message on purpose — "failed after 3 attempts"
+/// and "failed" name different problems (a registry outage vs. a bad
+/// reference), and the log line is the only place that difference is visible.
+#[derive(Debug)]
+struct PullFailure {
+    error: DistError,
+    attempts: u32,
+}
+
+impl PullFailure {
+    fn describe(&self, version_ref: &str) -> String {
+        if self.attempts > 1 {
+            format!(
+                "failed to prefetch {version_ref} after {} attempts: {}",
+                self.attempts,
+                error_chain(&self.error)
+            )
+        } else {
+            format!(
+                "failed to prefetch {version_ref}: {}",
+                error_chain(&self.error)
+            )
+        }
+    }
+}
+
+/// Registry answers that are worth a second try.
+///
+/// The typed variants are the easy half. The hard half is `Pack` and `Oci`,
+/// which greentic-distributor-client flattens to a `String` at the pull site
+/// (`DistError::Pack(err.to_string())`), so the underlying
+/// `oci_client::errors::OciDistributionError` is only reachable through its
+/// `Display` text. These are that crate's verbatim `#[error]` prefixes for the
+/// variants a registry can produce transiently: a 401 with no credentials
+/// involved, a 5xx, and a request that never completed.
+///
+/// Deliberately NOT here: `Image manifest not found` (a deterministic 404),
+/// spec violations, and every parse error — retrying those spends three times
+/// as long arriving at the same answer.
+const TRANSIENT_PULL_SIGNATURES: &[&str] = &[
+    "Not authorized: url ",
+    "Server error: url ",
+    "error sending request",
+    "error decoding response body",
+    "operation timed out",
+    "connection reset",
+];
+
+fn is_transient_pull_error(err: &DistError) -> bool {
+    match err {
+        DistError::Network(_) | DistError::Unauthorized { .. } => true,
+        DistError::Pack(summary) => has_transient_signature(summary),
+        DistError::Oci(inner) => has_transient_signature(&inner.to_string()),
+        _ => false,
+    }
+}
+
+fn has_transient_signature(summary: &str) -> bool {
+    TRANSIENT_PULL_SIGNATURES
+        .iter()
+        .any(|needle| summary.contains(needle))
+}
+
+/// Drive `pull` on `runtime` until it succeeds, fails deterministically, or the
+/// attempt budget is spent. Each attempt is a FRESH future from `pull`, so a
+/// retry re-resolves the reference rather than polling a failed future.
+fn pull_with_retry<T, F, P>(
+    runtime: &tokio::runtime::Runtime,
+    label: &str,
+    policy: RetryPolicy,
+    mut pull: P,
+) -> Result<T, PullFailure>
+where
+    F: Future<Output = Result<T, DistError>>,
+    P: FnMut() -> F,
+{
+    let attempts = policy.attempts.max(1);
+    let mut attempt = 1;
+    loop {
+        match runtime.block_on(pull()) {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt < attempts && is_transient_pull_error(&error) => {
+                let delay = policy.base_delay * attempt;
+                eprintln!(
+                    "prefetch {label}: attempt {attempt}/{attempts} failed ({error}); retrying in {}s",
+                    delay.as_secs()
+                );
+                std::thread::sleep(delay);
+                attempt += 1;
+            }
+            Err(error) => {
+                return Err(PullFailure {
+                    error,
+                    attempts: attempt,
+                });
+            }
+        }
+    }
 }
 
 fn mock_prefetch_source_ref(version_ref: &str) -> GtcResult<Option<String>> {
@@ -2528,6 +2649,142 @@ mod tests {
             Some("0.1.0")
         );
         assert!(parse_cargo_search_version("blank-output", "greentic-flow").is_none());
+    }
+
+    fn current_thread_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+    }
+
+    const NO_BACKOFF: RetryPolicy = RetryPolicy {
+        attempts: 3,
+        base_delay: Duration::ZERO,
+    };
+
+    // Verbatim from greentic-e2e run 34075162802, macOS x64.
+    const REFUSED_PULL: &str = "failed to pull `ghcr.io/greenticai/packs/deployer/greentic.deploy.juju-machine:0.5.22`: Not authorized: url https://ghcr.io/v2/greenticai/packs/deployer/greentic.deploy.juju-machine/manifests/0.5.22";
+    const MISSING_MANIFEST: &str = "failed to pull `ghcr.io/greenticai/packs/deployer/greentic.deploy.juju-machine:0.5.22`: Image manifest not found: ghcr.io/greenticai/packs/deployer/greentic.deploy.juju-machine:0.5.22";
+
+    #[test]
+    fn transient_pull_errors_are_classified_by_variant_and_signature() {
+        assert!(is_transient_pull_error(&DistError::Pack(
+            REFUSED_PULL.into()
+        )));
+        assert!(is_transient_pull_error(&DistError::Pack(
+            "failed to pull `x`: Server error: url https://ghcr.io/v2/x, code: 503, message: upstream".into()
+        )));
+        assert!(is_transient_pull_error(&DistError::Pack(
+            "failed to pull `x`: error sending request for url (https://ghcr.io/v2/x)".into()
+        )));
+        assert!(is_transient_pull_error(&DistError::Network(
+            "connection reset by peer".into()
+        )));
+        assert!(is_transient_pull_error(&DistError::Unauthorized {
+            target: "ghcr.io/greenticai/x".into()
+        }));
+    }
+
+    #[test]
+    fn deterministic_pull_errors_are_not_retried() {
+        assert!(!is_transient_pull_error(&DistError::Pack(
+            MISSING_MANIFEST.into()
+        )));
+        assert!(!is_transient_pull_error(&DistError::Pack(
+            "failed to pull `x`: OCI distribution spec violation: Expected HTTP Status 200 OK, got 202 Accepted instead".into()
+        )));
+        assert!(!is_transient_pull_error(&DistError::NotFound {
+            reference: "ghcr.io/greenticai/x:9.9.9".into()
+        }));
+        assert!(!is_transient_pull_error(&DistError::InvalidRef {
+            reference: "not a ref".into()
+        }));
+        assert!(!is_transient_pull_error(&DistError::Offline {
+            reference: "ghcr.io/greenticai/x:1.0.0".into()
+        }));
+    }
+
+    // Counts invocations, because the retry's failure mode is not "too few"
+    // but "too many": a predicate widened to cover deterministic failures would
+    // still reach the right verdict, just three times slower.
+    type PullOutcome = std::future::Ready<Result<&'static str, DistError>>;
+
+    fn failing_then_ok(
+        fail_first: u32,
+    ) -> (
+        std::rc::Rc<std::cell::Cell<u32>>,
+        impl FnMut() -> PullOutcome,
+    ) {
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        let seen = calls.clone();
+        let pull = move || {
+            let n = seen.get() + 1;
+            seen.set(n);
+            if n <= fail_first {
+                std::future::ready(Err(DistError::Pack(REFUSED_PULL.into())))
+            } else {
+                std::future::ready(Ok("pulled"))
+            }
+        };
+        (calls, pull)
+    }
+
+    #[test]
+    fn a_refused_pull_is_retried_then_succeeds() {
+        let runtime = current_thread_runtime();
+        let (calls, pull) = failing_then_ok(2);
+        let got = pull_with_retry(&runtime, "x:1.0.0", NO_BACKOFF, pull).expect("third attempt");
+        assert_eq!(got, "pulled");
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
+    fn a_persistently_refused_pull_fails_after_the_budget_and_says_so() {
+        let runtime = current_thread_runtime();
+        let (calls, pull) = failing_then_ok(9);
+        let failure =
+            pull_with_retry(&runtime, "x:1.0.0", NO_BACKOFF, pull).expect_err("budget spent");
+        assert_eq!(calls.get(), 3);
+        assert_eq!(failure.attempts, 3);
+        let message = failure.describe("ghcr.io/greenticai/x:1.0.0");
+        assert!(
+            message.starts_with("failed to prefetch ghcr.io/greenticai/x:1.0.0 after 3 attempts: "),
+            "{message}"
+        );
+        assert!(message.contains("Not authorized"), "{message}");
+    }
+
+    #[test]
+    fn a_missing_manifest_is_tried_exactly_once() {
+        let runtime = current_thread_runtime();
+        let calls = std::cell::Cell::new(0);
+        let pull = || {
+            calls.set(calls.get() + 1);
+            std::future::ready(Err::<(), _>(DistError::Pack(MISSING_MANIFEST.into())))
+        };
+        let failure =
+            pull_with_retry(&runtime, "x:1.0.0", NO_BACKOFF, pull).expect_err("deterministic");
+        assert_eq!(calls.get(), 1);
+        assert_eq!(failure.attempts, 1);
+        let message = failure.describe("ghcr.io/greenticai/x:1.0.0");
+        assert!(
+            message.starts_with("failed to prefetch ghcr.io/greenticai/x:1.0.0: "),
+            "{message}"
+        );
+        assert!(!message.contains("attempts"), "{message}");
+    }
+
+    #[test]
+    fn a_zero_attempt_policy_still_pulls_once() {
+        let runtime = current_thread_runtime();
+        let (calls, pull) = failing_then_ok(0);
+        let policy = RetryPolicy {
+            attempts: 0,
+            base_delay: Duration::ZERO,
+        };
+        pull_with_retry(&runtime, "x:1.0.0", policy, pull).expect("one attempt");
+        assert_eq!(calls.get(), 1);
     }
 
     #[test]
