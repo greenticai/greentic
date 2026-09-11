@@ -20,6 +20,8 @@ mod i18n_support;
 mod install;
 #[path = "gtc/min_versions.rs"]
 mod min_versions;
+#[path = "gtc/package_artifact.rs"]
+mod package_artifact;
 #[path = "gtc/process.rs"]
 mod process;
 #[path = "gtc/prompt.rs"]
