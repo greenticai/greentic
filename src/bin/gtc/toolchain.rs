@@ -20,7 +20,10 @@ use sha2::{Digest, Sha256};
 
 use super::i18n_support::{t, tf};
 use super::install::{run_cargo, run_cargo_capture};
-use super::process::run_binary_capture;
+use super::package_artifact::{
+    PackageArtifactRef, artifact_for_target, install_package_artifact, validate_package_artifacts,
+};
+use super::process::{resolve_cargo_bin_dir, run_binary_capture};
 
 const TOOLCHAIN_MANIFEST_SCHEMA: &str = "greentic.toolchain-manifest.v1";
 const INSTALLED_TOOLCHAIN_SCHEMA: &str = "greentic.installed-toolchain.v1";
@@ -77,6 +80,15 @@ pub(crate) struct ToolchainPackage {
     pub crate_name: String,
     pub bins: Vec<String>,
     pub version: String,
+    /// Release archives for this exact version, one per target, installed
+    /// instead of `cargo binstall` when the running target has an entry. See
+    /// `package_artifact` for why a manifest needs to be able to say this.
+    ///
+    /// Optional so every manifest published before it keeps its meaning, and
+    /// omitted from serialization when absent so re-serialising one does not
+    /// grow a field it never had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<PackageArtifactRef>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -372,6 +384,17 @@ pub(crate) fn run_toolchain_install_detailed(
                         return 1.into();
                     }
                 };
+                if let Some(artifact) =
+                    artifact_for_target(package.artifacts.as_deref(), env!("GTC_TARGET_TRIPLE"))
+                {
+                    println!(
+                        "download {} (sha256 {}) -> {}",
+                        artifact.url,
+                        artifact.sha256,
+                        package.bins.join(", ")
+                    );
+                    continue;
+                }
                 for bin in &package.bins {
                     let args = toolchain_binstall_args_for_version(package, bin, &version);
                     println!("cargo {}", args.join(" "));
@@ -485,6 +508,13 @@ pub(crate) fn install_toolchain_package(
             return 1;
         }
     };
+    if let Some(artifact) =
+        artifact_for_target(package.artifacts.as_deref(), env!("GTC_TARGET_TRIPLE"))
+    {
+        return install_toolchain_package_from_artifact(
+            package, artifact, &version, force, debug, locale,
+        );
+    }
     for bin in &package.bins {
         if !force && installed_binary_version_matches(bin, &version, debug, locale) {
             println!("Installed {bin} binary already matches {version}; skipping.");
@@ -530,6 +560,66 @@ pub(crate) fn install_toolchain_package(
         );
     }
     0
+}
+
+/// Install `package` from the release archive its manifest names for this
+/// target. Whole-package, unlike the binstall path: one archive carries every
+/// bin, so it is skipped only when EVERY bin already reports `version`.
+fn install_toolchain_package_from_artifact(
+    package: &ToolchainPackage,
+    artifact: &PackageArtifactRef,
+    version: &str,
+    force: bool,
+    debug: bool,
+    locale: &str,
+) -> i32 {
+    if !force
+        && package
+            .bins
+            .iter()
+            .all(|bin| installed_binary_version_matches(bin, version, debug, locale))
+    {
+        println!(
+            "Installed {} binaries already match {version}; skipping.",
+            package.crate_name
+        );
+        return 0;
+    }
+    let bin_dir = match resolve_cargo_bin_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    println!(
+        "Installing {} {version} from {} into {}",
+        package.crate_name,
+        artifact.url,
+        bin_dir.display()
+    );
+    match install_package_artifact(artifact, &package.bins, &bin_dir, locale) {
+        Ok(installed) => {
+            for path in installed {
+                println!("  installed {}", path.display());
+            }
+            0
+        }
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                tf(
+                    locale,
+                    "gtc.install.toolchain.item_fail",
+                    &[
+                        ("crate", package.crate_name.as_str()),
+                        ("bin", package.bins.join(",").as_str())
+                    ]
+                )
+            );
+            1
+        }
+    }
 }
 
 fn installed_binary_version_matches(bin: &str, version: &str, debug: bool, locale: &str) -> bool {
@@ -820,6 +910,11 @@ pub(crate) fn validate_toolchain_manifest(manifest: &ToolchainManifest) -> GtcRe
                     package.crate_name, bin
                 )));
             }
+        }
+    }
+    for package in &manifest.packages {
+        if let Some(artifacts) = package.artifacts.as_deref() {
+            validate_package_artifacts(&package.crate_name, &package.version, artifacts)?;
         }
     }
     validate_toolchain_artifact_refs("extension_packs", manifest.extension_packs.as_deref())?;
@@ -2161,6 +2256,7 @@ mod tests {
                     crate_name: "greentic-dev".to_string(),
                     bins: vec!["greentic-dev".to_string()],
                     version: "0.5.9".to_string(),
+                    artifacts: None,
                 },
                 ToolchainPackage {
                     crate_name: "greentic-runner".to_string(),
@@ -2169,6 +2265,7 @@ mod tests {
                         "greentic-runner-cli".to_string(),
                     ],
                     version: "0.5.10".to_string(),
+                    artifacts: None,
                 },
             ],
             extension_packs: None,
@@ -2189,6 +2286,57 @@ mod tests {
         let manifest: ToolchainManifest = serde_json::from_str(raw).expect("manifest");
         validate_toolchain_manifest(&manifest).expect("valid");
         assert_eq!(manifest.packages[0].crate_name, "greentic-dev");
+    }
+
+    #[test]
+    fn parses_a_package_that_names_release_artifacts() {
+        let raw = format!(
+            r#"{{
+            "schema":"greentic.toolchain-manifest.v1",
+            "toolchain":"gtc",
+            "version":"1.2.34087396714",
+            "channel":"dev",
+            "packages":[{{
+                "crate":"greentic-start-dev",
+                "bins":["greentic-start-dev"],
+                "version":"1.2.34207645334",
+                "artifacts":[{{
+                    "target":"x86_64-unknown-linux-gnu",
+                    "url":"https://github.com/greenticai/greentic-start/releases/download/v1.2.34207645334/greentic-start-dev-v1.2.34207645334-x86_64-unknown-linux-gnu.tgz",
+                    "sha256":"{}"
+                }}]
+            }}]
+        }}"#,
+            "a".repeat(64)
+        );
+        let manifest: ToolchainManifest = serde_json::from_str(&raw).expect("manifest");
+        validate_toolchain_manifest(&manifest).expect("valid");
+        let artifact = artifact_for_target(
+            manifest.packages[0].artifacts.as_deref(),
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect("artifact for linux");
+        assert!(artifact.url.ends_with("x86_64-unknown-linux-gnu.tgz"));
+    }
+
+    #[test]
+    fn a_manifest_without_artifacts_round_trips_without_growing_the_field() {
+        let manifest = pinned_manifest();
+        let json = serde_json::to_string(&manifest).expect("serialize");
+        assert!(!json.contains("artifacts"), "{json}");
+        let back: ToolchainManifest = serde_json::from_str(&json).expect("parse");
+        assert_eq!(back, manifest);
+    }
+
+    #[test]
+    fn rejects_a_package_whose_artifacts_are_malformed() {
+        let mut manifest = pinned_manifest();
+        manifest.packages[0].artifacts = Some(vec![PackageArtifactRef {
+            target: "x86_64-unknown-linux-gnu".to_string(),
+            url: "https://example.invalid/pkg.tgz".to_string(),
+            sha256: "not-a-digest".to_string(),
+        }]);
+        assert!(validate_toolchain_manifest(&manifest).is_err());
     }
 
     #[test]
@@ -2226,6 +2374,7 @@ mod tests {
             crate_name: "greentic-dev".to_string(),
             bins: vec!["greentic-dev".to_string()],
             version: "0.5.10".to_string(),
+            artifacts: None,
         });
         assert!(validate_toolchain_manifest(&manifest).is_err());
     }
@@ -2256,6 +2405,7 @@ mod tests {
             crate_name: "greentic-start".to_string(),
             bins: vec!["greentic-start".to_string()],
             version: "0.5.8".to_string(),
+            artifacts: None,
         };
         assert_eq!(
             toolchain_binstall_args(&package, "greentic-start"),
@@ -2281,6 +2431,7 @@ mod tests {
             crate_name: "greentic-flow".to_string(),
             bins: vec!["greentic-flow".to_string()],
             version: "latest".to_string(),
+            artifacts: None,
         };
         assert_eq!(
             toolchain_binstall_args(&package, "greentic-flow"),
