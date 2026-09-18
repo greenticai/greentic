@@ -433,6 +433,12 @@ gtc release version (`--release 1.2.<gtc run-id>`). A channel snapshotted under
 any other version prints "this channel's gtc releases are not named by
 convention ... skipping self-update" and leaves the running launcher in place.
 
+When a channel manifest names per-target `artifacts` for a package, `gtc install`
+downloads that GitHub release archive, checks it against the sha256 the manifest
+states, and installs the package's binaries without consulting crates.io. A
+failed artifact install is reported as a failure; it is never retried through
+`cargo binstall`, which could only install a version the manifest did not pin.
+
 ---
 
 # Prerequisites
