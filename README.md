@@ -427,6 +427,12 @@ or `--ignore-release-context` to skip the check.
 `v1.2.<run-id>`; `gtc-dev --version` reports that same `1.2.<run-id>`, so a dev
 launcher can be traced back to the release and CI run that built it.
 
+`gtc-dev install` self-updates the launcher only when the `dev` channel manifest
+names a `gtc` artifact, which it does when the channel was snapshotted under a
+gtc release version (`--release 1.2.<gtc run-id>`). A channel snapshotted under
+any other version prints "this channel's gtc releases are not named by
+convention ... skipping self-update" and leaves the running launcher in place.
+
 ---
 
 # Prerequisites
