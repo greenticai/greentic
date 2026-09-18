@@ -423,6 +423,10 @@ latest release for the launcher's channel (`gtc` -> `stable`, `gtc-dev` ->
 `dev`, `gtc-rnd` -> `rnd`). Use `--strict-release-context` to fail on a mismatch,
 or `--ignore-release-context` to skip the check.
 
+`gtc-dev` is built on every push to `develop` and released on GitHub as
+`v1.2.<run-id>`; `gtc-dev --version` reports that same `1.2.<run-id>`, so a dev
+launcher can be traced back to the release and CI run that built it.
+
 ---
 
 # Prerequisites
