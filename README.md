@@ -439,6 +439,11 @@ states, and installs the package's binaries without consulting crates.io. A
 failed artifact install is reported as a failure; it is never retried through
 `cargo binstall`, which could only install a version the manifest did not pin.
 
+Tools installed from the `dev` channel keep a `-dev` suffix (`greentic-start-dev`,
+`greentic-runner-dev`, ...), so they sit beside stable installs instead of
+replacing them; `<tool>-dev --version` reports the `1.2.<run-id>` of the release
+the channel manifest pinned.
+
 ---
 
 # Prerequisites
