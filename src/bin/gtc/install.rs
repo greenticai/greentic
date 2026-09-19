@@ -20,6 +20,7 @@ use super::archive::{
     safe_join, set_executable_if_unix,
 };
 use super::deploy::ChildProcessEnv;
+pub(crate) use super::http_download::fetch_https_bytes;
 use super::i18n_support::{t, tf};
 use super::process::{passthrough_with_env, resolve_cargo_bin_dir, run_binary_capture};
 use super::toolchain::{
@@ -1006,80 +1007,6 @@ fn fetch_https_json_or_file_bytes(url: &str, key: &str, locale: &str) -> GtcResu
 
 fn fetch_asset_bytes(url: &str, key: &str, locale: &str) -> GtcResult<Vec<u8>> {
     fetch_https_bytes(url, key, locale, "application/octet-stream")
-}
-
-pub(super) fn fetch_https_bytes(
-    url: &str,
-    key: &str,
-    locale: &str,
-    accept: &str,
-) -> GtcResult<Vec<u8>> {
-    let client = Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| GtcError::message(format!("failed to create HTTP client: {e}")))?;
-
-    let mut current = reqwest::Url::parse(url)
-        .map_err(|e| GtcError::invalid_data("download URL", format!("{url}: {e}")))?;
-    let original = current.clone();
-    for _ in 0..10 {
-        let mut request = client
-            .get(current.clone())
-            .header("Accept", accept)
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", format!("gtc/{}", env!("CARGO_PKG_VERSION")));
-        if !key.is_empty() && should_send_auth_header(&original, &current) {
-            request = request.header("Authorization", format!("Bearer {key}"));
-        }
-        let response = request
-            .send()
-            .map_err(|e| GtcError::message(format!("{}: {e}", t(locale, "gtc.err.pull_failed"))))?;
-
-        if response.status().is_redirection() {
-            let location = response
-                .headers()
-                .get(reqwest::header::LOCATION)
-                .ok_or_else(|| {
-                    GtcError::invalid_data(
-                        "redirect response",
-                        format!("missing Location header for {}", current),
-                    )
-                })?
-                .to_str()
-                .map_err(|e| {
-                    GtcError::invalid_data(
-                        "redirect response",
-                        format!("invalid Location for {}: {e}", current),
-                    )
-                })?;
-            current = current.join(location).map_err(|e| {
-                GtcError::invalid_data(
-                    "redirect response",
-                    format!("invalid redirect target {location}: {e}"),
-                )
-            })?;
-            continue;
-        }
-
-        if !response.status().is_success() {
-            return Err(GtcError::message(format!(
-                "{}: HTTP {} for {}",
-                t(locale, "gtc.err.pull_failed"),
-                response.status(),
-                current
-            )));
-        }
-
-        return response
-            .bytes()
-            .map(|bytes| bytes.to_vec())
-            .map_err(|e| GtcError::message(format!("failed to read response body: {e}")));
-    }
-
-    Err(GtcError::invalid_data(
-        "redirect handling",
-        format!("too many redirects while fetching {url}"),
-    ))
 }
 
 pub(super) fn should_send_auth_header(original: &reqwest::Url, current: &reqwest::Url) -> bool {
@@ -2226,6 +2153,107 @@ mod tests {
         let installed = cargo_bin.path().join("greentic-demo");
         assert!(installed.exists());
         assert_eq!(fs::read(installed).expect("read"), b"tool-bytes");
+    }
+
+    /// Install a tool whose artifact is served over HTTP: the first attempt is
+    /// cut short (so the retry path runs), the second serves `served`, and the
+    /// manifest pins the digest of `pinned`.
+    fn install_tool_over_http_after_retry(
+        served: &[u8],
+        pinned: &[u8],
+    ) -> (gtc::error::GtcResult<()>, tempfile::TempDir) {
+        use super::super::http_download::test_server::{Reply, serve};
+        use super::super::http_download::{DownloadPolicy, override_policy_for_test};
+
+        let _policy = override_policy_for_test(DownloadPolicy {
+            connect_timeout: std::time::Duration::from_secs(2),
+            idle_timeout: std::time::Duration::from_millis(300),
+            attempts: 3,
+            base_backoff: std::time::Duration::from_millis(10),
+        });
+        let server = serve(
+            "greentic-demo",
+            vec![
+                Reply::Truncate {
+                    body: served.to_vec(),
+                    sent: 3,
+                },
+                Reply::Trickle {
+                    body: served.to_vec(),
+                    chunks: 1,
+                    gap: std::time::Duration::ZERO,
+                },
+            ],
+        );
+        let digest = {
+            let digest = sha2::Sha256::digest(pinned);
+            let mut out = String::from("sha256:");
+            for byte in digest {
+                use std::fmt::Write as _;
+                let _ = write!(&mut out, "{byte:02x}");
+            }
+            out
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let manifest = dir.path().join("tool.json");
+        fs::write(
+            &manifest,
+            format!(
+                r#"{{
+                    "schema_version":"1",
+                    "id":"demo-tool",
+                    "name":"Demo Tool",
+                    "description":"fixture",
+                    "install":{{
+                        "type":"binary",
+                        "binary_name":"greentic-demo",
+                        "targets":[{{"os":"{os}","arch":"{arch}","url":"{url}","sha256":"{sha}"}}]
+                    }},
+                    "docs":[]
+                }}"#,
+                os = current_install_os().expect("os"),
+                arch = current_install_arch().expect("arch"),
+                url = server.url,
+                sha = digest
+            ),
+        )
+        .expect("write manifest");
+
+        let cargo_bin = tempfile::tempdir().expect("tempdir");
+        let result = install_tenant_tool_reference(
+            &TenantManifestReference {
+                id: "demo-tool".to_string(),
+                url: format!("file://{}", manifest.display()),
+            },
+            "tenant",
+            "",
+            &current_install_os().expect("os"),
+            &current_install_arch().expect("arch"),
+            cargo_bin.path(),
+            "en",
+        );
+        assert_eq!(server.accepted(), 2, "the truncated attempt was retried");
+        server.join();
+        (result, cargo_bin)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_retried_http_download_installs_when_its_sha256_matches() {
+        let (result, cargo_bin) = install_tool_over_http_after_retry(b"tool-bytes", b"tool-bytes");
+        result.expect("install");
+        let installed = cargo_bin.path().join("greentic-demo");
+        assert_eq!(fs::read(installed).expect("read"), b"tool-bytes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_retried_http_download_is_still_rejected_on_sha256_mismatch() {
+        let (result, cargo_bin) =
+            install_tool_over_http_after_retry(b"tampered-bytes", b"tool-bytes");
+        let message = result.expect_err("digest mismatch").to_string();
+        assert!(message.contains("integrity check"), "{message}");
+        assert!(!cargo_bin.path().join("greentic-demo").exists());
     }
 
     #[cfg(unix)]

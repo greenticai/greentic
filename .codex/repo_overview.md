@@ -50,6 +50,7 @@ The repo is no longer just a minimal pass-through router. It still delegates sub
 - **Role:** Tool install and update flows.
 - **Key functionality:**
 - Manages tenant-aware companion binary install/update behavior and remote manifest/download flows.
+- Archive/self-update downloads (`http_download.rs`) use a connect timeout (30 s) plus an idle timeout (60 s between bytes) with no total cap, and retry transient failures with backoff, restarting from byte 0; sha256 is verified by callers.
 - `src/bin/gtc/toolchain.rs` owns the toolchain-manifest install path, including optional `extension_packs` and `components` manifest sections.
 - For release installs, it prefetches those artifacts through `greentic-distributor-client`, verifies blob and cache-entry presence, writes a release index under `GREENTIC_CACHE_DIR/release-index/v1/<channel>/<release>.json`, and records the current release context under `~/.greentic/releases/current.json` or `GTC_RELEASE_STATE_DIR/current.json`.
 - The install path can run binaries, release packs, release components, and tenant artifact install phases independently, while no selector keeps the full default behavior.

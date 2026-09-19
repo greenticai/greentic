@@ -486,13 +486,29 @@ pub(crate) fn install_toolchain_manifest(
     debug: bool,
     locale: &str,
 ) -> i32 {
+    // Keep going past a failed package: one flaky download must not leave every
+    // package after it uninstalled. Packages that already match are skipped on
+    // the next run, so a re-run only redoes the ones listed here.
+    let mut first_failure = 0;
+    let mut failed = Vec::new();
     for package in &resolved.manifest.packages {
         let status = install_toolchain_package(package, force, debug, locale);
         if status != 0 {
-            return status;
+            if first_failure == 0 {
+                first_failure = status;
+            }
+            failed.push(package.crate_name.as_str());
         }
     }
-    0
+    if !failed.is_empty() {
+        eprintln!(
+            "{} of {} toolchain packages failed to install: {}. Re-run `gtc install` to retry them.",
+            failed.len(),
+            resolved.manifest.packages.len(),
+            failed.join(", ")
+        );
+    }
+    first_failure
 }
 
 pub(crate) fn install_toolchain_package(
@@ -785,7 +801,9 @@ pub(crate) fn resolve_ghcr_manifest(
     locale: &str,
 ) -> GtcResult<ResolvedManifest> {
     let parsed = GhcrReference::parse(reference)?;
-    let client = Client::builder()
+    // Same connect + idle timeouts as the archive downloads (issue #346): the
+    // blocking default is a 30 s cap on the whole request.
+    let client = super::http_download::download_client_builder()
         .user_agent(format!("gtc/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|err| GtcError::message(format!("failed to create GHCR client: {err}")))?;
