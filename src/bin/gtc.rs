@@ -14,6 +14,8 @@ mod deploy;
 mod docs_cmd;
 #[path = "gtc/extensions.rs"]
 mod extensions;
+#[path = "gtc/http_download.rs"]
+mod http_download;
 #[path = "gtc/i18n.rs"]
 mod i18n_support;
 #[path = "gtc/install.rs"]

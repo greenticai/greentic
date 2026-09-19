@@ -439,6 +439,15 @@ states, and installs the package's binaries without consulting crates.io. A
 failed artifact install is reported as a failure; it is never retried through
 `cargo binstall`, which could only install a version the manifest did not pin.
 
+These downloads (and the `gtc` self-update tarball) have no cap on total
+transfer time, so a slow link can still fetch a large archive. An attempt is
+abandoned only if connecting takes more than 30 s or no data arrives for 60 s.
+Such failures, a body that is cut short, and HTTP 408/429/5xx responses are
+retried up to four times with backoff, and every retry downloads the archive
+again from the first byte. If one package still fails, `gtc install` goes on to
+install the others and then lists the failed ones. Re-running it redoes only
+the packages whose installed version does not match yet.
+
 Tools installed from the `dev` channel keep a `-dev` suffix (`greentic-start-dev`,
 `greentic-runner-dev`, ...), so they sit beside stable installs instead of
 replacing them; `<tool>-dev --version` reports the `1.2.<run-id>` of the release
