@@ -55,6 +55,53 @@ Supported channels are:
 If `--release` is provided without `--channel`, the channel defaults to the
 current launcher's channel.
 
+## Dev And Stable Side By Side
+
+The `dev` channel installs every companion under a `-dev` name
+(`greentic-start-dev`, `greentic-runner-dev`, ...) into the same bin directory
+stable uses (`$CARGO_HOME/bin`, default `~/.cargo/bin`). Stable keeps the
+canonical, unsuffixed names on `PATH`; installing dev never replaces them.
+
+Tools that look a companion up by its canonical name (greentic-designer,
+greentic-pack, scripts) need an explicit selection to use the dev build. For
+that, every toolchain install also maintains a directory of canonical-name
+links for the dev channel:
+
+```text
+~/.greentic/toolchain/channels/dev/bin/greentic-start  -> ~/.cargo/bin/greentic-start-dev
+~/.greentic/toolchain/channels/dev/bin/greentic-runner -> ~/.cargo/bin/greentic-runner-dev
+...
+```
+
+(`$GTC_TOOLCHAIN_STATE_DIR/channels/dev/bin` when that variable is set.) The
+links mirror what is installed: each `greentic-<name>-dev` binary gets a
+`greentic-<name>` link, and a link whose binary is gone is removed. `gtc-dev`
+itself and the stable `greentic-dev` are never linked. gtc never puts this
+directory on `PATH`.
+
+To use the dev toolchain for one shell (or one process), print the activation
+lines with `gtc channel-env` and evaluate them:
+
+```bash
+eval "$(gtc channel-env --channel dev)"          # sh, bash, zsh
+gtc channel-env --shell fish | source            # fish
+gtc channel-env --shell powershell | Invoke-Expression
+```
+
+The output prepends the link directory to `PATH` and exports a
+`GREENTIC_<NAME>_BIN` override for each installed dev companion gtc or
+greentic-designer honours (for example `GREENTIC_START_BIN`,
+`GREENTIC_PACK_BIN`, `GREENTIC_PLATFORM_BIN` for `greentic-deploy-platform`).
+The overrides matter because greentic-designer checks its own managed-binary
+pointer (`~/.greentic/bin/<id>/current`) before `PATH`. `gtc channel-env` also
+refreshes the links first, so it works on a machine whose dev toolchain was
+installed before the link directory existed. Only the `dev` channel has this
+layout; stable binaries already carry their canonical names.
+
+On Windows no links are created (a symlink needs a privilege most accounts
+lack, and a copy would go stale); `gtc channel-env` there selects the dev
+binaries through the `GREENTIC_*_BIN` overrides alone.
+
 ## Release Context Checks
 
 Before `gtc wizard` and `gtc setup` hand off to downstream tooling, `gtc` checks

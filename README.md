@@ -453,6 +453,13 @@ Tools installed from the `dev` channel keep a `-dev` suffix (`greentic-start-dev
 replacing them; `<tool>-dev --version` reports the `1.2.<run-id>` of the release
 the channel manifest pinned.
 
+To use the dev tools under their canonical names without touching the stable
+ones, gtc keeps canonical-name links for the dev channel in
+`~/.greentic/toolchain/channels/dev/bin` (never on `PATH` by default).
+`eval "$(gtc channel-env --channel dev)"` selects them for the current shell:
+it prepends that directory to `PATH` and exports `GREENTIC_*_BIN` pointing at
+the `-dev` binaries. See `docs/02-cli/gtc-install.md`.
+
 ---
 
 # Prerequisites

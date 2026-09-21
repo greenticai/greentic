@@ -17,6 +17,7 @@ use crate::answer_resolver::{
     AnswerSourceKind, DefaultAnswerSourceLoader, classify_answers_source, load_answer_bytes,
     load_answers, parse_answers_bytes,
 };
+use crate::channel_links::run_channel_env;
 use crate::cli::build_cli;
 use crate::deploy::{
     RefreshArgs, resolve_local_mutable_bundle_dir, run_refresh, run_start, run_stop,
@@ -79,6 +80,7 @@ pub(super) fn run(raw_args: Vec<String>) -> i32 {
             run_install(sub_matches, default_install_channel, debug, &locale)
         }
         Some(("update", _)) => run_update(debug, &locale),
+        Some(("channel-env", sub_matches)) => run_channel_env(sub_matches, &locale),
         Some(("help", sub_matches)) => run_help(sub_matches, &locale),
         Some(("add-admin", sub_matches)) => run_add_admin(sub_matches, &locale),
         Some(("remove-admin", sub_matches)) => run_remove_admin(sub_matches, &locale),
