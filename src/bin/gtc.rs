@@ -4,6 +4,8 @@ mod admin;
 mod answer_resolver;
 #[path = "gtc/archive.rs"]
 mod archive;
+#[path = "gtc/channel_links.rs"]
+mod channel_links;
 #[path = "gtc/cli.rs"]
 mod cli;
 #[path = "gtc/commands.rs"]

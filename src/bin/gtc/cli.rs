@@ -275,6 +275,43 @@ pub(super) fn build_cli(locale: &str) -> Command {
                 ),
         )
         .subcommand(
+            Command::new("channel-env")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.channel_env.about",
+                    "Print shell lines that select the dev channel's binaries by their canonical names for one shell, leaving the stable toolchain on PATH untouched.",
+                ))
+                .arg(
+                    Arg::new("channel")
+                        .long("channel")
+                        .value_name("CHANNEL")
+                        .num_args(1)
+                        .default_value("dev")
+                        .help_heading(options_heading)
+                        .help(t_or(
+                            locale,
+                            "gtc.arg.channel_env.channel.help",
+                            "Channel to select (only `dev` installs suffixed names).",
+                        )),
+                )
+                .arg(
+                    Arg::new("shell")
+                        .long("shell")
+                        .value_name("SHELL")
+                        .num_args(1)
+                        .help_heading(options_heading)
+                        .help(t_or(
+                            locale,
+                            "gtc.arg.channel_env.shell.help",
+                            "Shell syntax to print: sh (default on unix), fish, or powershell (default on Windows).",
+                        )),
+                ),
+        )
+        .subcommand(
             Command::new("update")
                 .help_template(help_template)
                 .subcommand_help_heading(commands_heading)

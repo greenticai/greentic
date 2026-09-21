@@ -18,6 +18,7 @@ use reqwest::header::{ACCEPT, AUTHORIZATION, WWW_AUTHENTICATE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::channel_links::sync_dev_channel_links;
 use super::i18n_support::{t, tf};
 use super::install::{run_cargo, run_cargo_capture};
 use super::package_artifact::{
@@ -370,6 +371,10 @@ pub(crate) fn run_toolchain_install_detailed(
         && resolved.digest.is_some()
     {
         println!("{}", t(locale, "gtc.install.toolchain.up_to_date"));
+        // Still refresh: a machine whose dev toolchain predates the link
+        // layout, or whose -dev binaries moved, would otherwise wait for the
+        // next manifest change to get its canonical-name links.
+        sync_dev_channel_links(locale);
         return 0.into();
     }
 
@@ -416,6 +421,9 @@ pub(crate) fn run_toolchain_install_detailed(
 
     if options.phases.binaries {
         let install_status = install_toolchain_manifest(&resolved, options.force, debug, locale);
+        // Before the status check: packages that did install still deserve
+        // their links, and the sync only mirrors what is actually on disk.
+        sync_dev_channel_links(locale);
         if install_status != 0 {
             return install_status.into();
         }

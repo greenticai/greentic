@@ -149,5 +149,15 @@
   "gtc.up.err.updates_version_gate": "--updates needs a newer greentic-operator (missing `op trust-root add-did`)",
   "gtc.up.err.updates_manifest_write": "failed to write the updates manifest",
   "gtc.up.err.updates_apply_failed": "`gtc up` stopped at the updates step",
-  "gtc.up.err.updates_plan_failed": "could not plan the updates subscription"
+  "gtc.up.err.updates_plan_failed": "could not plan the updates subscription",
+  "gtc.channel_links.unsupported_platform": "Canonical-name links for the dev channel are not created on this platform; run `gtc channel-env --channel dev` to select the -dev binaries through GREENTIC_*_BIN instead.",
+  "gtc.channel_links.sync_failed": "warning: dev channel links in {dir} were not refreshed: {error}",
+  "gtc.channel_links.skipped": "warning: {dir}/{name} is not a link; left it in place",
+  "gtc.channel_links.synced": "Dev channel canonical-name links: {count} in {dir} (not on PATH; `gtc channel-env --channel dev` prints how to select them).",
+  "gtc.channel_env.unsupported_channel": "channel '{channel}' has no side-by-side layout: only the dev channel installs suffixed names. Stable companions already carry their canonical names on PATH.",
+  "gtc.channel_env.unsupported_shell": "unsupported shell '{shell}'; use sh, fish, or powershell",
+  "gtc.channel_env.nothing_installed": "no dev-channel binaries (greentic-*-dev) found in {dir}; run `gtc install --channel dev` (or `gtc-dev install`) first.",
+  "gtc.cmd.channel_env.about": "Print shell lines that select the dev channel's binaries by their canonical names for one shell, leaving the stable toolchain on PATH untouched.",
+  "gtc.arg.channel_env.channel.help": "Channel to select (only `dev` installs suffixed names).",
+  "gtc.arg.channel_env.shell.help": "Shell syntax to print: sh (default on unix), fish, or powershell (default on Windows)."
 }
