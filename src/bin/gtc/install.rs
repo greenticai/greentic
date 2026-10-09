@@ -20,9 +20,12 @@ use super::archive::{
     safe_join, set_executable_if_unix,
 };
 use super::deploy::ChildProcessEnv;
+pub(crate) use super::http_download::fetch_https_bytes;
 use super::i18n_support::{t, tf};
 use super::process::{passthrough_with_env, resolve_cargo_bin_dir, run_binary_capture};
-use super::toolchain::{ToolchainInstallOptions, ToolchainSource, run_toolchain_install};
+use super::toolchain::{
+    ToolchainInstallOptions, ToolchainSource, run_toolchain_install, run_toolchain_install_detailed,
+};
 use super::{DEPLOYER_BIN, DEV_BIN, sha256_file};
 
 pub(super) fn run_install(
@@ -44,6 +47,21 @@ pub(super) fn run_install(
     }
 
     let dry_run = sub_matches.get_flag("dry-run");
+
+    // The toolchain phase and the tenant phase are independent ONLY for a
+    // self-update failure, and the distinction matters in both directions.
+    //
+    // A companion binary that failed to install is a real reason not to go on,
+    // and `install_skips_tenant_when_public_install_fails` pins that. But gtc
+    // failing to update ITSELF has nothing to do with the tenant's artifacts,
+    // and returning on it meant a self-update 404 silently cancelled the whole
+    // tenant install: thirteen companions installed, then the command exited
+    // having fetched nothing, with the tenant named nowhere in the output. The
+    // toolchain phase even reports that work as done "on a best-effort basis"
+    // while returning non-zero.
+    //
+    // The failure is still reported and still decides the exit code below.
+    let mut toolchain_status = 0;
     if phases.binaries || phases.packs || phases.components {
         let options = match ToolchainInstallOptions::from_matches(sub_matches, default_channel) {
             Ok(options) => options,
@@ -52,16 +70,17 @@ pub(super) fn run_install(
                 return 2;
             }
         };
-        let toolchain_status = run_toolchain_install(options, debug, locale);
+        let outcome = run_toolchain_install_detailed(options, debug, locale);
+        toolchain_status = outcome.status;
         if toolchain_status != 0 {
-            return toolchain_status;
+            if !outcome.self_update_only_failure {
+                return toolchain_status;
+            }
+            eprintln!(
+                "note: gtc could not update itself, but the tenant install does not depend on \
+                 that; continuing. The final exit code still reports the failure."
+            );
         }
-        if dry_run {
-            return 0;
-        }
-    }
-    if dry_run {
-        return 0;
     }
 
     let tenant = sub_matches
@@ -74,11 +93,25 @@ pub(super) fn run_install(
             eprintln!("--install-tenant-only requires --tenant <TENANT>");
             return 2;
         }
-        return 0;
+        return toolchain_status;
     };
 
     if !phases.tenant {
-        return 0;
+        return toolchain_status;
+    }
+
+    // A dry run used to `return 0` above, BEFORE this block — so `--dry-run`
+    // reported success while exercising none of the tenant path, and
+    // `--install-tenant-only --dry-run` printed nothing whatsoever. Anyone
+    // validating a tenant manifest that way concluded it was fine. Describe the
+    // hand-off instead; the key is deliberately not resolved or printed.
+    if dry_run {
+        println!(
+            "Dry run: would install tenant-authorized artifacts for `{tenant}` via `{DEV_BIN} \
+             install --tenant {tenant} --token env:{}`",
+            tenant_env_var_name(&tenant)
+        );
+        return toolchain_status;
     }
 
     println!(
@@ -101,16 +134,69 @@ pub(super) fn run_install(
 
     let env_name = tenant_env_var_name(&tenant);
     let mut child_env = ChildProcessEnv::new();
+    // The delegate takes the key by env indirection; the store step below needs
+    // it too, and it is never written anywhere or printed.
+    let store_key = key.clone();
     child_env.set(env_name.clone(), key);
 
     let tenant_args = vec![
         "install".to_string(),
         "--tenant".to_string(),
-        tenant,
+        // Cloned: the store-asset step below needs the tenant too.
+        tenant.clone(),
         "--token".to_string(),
         format!("env:{env_name}"),
     ];
-    passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env)
+    let mut tenant_status = passthrough_with_env(DEV_BIN, &tenant_args, debug, locale, &child_env);
+
+    // `store_assets` are the one part of a tenant manifest the delegate does not
+    // install: greentic-dev has no distributor client for them, so it reports
+    // them and moves on. gtc does have one — this whole path already existed
+    // here and had simply become unreachable when the tenant phase was handed
+    // over. Running it after the delegate keeps one owner per artifact kind
+    // rather than teaching the delegate a second way to fetch things.
+    //
+    // Only attempted when the delegate succeeded: a failed tools install is not
+    // a state worth adding store artifacts to.
+    if tenant_status == 0 {
+        // Two failures, two meanings, and collapsing them was wrong.
+        //
+        // Failing to READ the manifest means we do not know whether this tenant
+        // declares any store assets — so it cannot be reported as "they failed
+        // to install". The tools are on disk and correct; warn and leave the
+        // exit code alone. Doing otherwise made an offline or unauthorized
+        // lookup fail an install that had entirely succeeded.
+        //
+        // Failing to PULL an asset the manifest DOES declare is a real failure
+        // of a declared entitlement, and carries the exit code.
+        match resolve_tenant_store_assets(&tenant, &store_key, locale) {
+            Err(err) => {
+                eprintln!("warning: could not check {tenant}'s store assets: {err}");
+            }
+            Ok(assets) if assets.is_empty() => {}
+            Ok(assets) => match install_resolved_store_assets(&assets, &tenant, &store_key, locale)
+            {
+                Ok(installed) => {
+                    println!("Installed store assets:");
+                    for path in installed {
+                        println!("- {}", path.display());
+                    }
+                }
+                Err(err) => {
+                    eprintln!("error: store assets could not be installed: {err}");
+                    tenant_status = 1;
+                }
+            },
+        }
+    }
+
+    // The tenant failure is the more actionable of the two, so it wins the exit
+    // code; a toolchain failure still surfaces when the tenant phase succeeded.
+    if tenant_status != 0 {
+        tenant_status
+    } else {
+        toolchain_status
+    }
 }
 
 pub(super) fn run_update(debug: bool, locale: &str) -> i32 {
@@ -923,80 +1009,6 @@ fn fetch_asset_bytes(url: &str, key: &str, locale: &str) -> GtcResult<Vec<u8>> {
     fetch_https_bytes(url, key, locale, "application/octet-stream")
 }
 
-pub(super) fn fetch_https_bytes(
-    url: &str,
-    key: &str,
-    locale: &str,
-    accept: &str,
-) -> GtcResult<Vec<u8>> {
-    let client = Client::builder()
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| GtcError::message(format!("failed to create HTTP client: {e}")))?;
-
-    let mut current = reqwest::Url::parse(url)
-        .map_err(|e| GtcError::invalid_data("download URL", format!("{url}: {e}")))?;
-    let original = current.clone();
-    for _ in 0..10 {
-        let mut request = client
-            .get(current.clone())
-            .header("Accept", accept)
-            .header("X-GitHub-Api-Version", "2022-11-28")
-            .header("User-Agent", format!("gtc/{}", env!("CARGO_PKG_VERSION")));
-        if !key.is_empty() && should_send_auth_header(&original, &current) {
-            request = request.header("Authorization", format!("Bearer {key}"));
-        }
-        let response = request
-            .send()
-            .map_err(|e| GtcError::message(format!("{}: {e}", t(locale, "gtc.err.pull_failed"))))?;
-
-        if response.status().is_redirection() {
-            let location = response
-                .headers()
-                .get(reqwest::header::LOCATION)
-                .ok_or_else(|| {
-                    GtcError::invalid_data(
-                        "redirect response",
-                        format!("missing Location header for {}", current),
-                    )
-                })?
-                .to_str()
-                .map_err(|e| {
-                    GtcError::invalid_data(
-                        "redirect response",
-                        format!("invalid Location for {}: {e}", current),
-                    )
-                })?;
-            current = current.join(location).map_err(|e| {
-                GtcError::invalid_data(
-                    "redirect response",
-                    format!("invalid redirect target {location}: {e}"),
-                )
-            })?;
-            continue;
-        }
-
-        if !response.status().is_success() {
-            return Err(GtcError::message(format!(
-                "{}: HTTP {} for {}",
-                t(locale, "gtc.err.pull_failed"),
-                response.status(),
-                current
-            )));
-        }
-
-        return response
-            .bytes()
-            .map(|bytes| bytes.to_vec())
-            .map_err(|e| GtcError::message(format!("failed to read response body: {e}")));
-    }
-
-    Err(GtcError::invalid_data(
-        "redirect handling",
-        format!("too many redirects while fetching {url}"),
-    ))
-}
-
 pub(super) fn should_send_auth_header(original: &reqwest::Url, current: &reqwest::Url) -> bool {
     original.scheme() == current.scheme()
         && original.host_str() == current.host_str()
@@ -1020,7 +1032,15 @@ fn resolve_tenant_manifest_url(tenant: &str, key: &str, locale: &str) -> GtcResu
     if let Some(template) = GtcConfig::from_env().tenant_manifest_url_template() {
         return Ok(template.replace("{tenant}", tenant));
     }
-    let release = fetch_github_release("greentic-biz", "customers-tools", "latest", key, locale)?;
+    // `/releases/tags/latest`, NOT `/releases/latest`. They are different
+    // releases: the rolling `latest` TAG is force-moved on every main push and
+    // is a prerelease, while GitHub's "latest release" resolves to the newest
+    // non-prerelease (`v0.2.0` today). greentic-dev — which installs the tools
+    // from this same manifest — reads the rolling tag, so reading anything else
+    // here risks taking a tenant's store assets from a different manifest than
+    // its tools.
+    let release =
+        fetch_github_release_by_tag("greentic-biz", "customers-tools", "latest", key, locale)?;
     let asset_name = format!("{tenant}.json");
     release
         .assets
@@ -1072,6 +1092,24 @@ fn resolve_github_release_asset_api_url(
         .into_iter()
         .find(|asset| asset.name == asset_name)
         .map(|asset| asset.url))
+}
+
+/// Always `/releases/tags/{tag}` — never GitHub's "latest release" shortcut.
+///
+/// `fetch_github_release` special-cases the literal tag `latest` into
+/// `/releases/latest`, which is a different thing entirely when a repository
+/// also has a rolling tag NAMED `latest`.
+fn fetch_github_release_by_tag(
+    owner: &str,
+    repo: &str,
+    tag: &str,
+    key: &str,
+    locale: &str,
+) -> GtcResult<GithubRelease> {
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}");
+    let bytes = fetch_https_json_or_file_bytes(&url, key, locale)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|e| GtcError::json(format!("failed to parse release metadata from {url}"), e))
 }
 
 fn fetch_github_release(
@@ -1343,6 +1381,61 @@ pub(super) fn expand_into_target(source_dir: &Path, target_dir: &Path) -> GtcRes
     }
 
     Ok(())
+}
+
+/// The `store_assets` a tenant manifest declares, if it can be read.
+///
+/// An error here means the manifest could not be READ — never that a tenant has
+/// none. Those are different answers and the caller treats them differently.
+fn resolve_tenant_store_assets(
+    tenant: &str,
+    key: &str,
+    locale: &str,
+) -> GtcResult<Vec<TenantManifestReference>> {
+    let manifest_url = resolve_tenant_manifest_url(tenant, key, locale)?;
+    // The URL is a release ASSET, so it must be fetched as octet-stream.
+    // `fetch_json_with_auth` sends `Accept: application/vnd.github+json`, which
+    // GitHub answers with the asset's METADATA — a clean JSON body that then
+    // fails to parse as a manifest, for a reason the error would not name.
+    let bytes = fetch_asset_bytes(&manifest_url, key, locale)?;
+    let manifest: TenantInstallManifest = serde_json::from_slice(&bytes).map_err(|e| {
+        GtcError::json(
+            format!("failed to parse the tenant manifest from {manifest_url}"),
+            e,
+        )
+    })?;
+    if manifest.tenant != tenant {
+        return Err(GtcError::invalid_data(
+            "tenant manifest",
+            format!(
+                "requested `{tenant}` but the manifest declares `{}`",
+                manifest.tenant
+            ),
+        ));
+    }
+    Ok(manifest.store_assets)
+}
+
+/// Pull every declared store asset. A failure here is a declared entitlement
+/// that did not install.
+fn install_resolved_store_assets(
+    assets: &[TenantManifestReference],
+    tenant: &str,
+    key: &str,
+    locale: &str,
+) -> GtcResult<Vec<PathBuf>> {
+    let artifacts_root = resolve_artifacts_root()?;
+    let mut installed = Vec::new();
+    for asset in assets {
+        installed.extend(install_store_asset_reference(
+            asset,
+            tenant,
+            key,
+            &artifacts_root,
+            locale,
+        )?);
+    }
+    Ok(installed)
 }
 
 fn resolve_artifacts_root() -> GtcResult<PathBuf> {
@@ -2060,6 +2153,107 @@ mod tests {
         let installed = cargo_bin.path().join("greentic-demo");
         assert!(installed.exists());
         assert_eq!(fs::read(installed).expect("read"), b"tool-bytes");
+    }
+
+    /// Install a tool whose artifact is served over HTTP: the first attempt is
+    /// cut short (so the retry path runs), the second serves `served`, and the
+    /// manifest pins the digest of `pinned`.
+    fn install_tool_over_http_after_retry(
+        served: &[u8],
+        pinned: &[u8],
+    ) -> (gtc::error::GtcResult<()>, tempfile::TempDir) {
+        use super::super::http_download::test_server::{Reply, serve};
+        use super::super::http_download::{DownloadPolicy, override_policy_for_test};
+
+        let _policy = override_policy_for_test(DownloadPolicy {
+            connect_timeout: std::time::Duration::from_secs(2),
+            idle_timeout: std::time::Duration::from_millis(300),
+            attempts: 3,
+            base_backoff: std::time::Duration::from_millis(10),
+        });
+        let server = serve(
+            "greentic-demo",
+            vec![
+                Reply::Truncate {
+                    body: served.to_vec(),
+                    sent: 3,
+                },
+                Reply::Trickle {
+                    body: served.to_vec(),
+                    chunks: 1,
+                    gap: std::time::Duration::ZERO,
+                },
+            ],
+        );
+        let digest = {
+            let digest = sha2::Sha256::digest(pinned);
+            let mut out = String::from("sha256:");
+            for byte in digest {
+                use std::fmt::Write as _;
+                let _ = write!(&mut out, "{byte:02x}");
+            }
+            out
+        };
+        let dir = tempfile::tempdir().expect("tempdir");
+        let manifest = dir.path().join("tool.json");
+        fs::write(
+            &manifest,
+            format!(
+                r#"{{
+                    "schema_version":"1",
+                    "id":"demo-tool",
+                    "name":"Demo Tool",
+                    "description":"fixture",
+                    "install":{{
+                        "type":"binary",
+                        "binary_name":"greentic-demo",
+                        "targets":[{{"os":"{os}","arch":"{arch}","url":"{url}","sha256":"{sha}"}}]
+                    }},
+                    "docs":[]
+                }}"#,
+                os = current_install_os().expect("os"),
+                arch = current_install_arch().expect("arch"),
+                url = server.url,
+                sha = digest
+            ),
+        )
+        .expect("write manifest");
+
+        let cargo_bin = tempfile::tempdir().expect("tempdir");
+        let result = install_tenant_tool_reference(
+            &TenantManifestReference {
+                id: "demo-tool".to_string(),
+                url: format!("file://{}", manifest.display()),
+            },
+            "tenant",
+            "",
+            &current_install_os().expect("os"),
+            &current_install_arch().expect("arch"),
+            cargo_bin.path(),
+            "en",
+        );
+        assert_eq!(server.accepted(), 2, "the truncated attempt was retried");
+        server.join();
+        (result, cargo_bin)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_retried_http_download_installs_when_its_sha256_matches() {
+        let (result, cargo_bin) = install_tool_over_http_after_retry(b"tool-bytes", b"tool-bytes");
+        result.expect("install");
+        let installed = cargo_bin.path().join("greentic-demo");
+        assert_eq!(fs::read(installed).expect("read"), b"tool-bytes");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_retried_http_download_is_still_rejected_on_sha256_mismatch() {
+        let (result, cargo_bin) =
+            install_tool_over_http_after_retry(b"tampered-bytes", b"tool-bytes");
+        let message = result.expect_err("digest mismatch").to_string();
+        assert!(message.contains("integrity check"), "{message}");
+        assert!(!cargo_bin.path().join("greentic-demo").exists());
     }
 
     #[cfg(unix)]

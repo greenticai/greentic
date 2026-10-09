@@ -86,6 +86,10 @@ impl GtcConfig {
         self.non_empty_var_os("GREENTIC_DEPLOYER_BIN")
     }
 
+    pub fn platform_bin_override(&self) -> Option<OsString> {
+        self.non_empty_var_os("GREENTIC_PLATFORM_BIN")
+    }
+
     pub fn flow_bin_override(&self) -> Option<OsString> {
         self.non_empty_var_os("GREENTIC_FLOW_BIN")
     }

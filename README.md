@@ -423,6 +423,43 @@ latest release for the launcher's channel (`gtc` -> `stable`, `gtc-dev` ->
 `dev`, `gtc-rnd` -> `rnd`). Use `--strict-release-context` to fail on a mismatch,
 or `--ignore-release-context` to skip the check.
 
+`gtc-dev` is built on every push to `develop` and released on GitHub as
+`v1.2.<run-id>`; `gtc-dev --version` reports that same `1.2.<run-id>`, so a dev
+launcher can be traced back to the release and CI run that built it.
+
+`gtc-dev install` self-updates the launcher only when the `dev` channel manifest
+names a `gtc` artifact, which it does when the channel was snapshotted under a
+gtc release version (`--release 1.2.<gtc run-id>`). A channel snapshotted under
+any other version prints "this channel's gtc releases are not named by
+convention ... skipping self-update" and leaves the running launcher in place.
+
+When a channel manifest names per-target `artifacts` for a package, `gtc install`
+downloads that GitHub release archive, checks it against the sha256 the manifest
+states, and installs the package's binaries without consulting crates.io. A
+failed artifact install is reported as a failure; it is never retried through
+`cargo binstall`, which could only install a version the manifest did not pin.
+
+These downloads (and the `gtc` self-update tarball) have no cap on total
+transfer time, so a slow link can still fetch a large archive. An attempt is
+abandoned only if connecting takes more than 30 s or no data arrives for 60 s.
+Such failures, a body that is cut short, and HTTP 408/429/5xx responses are
+retried up to four times with backoff, and every retry downloads the archive
+again from the first byte. If one package still fails, `gtc install` goes on to
+install the others and then lists the failed ones. Re-running it redoes only
+the packages whose installed version does not match yet.
+
+Tools installed from the `dev` channel keep a `-dev` suffix (`greentic-start-dev`,
+`greentic-runner-dev`, ...), so they sit beside stable installs instead of
+replacing them; `<tool>-dev --version` reports the `1.2.<run-id>` of the release
+the channel manifest pinned.
+
+To use the dev tools under their canonical names without touching the stable
+ones, gtc keeps canonical-name links for the dev channel in
+`~/.greentic/toolchain/channels/dev/bin` (never on `PATH` by default).
+`eval "$(gtc channel-env --channel dev)"` selects them for the current shell:
+it prepends that directory to `PATH` and exports `GREENTIC_*_BIN` pointing at
+the `-dev` binaries. See `docs/02-cli/gtc-install.md`.
+
 ---
 
 # Prerequisites

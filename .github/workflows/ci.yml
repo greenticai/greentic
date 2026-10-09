@@ -13,3 +13,24 @@ concurrency:
 jobs:
   ci:
     uses: greenticai/.github/.github/workflows/host-crate-ci.yml@main
+
+  # `Cargo.lock` drift is invisible to the shared CI above, which does not pass
+  # `--locked`. dev-publish does — so a missing lock entry goes green through
+  # review, merges, and then fails every target of the release build:
+  #
+  #   error: cannot update the lock file ... because --locked was passed
+  #
+  # That failure arrives after the merge, where it looks like a publish problem
+  # rather than the PR's, and leaves reviewed work unreleased with nothing red.
+  # Checking it here costs seconds and moves the failure to the PR that caused
+  # it. Deliberately repo-local: the shared workflow is org-wide, and turning
+  # `--locked` on there would redden every repo whose lock has already drifted.
+  lockfile:
+    name: Cargo.lock is in sync
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify the lockfile needs no update
+        run: cargo metadata --locked --format-version 1 > /dev/null

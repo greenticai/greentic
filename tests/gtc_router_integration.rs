@@ -841,7 +841,14 @@ fn gtc_dev_doctor_checks_dev_suffixed_companions() {
     sandbox.write_version_tool("greentic-runner-dev", "greentic-runner-dev 0.0.0");
     sandbox.write_version_tool("greentic-secrets-dev", "greentic-secrets-dev 0.0.0");
     sandbox.write_version_tool("greentic-setup-dev", "greentic-setup-dev 0.0.0");
-    sandbox.write_version_tool("greentic-start-dev", "greentic-start-dev 0.0.0");
+    // greentic-start is the one binary with a declared runtime-capability floor
+    // (see `min_versions::MINIMUM_VERSIONS`), so its stub has to report a
+    // version that meets it. Every other stub can stay at 0.0.0 precisely
+    // because no floor is asserted for it.
+    sandbox.write_version_tool(
+        "greentic-start-dev",
+        "greentic-start-dev 1.2.0-dev.32809817892",
+    );
     sandbox.write_version_tool("greentic-deployer-dev", "greentic-deployer-dev 0.0.0");
 
     let output = sandbox.run_gtc_dev_capture(["doctor"], HashMap::new());
@@ -888,7 +895,9 @@ fn doctor_uses_greentic_dev_bin_override() {
     sandbox.write_version_tool("greentic-runner", "greentic-runner 0.0.0");
     sandbox.write_version_tool("greentic-secrets", "greentic-secrets 0.0.0");
     sandbox.write_version_tool("greentic-setup", "greentic-setup 0.0.0");
-    sandbox.write_version_tool("greentic-start", "greentic-start 0.0.0");
+    // See the note in `gtc_dev_doctor_checks_dev_suffixed_companions`: this stub
+    // must clear greentic-start's declared floor or doctor correctly fails.
+    sandbox.write_version_tool("greentic-start", "greentic-start 1.2.0-dev.32809817892");
     sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
 
     let mut extra = HashMap::new();
@@ -929,7 +938,9 @@ fn doctor_prints_stable_packs_and_components_from_release_index() {
     sandbox.write_version_tool("greentic-runner", "greentic-runner 0.0.0");
     sandbox.write_version_tool("greentic-secrets", "greentic-secrets 0.0.0");
     sandbox.write_version_tool("greentic-setup", "greentic-setup 0.0.0");
-    sandbox.write_version_tool("greentic-start", "greentic-start 0.0.0");
+    // See the note in `gtc_dev_doctor_checks_dev_suffixed_companions`: this stub
+    // must clear greentic-start's declared floor or doctor correctly fails.
+    sandbox.write_version_tool("greentic-start", "greentic-start 1.2.0-dev.32809817892");
     sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
 
     let state_dir = sandbox.path().join("toolchain-state");
@@ -961,6 +972,135 @@ fn doctor_prints_stable_packs_and_components_from_release_index() {
     assert!(stdout.contains("ghcr.io/greenticai/packs/messaging/messaging-webchat-gui:stable"));
     assert!(stdout.contains("stable components:"));
     assert!(stdout.contains("ghcr.io/greenticai/components/templates:stable"));
+}
+
+/// Writes a full set of companion stubs, letting the caller decide what
+/// `greentic-start` reports for `--version`.
+///
+/// Every doctor test needs all eleven present — a missing binary is its own
+/// failure — so the only interesting variable is the one binary carrying a
+/// declared minimum.
+fn write_doctor_companion_stubs(sandbox: &TestSandbox, start_version: &str) {
+    sandbox.write_version_tool("greentic-dev", "greentic-dev 0.0.0");
+    sandbox.write_version_tool("greentic-operator", "greentic-operator 0.0.0");
+    sandbox.write_version_tool("greentic-bundle", "greentic-bundle 0.0.0");
+    sandbox.write_version_tool("greentic-component", "greentic-component 0.0.0");
+    sandbox.write_version_tool("greentic-flow", "greentic-flow 0.0.0");
+    sandbox.write_version_tool("greentic-pack", "greentic-pack 0.0.0");
+    sandbox.write_version_tool("greentic-runner", "greentic-runner 0.0.0");
+    sandbox.write_version_tool("greentic-secrets", "greentic-secrets 0.0.0");
+    sandbox.write_version_tool("greentic-setup", "greentic-setup 0.0.0");
+    sandbox.write_version_tool("greentic-deployer", "greentic-deployer 0.0.0");
+    sandbox.write_version_tool("greentic-start", start_version);
+}
+
+/// The regression this whole check exists for.
+///
+/// greentic-start 1.1.41 is PRESENT and answers `--version` cleanly, so the old
+/// doctor reported `OK` — and a pack using the `var.set` builtin then died at
+/// its second node with `component 'var' not found in pack`. Doctor must now
+/// name the version, name the floor, and FAIL, because a report that still
+/// exits 0 reproduces the original bug exactly.
+#[test]
+fn doctor_fails_when_greentic_start_is_below_its_declared_floor() {
+    let sandbox = TestSandbox::new("doctor_fails_when_greentic_start_is_below_its_declared_floor");
+    write_doctor_companion_stubs(&sandbox, "greentic-start 1.1.41");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["doctor"], extra);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a below-floor companion must fail doctor, not merely be mentioned in it\nstdout: {stdout}",
+    );
+    assert!(
+        stdout.contains("greentic-start: OUTDATED (greentic-start 1.1.41)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("needs 1.2.0-dev or newer; found 1.1.41."),
+        "the line must name both the floor and what was found\nstdout: {stdout}",
+    );
+    assert!(
+        stdout.contains("var.set"),
+        "the operator has to be told WHICH capability the floor buys\nstdout: {stdout}",
+    );
+    assert!(
+        stdout.contains("gtc update"),
+        "an actionable status has to say what to run\nstdout: {stdout}",
+    );
+    // The binaries with no declared floor must be unaffected: a floor on one
+    // binary condemning the whole toolchain would be the packaging-shaped check
+    // this deliberately is not.
+    assert!(
+        stdout.contains("greentic-bundle: OK (greentic-bundle 0.0.0)"),
+        "{stdout}"
+    );
+}
+
+/// The build that fixed it must PASS. Guards the prerelease ordering: a bare
+/// `1.2.0` floor would rank every `1.2.0-dev.*` below it and reject the very
+/// binaries carrying the handler.
+#[test]
+fn doctor_accepts_the_dev_build_that_carries_var_set() {
+    let sandbox = TestSandbox::new("doctor_accepts_the_dev_build_that_carries_var_set");
+    write_doctor_companion_stubs(&sandbox, "greentic-start 1.2.0-dev.32809817892");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["doctor"], extra);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(output.status.code(), Some(0), "stdout: {stdout}");
+    assert!(
+        stdout.contains("greentic-start: OK (greentic-start 1.2.0-dev.32809817892)"),
+        "{stdout}"
+    );
+}
+
+/// A locally built or `GREENTIC_START_BIN`-overridden companion prints no
+/// version this can parse. That is legitimate, so it must not fail the run —
+/// but it must not read as `OK` either: "we could not check" and "we checked
+/// and it is fine" are different facts, and collapsing them is what let the
+/// original failure through.
+#[test]
+fn doctor_reports_unknown_when_a_version_cannot_be_parsed() {
+    let sandbox = TestSandbox::new("doctor_reports_unknown_when_a_version_cannot_be_parsed");
+    write_doctor_companion_stubs(&sandbox, "greentic-start local-build");
+
+    let mut extra = HashMap::new();
+    extra.insert(
+        "GTC_TOOLCHAIN_STATE_DIR".to_string(),
+        sandbox.path().join("toolchain-state").display().to_string(),
+    );
+
+    let output = sandbox.run_gtc_capture(["doctor"], extra);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "an unreadable version is not evidence of a problem\nstdout: {stdout}",
+    );
+    assert!(
+        stdout.contains("greentic-start: UNKNOWN (greentic-start local-build)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("could not read a version from this binary"),
+        "{stdout}"
+    );
 }
 
 #[test]

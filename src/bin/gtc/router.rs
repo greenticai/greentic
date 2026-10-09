@@ -5,7 +5,7 @@ use gtc::perf_targets::{
     rewrite_legacy_op_args as perf_rewrite_legacy_op_args,
 };
 
-use super::{DEV_BIN, DW_BIN, OP_BIN, SETUP_BIN};
+use super::{DEV_BIN, DW_BIN, OP_BIN, PLATFORM_BIN, SETUP_BIN};
 use crate::extensions::has_extension_flags;
 use crate::i18n_support::i18n;
 
@@ -68,6 +68,13 @@ pub(super) fn route_passthrough_subcommand(
         "wizard" => Some((DEV_BIN, build_wizard_args(tail, locale))),
         "worker" => Some((DW_BIN, build_worker_args(tail))),
         "provider" => Some((SETUP_BIN, build_provider_args(tail))),
+        // Verbatim, like `setup`: greentic-deploy-platform's own verbs are its
+        // top level, so there is no token to re-add. This entry is also what
+        // makes `gtc platform --help` reach the companion — the root's `--help`
+        // is a global arg, so a subcommand left to clap would have its help
+        // answered here instead, printing an empty `[args]...` list rather than
+        // the eight verbs the operator asked about.
+        "platform" => Some((PLATFORM_BIN, tail.to_vec())),
         _ => None,
     }
 }

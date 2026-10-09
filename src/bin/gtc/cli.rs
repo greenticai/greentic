@@ -264,6 +264,51 @@ pub(super) fn build_cli(locale: &str) -> Command {
                         .action(ArgAction::SetTrue)
                         .help_heading(options_heading)
                         .help("Skip replacing the gtc binary itself; only install companion binaries and artifacts."),
+                )
+                .arg(
+                    Arg::new("airgap")
+                        .long("airgap")
+                        .action(ArgAction::SetTrue)
+                        .conflicts_with_all(["channel", "release", "manifest"])
+                        .help_heading(options_heading)
+                        .help("Install the airgapped toolchain: the dev-lane binaries carrying the `op updates export/import/--push-to` verbs. Shorthand for `--channel airgapped`; never self-updates gtc."),
+                ),
+        )
+        .subcommand(
+            Command::new("channel-env")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.channel_env.about",
+                    "Print shell lines that select the dev channel's binaries by their canonical names for one shell, leaving the stable toolchain on PATH untouched.",
+                ))
+                .arg(
+                    Arg::new("channel")
+                        .long("channel")
+                        .value_name("CHANNEL")
+                        .num_args(1)
+                        .default_value("dev")
+                        .help_heading(options_heading)
+                        .help(t_or(
+                            locale,
+                            "gtc.arg.channel_env.channel.help",
+                            "Channel to select (only `dev` installs suffixed names).",
+                        )),
+                )
+                .arg(
+                    Arg::new("shell")
+                        .long("shell")
+                        .value_name("SHELL")
+                        .num_args(1)
+                        .help_heading(options_heading)
+                        .help(t_or(
+                            locale,
+                            "gtc.arg.channel_env.shell.help",
+                            "Shell syntax to print: sh (default on unix), fish, or powershell (default on Windows).",
+                        )),
                 ),
         )
         .subcommand(
@@ -932,7 +977,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.start.about",
                     "Start a bundle from local or remote reference.",
                 ))
-                .after_help("Use `gtc start k8s [FLAGS]` to provision a local Kind cluster and deploy an environment via `op env up`. All flags (including --answers) are forwarded to the operator. Only the exact first token `k8s` is reserved: a bundle of that name is still reachable by path (`./k8s`).")
+                .after_help("Use `gtc start k8s [FLAGS]` to provision a local Kind cluster and deploy an environment via `op env up`, or `gtc start cloudrun [FLAGS]` to deploy a scale-to-zero Google Cloud Run environment and print its live `run.app` URL. All flags (including --answers) are forwarded to the operator. Only the exact first tokens `k8s` and `cloudrun` are reserved: a bundle of either name is still reachable by path (`./k8s`, `./cloudrun`).")
                 .arg(cmd_args.clone()),
         )
         .subcommand(
@@ -1055,7 +1100,7 @@ pub(super) fn build_cli(locale: &str) -> Command {
                     "gtc.cmd.provider.about",
                     "Manage messaging providers (passthrough to greentic-setup).",
                 ))
-                .arg(cmd_args),
+                .arg(cmd_args.clone()),
         )
         .subcommand(
             Command::new("deploy")
@@ -1105,6 +1150,23 @@ pub(super) fn build_cli(locale: &str) -> Command {
                                 .help(t(locale, "gtc.arg.upload_bundle_presign_expires.help").into_owned()),
                         ),
                 ),
+        )
+        .subcommand(
+            // Declared with no flags of its own on purpose. Every verb, option
+            // and default belongs to greentic-deploy-platform, and mirroring
+            // them here would be a second copy that goes stale the first time
+            // that binary adds a flag.
+            Command::new("platform")
+                .help_template(help_template)
+                .subcommand_help_heading(commands_heading)
+                .disable_help_flag(true)
+                .disable_version_flag(true)
+                .about(t_or(
+                    locale,
+                    "gtc.cmd.platform.about",
+                    "Install the Greentic platform: admin, designer, tenant-manager, edge and their datastore.",
+                ))
+                .arg(cmd_args),
         )
         .subcommand(
             Command::new("help")

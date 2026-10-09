@@ -1,27 +1,43 @@
+use semver::Version;
 use std::collections::{BTreeMap, HashSet};
 use std::env;
 use std::fs;
+use std::future::Future;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use clap::ArgMatches;
 use directories::BaseDirs;
+use greentic_distributor_client::dist::DistError;
 use greentic_distributor_client::{
     CachePolicy, DistClient, DistOptions, ReleaseArtifactKind, ResolvePolicy,
 };
-use gtc::error::{GtcError, GtcResult};
+use gtc::error::{GtcError, GtcResult, error_chain};
 use reqwest::blocking::Client;
 use reqwest::header::{ACCEPT, AUTHORIZATION, WWW_AUTHENTICATE};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use super::channel_links::sync_dev_channel_links;
 use super::i18n_support::{t, tf};
 use super::install::{run_cargo, run_cargo_capture};
-use super::process::run_binary_capture;
+use super::package_artifact::{
+    PackageArtifactRef, artifact_for_target, install_package_artifact, validate_package_artifacts,
+};
+use super::process::{resolve_cargo_bin_dir, run_binary_capture};
 
 const TOOLCHAIN_MANIFEST_SCHEMA: &str = "greentic.toolchain-manifest.v1";
 const INSTALLED_TOOLCHAIN_SCHEMA: &str = "greentic.installed-toolchain.v1";
 const TOOLCHAIN_MANIFEST_MEDIA_TYPE: &str = "application/vnd.greentic.toolchain.manifest.v1+json";
 const DEFAULT_GHCR_PREFIX: &str = "ghcr.io/greenticai/greentic-versions/gtc";
+/// GHCR tag holding the dev-lane toolchain used for air-gapped workflows —
+/// the `-dev` binaries that carry `op updates export`/`import`/`--push-to`.
+/// Its packages pin `"latest"`, so each install resolves the newest dev
+/// publish rather than a frozen set.
+const AIRGAP_CHANNEL: &str = "airgapped";
+/// Channel whose gtc releases carry dev-lane asset names — see
+/// [`ToolchainSource::skips_self_update`].
+const DEV_CHANNEL: &str = "dev";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub(crate) struct ToolchainManifest {
@@ -35,6 +51,28 @@ pub(crate) struct ToolchainManifest {
     pub extension_packs: Option<Vec<ToolchainArtifactRef>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub components: Option<Vec<ToolchainArtifactRef>>,
+    /// The gtc binary this manifest pins, named per target by the publisher.
+    ///
+    /// Optional so older manifests keep working: absent means fall back to
+    /// reconstructing the asset name from the version, which is what this code
+    /// did unconditionally and is exactly how it broke. `gtc_release_asset_url`
+    /// builds the STABLE naming (`gtc-<target>.tgz`) while the dev lane
+    /// publishes `gtc-dev-v<version>-<target>.tgz`, so every dev self-update
+    /// fetched a 404 — one convention hardcoded in the consumer, two publishers
+    /// using different ones. A name the publisher states cannot drift from the
+    /// name the publisher used.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gtc: Option<Vec<GtcArtifactRef>>,
+}
+
+/// One gtc release artifact, as named by whoever published it.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub(crate) struct GtcArtifactRef {
+    pub target: String,
+    pub url: String,
+    /// Hex sha256 of the archive, WITHOUT a `sha256:` prefix — the same shape
+    /// the release checksums manifest carries, so both paths verify alike.
+    pub sha256: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -43,6 +81,15 @@ pub(crate) struct ToolchainPackage {
     pub crate_name: String,
     pub bins: Vec<String>,
     pub version: String,
+    /// Release archives for this exact version, one per target, installed
+    /// instead of `cargo binstall` when the running target has an entry. See
+    /// `package_artifact` for why a manifest needs to be able to say this.
+    ///
+    /// Optional so every manifest published before it keeps its meaning, and
+    /// omitted from serialization when absent so re-serialising one does not
+    /// grow a field it never had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifacts: Option<Vec<PackageArtifactRef>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -104,6 +151,48 @@ pub(crate) enum ToolchainSource {
     LocalManifest(PathBuf),
 }
 
+impl ToolchainSource {
+    /// Whether this source resolves the air-gap channel, however it was
+    /// reached (`--airgap`, `--channel airgapped`, or `--release <r> --channel
+    /// airgapped`). A local manifest is never the air-gap channel — it already
+    /// suppresses self-update on its own.
+    /// Whether self-update must be skipped for this source no matter what the
+    /// manifest says. Air-gap only: there is no reachable release to fetch.
+    fn skips_self_update(&self) -> bool {
+        self.targets_airgap_channel()
+    }
+
+    /// Whether this source may only self-update from an artifact the manifest
+    /// NAMES, never from a reconstructed asset name.
+    ///
+    /// `gtc_release_asset_url` builds `gtc-<target>.tgz`, the STABLE naming,
+    /// while the dev lane publishes `gtc-dev-v<version>-<target>.tgz` — so a
+    /// reconstructed URL there fetches a 404. This used to be a blanket
+    /// channel-level skip, which fixed the 404 by giving up: gtc could never
+    /// update itself on dev at all, and the guessing that caused it stayed in
+    /// place for the next lane to trip over.
+    ///
+    /// Keyed on the manifest instead, the behaviour for a manifest that names
+    /// nothing is UNCHANGED (still skipped, same message shape), and a manifest
+    /// that names its artifact makes self-update work — with no convention left
+    /// for the publisher and the consumer to disagree about.
+    fn requires_named_artifact(&self) -> bool {
+        match self {
+            Self::Channel(channel) => channel == DEV_CHANNEL,
+            Self::Release { channel, .. } => channel == DEV_CHANNEL,
+            Self::LocalManifest(_) => false,
+        }
+    }
+
+    fn targets_airgap_channel(&self) -> bool {
+        match self {
+            Self::Channel(channel) => channel == AIRGAP_CHANNEL,
+            Self::Release { channel, .. } => channel == AIRGAP_CHANNEL,
+            Self::LocalManifest(_) => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolchainInstallPhases {
     pub binaries: bool,
@@ -127,7 +216,9 @@ impl ToolchainInstallPhases {
 
 impl ToolchainInstallOptions {
     pub(crate) fn from_matches(matches: &ArgMatches, default_channel: &str) -> GtcResult<Self> {
-        let source = if let Some(path) = matches.get_one::<String>("manifest") {
+        let source = if matches.get_flag("airgap") {
+            ToolchainSource::Channel(AIRGAP_CHANNEL.to_string())
+        } else if let Some(path) = matches.get_one::<String>("manifest") {
             ToolchainSource::LocalManifest(PathBuf::from(path))
         } else if let Some(release) = matches
             .get_one::<String>("release")
@@ -165,26 +256,66 @@ impl ToolchainInstallOptions {
             ToolchainInstallPhases::all()
         };
 
+        // Keyed on the resolved channel, not on `--airgap`, so `--channel
+        // airgapped` behaves identically. That path is what operators use
+        // before a gtc carrying `--airgap` reaches them, and a self-update
+        // attempt there is guaranteed to fail: the dev lane's release assets
+        // are named `gtc-dev-v<version>-<target>.tgz`, which
+        // `gtc_release_asset_url` does not build.
+        let skip_self_update = matches.get_flag("skip-self-update") || source.skips_self_update();
+
         Ok(Self {
             source,
             force: matches.get_flag("force"),
             dry_run: matches.get_flag("dry-run"),
             phases,
-            skip_self_update: matches.get_flag("skip-self-update"),
+            skip_self_update,
         })
     }
 }
 
+/// The result of a toolchain install, carrying WHICH kind of failure occurred.
+///
+/// `run_install` needs this because the toolchain phase and the tenant phase are
+/// only *conditionally* independent: a companion binary that failed to install
+/// is a good reason not to go on, but gtc failing to update ITSELF is not — and
+/// collapsing both into a bare `i32` meant a self-update 404 cancelled a tenant
+/// install that had nothing to do with it.
+pub(crate) struct ToolchainInstallOutcome {
+    pub status: i32,
+    /// True only when every other phase succeeded and gtc's own self-update was
+    /// the single failure.
+    pub self_update_only_failure: bool,
+}
+
+impl From<i32> for ToolchainInstallOutcome {
+    fn from(status: i32) -> Self {
+        Self {
+            status,
+            self_update_only_failure: false,
+        }
+    }
+}
+
+/// Thin `i32` wrapper for callers that do not distinguish the failure kinds.
 pub(crate) fn run_toolchain_install(
     options: ToolchainInstallOptions,
     debug: bool,
     locale: &str,
 ) -> i32 {
+    run_toolchain_install_detailed(options, debug, locale).status
+}
+
+pub(crate) fn run_toolchain_install_detailed(
+    options: ToolchainInstallOptions,
+    debug: bool,
+    locale: &str,
+) -> ToolchainInstallOutcome {
     let resolved = match resolve_toolchain_manifest(&options.source, debug, locale) {
         Ok(resolved) => resolved,
         Err(err) => {
             eprintln!("{}: {err}", t(locale, "gtc.err.invalid_toolchain_manifest"));
-            return 1;
+            return 1.into();
         }
     };
 
@@ -206,11 +337,25 @@ pub(crate) fn run_toolchain_install(
             &options.source,
             env::var_os("GTC_TOOLCHAIN_MANIFEST_PATH").is_some(),
         ) {
-        match try_self_update(&resolved, options.force, options.dry_run, debug, locale) {
-            Ok(_) => false,
-            Err(err) => {
-                eprintln!("error: gtc self-update failed: {err}");
-                true
+        let target = env!("GTC_TARGET_TRIPLE");
+        if options.source.requires_named_artifact()
+            && manifest_gtc_artifact(&resolved.manifest, target).is_none()
+        {
+            // Not a failure: this channel's asset names cannot be reconstructed,
+            // and this manifest does not state them. Install gtc from its
+            // release archive until a manifest carrying `gtc` is published.
+            println!(
+                "this channel's gtc releases are not named by convention and the manifest states \
+                 no artifact for {target}; skipping self-update"
+            );
+            false
+        } else {
+            match try_self_update(&resolved, options.force, options.dry_run, debug, locale) {
+                Ok(_) => false,
+                Err(err) => {
+                    eprintln!("error: gtc self-update failed: {err}");
+                    true
+                }
             }
         }
     } else {
@@ -226,7 +371,11 @@ pub(crate) fn run_toolchain_install(
         && resolved.digest.is_some()
     {
         println!("{}", t(locale, "gtc.install.toolchain.up_to_date"));
-        return 0;
+        // Still refresh: a machine whose dev toolchain predates the link
+        // layout, or whose -dev binaries moved, would otherwise wait for the
+        // next manifest change to get its canonical-name links.
+        sync_dev_channel_links(locale);
+        return 0.into();
     }
 
     if options.dry_run {
@@ -237,9 +386,20 @@ pub(crate) fn run_toolchain_install(
                     Ok(version) => version,
                     Err(err) => {
                         eprintln!("{err}");
-                        return 1;
+                        return 1.into();
                     }
                 };
+                if let Some(artifact) =
+                    artifact_for_target(package.artifacts.as_deref(), env!("GTC_TARGET_TRIPLE"))
+                {
+                    println!(
+                        "download {} (sha256 {}) -> {}",
+                        artifact.url,
+                        artifact.sha256,
+                        package.bins.join(", ")
+                    );
+                    continue;
+                }
                 for bin in &package.bins {
                     let args = toolchain_binstall_args_for_version(package, bin, &version);
                     println!("cargo {}", args.join(" "));
@@ -256,13 +416,16 @@ pub(crate) fn run_toolchain_install(
                 println!("prefetch component {}:{}", item.id, item.version);
             }
         }
-        return 0;
+        return 0.into();
     }
 
     if options.phases.binaries {
         let install_status = install_toolchain_manifest(&resolved, options.force, debug, locale);
+        // Before the status check: packages that did install still deserve
+        // their links, and the sync only mirrors what is actually on disk.
+        sync_dev_channel_links(locale);
         if install_status != 0 {
-            return install_status;
+            return install_status.into();
         }
     }
 
@@ -270,7 +433,7 @@ pub(crate) fn run_toolchain_install(
         Ok(ctx) => ctx,
         Err(err) => {
             eprintln!("{err}");
-            return 1;
+            return 1.into();
         }
     };
     if options.phases.any_artifacts()
@@ -282,12 +445,18 @@ pub(crate) fn run_toolchain_install(
             options.phases,
             options.force,
         ) {
-            eprintln!("failed to prefetch release artifacts: {err}");
-            return 1;
+            eprintln!(
+                "failed to prefetch release artifacts: {}",
+                error_chain(&err)
+            );
+            return 1.into();
         }
         if let Err(err) = write_current_release_context(&ctx) {
-            eprintln!("failed to write current release context: {err}");
-            return 1;
+            eprintln!(
+                "failed to write current release context: {}",
+                error_chain(&err)
+            );
+            return 1.into();
         }
     }
 
@@ -298,7 +467,7 @@ pub(crate) fn run_toolchain_install(
                 "{}: {err}",
                 t(locale, "gtc.install.toolchain.state_write_failed")
             );
-            return 1;
+            return 1.into();
         }
     }
 
@@ -310,10 +479,13 @@ pub(crate) fn run_toolchain_install(
             resolved.manifest.version,
             env!("CARGO_PKG_VERSION"),
         );
-        return 1;
+        return ToolchainInstallOutcome {
+            status: 1,
+            self_update_only_failure: true,
+        };
     }
 
-    0
+    0.into()
 }
 
 pub(crate) fn install_toolchain_manifest(
@@ -322,13 +494,29 @@ pub(crate) fn install_toolchain_manifest(
     debug: bool,
     locale: &str,
 ) -> i32 {
+    // Keep going past a failed package: one flaky download must not leave every
+    // package after it uninstalled. Packages that already match are skipped on
+    // the next run, so a re-run only redoes the ones listed here.
+    let mut first_failure = 0;
+    let mut failed = Vec::new();
     for package in &resolved.manifest.packages {
         let status = install_toolchain_package(package, force, debug, locale);
         if status != 0 {
-            return status;
+            if first_failure == 0 {
+                first_failure = status;
+            }
+            failed.push(package.crate_name.as_str());
         }
     }
-    0
+    if !failed.is_empty() {
+        eprintln!(
+            "{} of {} toolchain packages failed to install: {}. Re-run `gtc install` to retry them.",
+            failed.len(),
+            resolved.manifest.packages.len(),
+            failed.join(", ")
+        );
+    }
+    first_failure
 }
 
 pub(crate) fn install_toolchain_package(
@@ -344,6 +532,13 @@ pub(crate) fn install_toolchain_package(
             return 1;
         }
     };
+    if let Some(artifact) =
+        artifact_for_target(package.artifacts.as_deref(), env!("GTC_TARGET_TRIPLE"))
+    {
+        return install_toolchain_package_from_artifact(
+            package, artifact, &version, force, debug, locale,
+        );
+    }
     for bin in &package.bins {
         if !force && installed_binary_version_matches(bin, &version, debug, locale) {
             println!("Installed {bin} binary already matches {version}; skipping.");
@@ -389,6 +584,66 @@ pub(crate) fn install_toolchain_package(
         );
     }
     0
+}
+
+/// Install `package` from the release archive its manifest names for this
+/// target. Whole-package, unlike the binstall path: one archive carries every
+/// bin, so it is skipped only when EVERY bin already reports `version`.
+fn install_toolchain_package_from_artifact(
+    package: &ToolchainPackage,
+    artifact: &PackageArtifactRef,
+    version: &str,
+    force: bool,
+    debug: bool,
+    locale: &str,
+) -> i32 {
+    if !force
+        && package
+            .bins
+            .iter()
+            .all(|bin| installed_binary_version_matches(bin, version, debug, locale))
+    {
+        println!(
+            "Installed {} binaries already match {version}; skipping.",
+            package.crate_name
+        );
+        return 0;
+    }
+    let bin_dir = match resolve_cargo_bin_dir() {
+        Ok(dir) => dir,
+        Err(err) => {
+            eprintln!("{err}");
+            return 1;
+        }
+    };
+    println!(
+        "Installing {} {version} from {} into {}",
+        package.crate_name,
+        artifact.url,
+        bin_dir.display()
+    );
+    match install_package_artifact(artifact, &package.bins, &bin_dir, locale) {
+        Ok(installed) => {
+            for path in installed {
+                println!("  installed {}", path.display());
+            }
+            0
+        }
+        Err(err) => {
+            eprintln!(
+                "{}: {err}",
+                tf(
+                    locale,
+                    "gtc.install.toolchain.item_fail",
+                    &[
+                        ("crate", package.crate_name.as_str()),
+                        ("bin", package.bins.join(",").as_str())
+                    ]
+                )
+            );
+            1
+        }
+    }
 }
 
 fn installed_binary_version_matches(bin: &str, version: &str, debug: bool, locale: &str) -> bool {
@@ -554,7 +809,9 @@ pub(crate) fn resolve_ghcr_manifest(
     locale: &str,
 ) -> GtcResult<ResolvedManifest> {
     let parsed = GhcrReference::parse(reference)?;
-    let client = Client::builder()
+    // Same connect + idle timeouts as the archive downloads (issue #346): the
+    // blocking default is a 30 s cap on the whole request.
+    let client = super::http_download::download_client_builder()
         .user_agent(format!("gtc/{}", env!("CARGO_PKG_VERSION")))
         .build()
         .map_err(|err| GtcError::message(format!("failed to create GHCR client: {err}")))?;
@@ -679,6 +936,11 @@ pub(crate) fn validate_toolchain_manifest(manifest: &ToolchainManifest) -> GtcRe
                     package.crate_name, bin
                 )));
             }
+        }
+    }
+    for package in &manifest.packages {
+        if let Some(artifacts) = package.artifacts.as_deref() {
+            validate_package_artifacts(&package.crate_name, &package.version, artifacts)?;
         }
     }
     validate_toolchain_artifact_refs("extension_packs", manifest.extension_packs.as_deref())?;
@@ -1053,26 +1315,32 @@ fn prefetch_release_artifacts_and_write_index(
         );
         let resolved = if let Some(prefetch_ref) = mock_prefetch_source_ref(&version_ref)? {
             let source = client.parse_source(&prefetch_ref).map_err(|err| {
-                GtcError::message(format!("failed to parse {prefetch_ref}: {err}"))
+                GtcError::message(format!(
+                    "failed to parse {prefetch_ref}: {}",
+                    error_chain(&err)
+                ))
             })?;
             let descriptor = runtime
                 .block_on(client.resolve(source, ResolvePolicy))
                 .map_err(|err| {
-                    GtcError::message(format!("failed to resolve {version_ref}: {err}"))
+                    GtcError::message(format!(
+                        "failed to resolve {version_ref}: {}",
+                        error_chain(&err)
+                    ))
                 })?;
             runtime
                 .block_on(client.fetch(&descriptor, CachePolicy))
-                .map_err(|err| GtcError::message(format!("failed to fetch {version_ref}: {err}")))?
-        } else {
-            runtime
-                .block_on(client.prefetch_release_artifact(
-                    release_ref.kind,
-                    &version_ref,
-                    CachePolicy,
-                ))
                 .map_err(|err| {
-                    GtcError::message(format!("failed to prefetch {version_ref}: {err}"))
+                    GtcError::message(format!(
+                        "failed to fetch {version_ref}: {}",
+                        error_chain(&err)
+                    ))
                 })?
+        } else {
+            pull_with_retry(&runtime, &version_ref, PREFETCH_RETRY, || {
+                client.prefetch_release_artifact(release_ref.kind, &version_ref, CachePolicy)
+            })
+            .map_err(|failure| GtcError::message(failure.describe(&version_ref)))?
         };
         let entry = client
             .stat_cache(&resolved.descriptor.digest)
@@ -1240,6 +1508,132 @@ fn artifact_repo(id: &str) -> GtcResult<String> {
     Ok(format!("ghcr.io/greenticai/{trimmed}"))
 }
 
+/// Bounded retry for ONE release-artifact pull.
+///
+/// `gtc install --release` prefetches every pack and component in the release
+/// — ~110 pulls, all-or-nothing, and the release index is written only after
+/// the last one succeeds. Before this existed, each pull was made exactly once,
+/// so a single registry hiccup failed the whole install and every artifact had
+/// to be re-resolved on the next attempt. greentic-e2e run 34075162802 lost a
+/// nightly leg to exactly that: one `401 Not authorized` on the 101st manifest
+/// GET for a public package that the other five platforms pulled in the same
+/// run.
+///
+/// Three attempts with linear backoff (2s, 4s). A transient failure clears in
+/// seconds; one that does not is better surfaced than waited out.
+const PREFETCH_RETRY: RetryPolicy = RetryPolicy {
+    attempts: 3,
+    base_delay: Duration::from_secs(2),
+};
+
+#[derive(Clone, Copy, Debug)]
+struct RetryPolicy {
+    attempts: u32,
+    base_delay: Duration,
+}
+
+/// Why a pull gave up: the last error, and how many times it was tried.
+///
+/// `attempts` is part of the message on purpose — "failed after 3 attempts"
+/// and "failed" name different problems (a registry outage vs. a bad
+/// reference), and the log line is the only place that difference is visible.
+#[derive(Debug)]
+struct PullFailure {
+    error: DistError,
+    attempts: u32,
+}
+
+impl PullFailure {
+    fn describe(&self, version_ref: &str) -> String {
+        if self.attempts > 1 {
+            format!(
+                "failed to prefetch {version_ref} after {} attempts: {}",
+                self.attempts,
+                error_chain(&self.error)
+            )
+        } else {
+            format!(
+                "failed to prefetch {version_ref}: {}",
+                error_chain(&self.error)
+            )
+        }
+    }
+}
+
+/// Registry answers that are worth a second try.
+///
+/// The typed variants are the easy half. The hard half is `Pack` and `Oci`,
+/// which greentic-distributor-client flattens to a `String` at the pull site
+/// (`DistError::Pack(err.to_string())`), so the underlying
+/// `oci_client::errors::OciDistributionError` is only reachable through its
+/// `Display` text. These are that crate's verbatim `#[error]` prefixes for the
+/// variants a registry can produce transiently: a 401 with no credentials
+/// involved, a 5xx, and a request that never completed.
+///
+/// Deliberately NOT here: `Image manifest not found` (a deterministic 404),
+/// spec violations, and every parse error — retrying those spends three times
+/// as long arriving at the same answer.
+const TRANSIENT_PULL_SIGNATURES: &[&str] = &[
+    "Not authorized: url ",
+    "Server error: url ",
+    "error sending request",
+    "error decoding response body",
+    "operation timed out",
+    "connection reset",
+];
+
+fn is_transient_pull_error(err: &DistError) -> bool {
+    match err {
+        DistError::Network(_) | DistError::Unauthorized { .. } => true,
+        DistError::Pack(summary) => has_transient_signature(summary),
+        DistError::Oci(inner) => has_transient_signature(&inner.to_string()),
+        _ => false,
+    }
+}
+
+fn has_transient_signature(summary: &str) -> bool {
+    TRANSIENT_PULL_SIGNATURES
+        .iter()
+        .any(|needle| summary.contains(needle))
+}
+
+/// Drive `pull` on `runtime` until it succeeds, fails deterministically, or the
+/// attempt budget is spent. Each attempt is a FRESH future from `pull`, so a
+/// retry re-resolves the reference rather than polling a failed future.
+fn pull_with_retry<T, F, P>(
+    runtime: &tokio::runtime::Runtime,
+    label: &str,
+    policy: RetryPolicy,
+    mut pull: P,
+) -> Result<T, PullFailure>
+where
+    F: Future<Output = Result<T, DistError>>,
+    P: FnMut() -> F,
+{
+    let attempts = policy.attempts.max(1);
+    let mut attempt = 1;
+    loop {
+        match runtime.block_on(pull()) {
+            Ok(value) => return Ok(value),
+            Err(error) if attempt < attempts && is_transient_pull_error(&error) => {
+                let delay = policy.base_delay * attempt;
+                eprintln!(
+                    "prefetch {label}: attempt {attempt}/{attempts} failed ({error}); retrying in {}s",
+                    delay.as_secs()
+                );
+                std::thread::sleep(delay);
+                attempt += 1;
+            }
+            Err(error) => {
+                return Err(PullFailure {
+                    error,
+                    attempts: attempt,
+                });
+            }
+        }
+    }
+}
+
 fn mock_prefetch_source_ref(version_ref: &str) -> GtcResult<Option<String>> {
     let Some(root) = env::var_os("GTC_RELEASE_ARTIFACT_MOCK_ROOT") else {
         return Ok(None);
@@ -1334,11 +1728,19 @@ fn send_ghcr_get(
         .try_clone()
         .ok_or_else(|| GtcError::message("failed to clone GHCR request"))?
         .send()
-        .map_err(|err| GtcError::message(format!("failed to fetch GHCR artifact: {err}")))?;
+        .map_err(|err| {
+            GtcError::message(format!(
+                "failed to fetch GHCR artifact: {}",
+                error_chain(&err)
+            ))
+        })?;
     if response.status() != reqwest::StatusCode::UNAUTHORIZED {
-        return response
-            .error_for_status()
-            .map_err(|err| GtcError::message(format!("failed to fetch GHCR artifact: {err}")));
+        return response.error_for_status().map_err(|err| {
+            GtcError::message(format!(
+                "failed to fetch GHCR artifact: {}",
+                error_chain(&err)
+            ))
+        });
     }
     let Some(challenge) = response
         .headers()
@@ -1356,9 +1758,19 @@ fn send_ghcr_get(
     }
     authed
         .send()
-        .map_err(|err| GtcError::message(format!("failed to fetch GHCR artifact: {err}")))?
+        .map_err(|err| {
+            GtcError::message(format!(
+                "failed to fetch GHCR artifact: {}",
+                error_chain(&err)
+            ))
+        })?
         .error_for_status()
-        .map_err(|err| GtcError::message(format!("failed to fetch GHCR artifact: {err}")))
+        .map_err(|err| {
+            GtcError::message(format!(
+                "failed to fetch GHCR artifact: {}",
+                error_chain(&err)
+            ))
+        })
 }
 
 fn fetch_bearer_token(client: &Client, challenge: &str) -> GtcResult<String> {
@@ -1381,7 +1793,10 @@ fn fetch_bearer_token(client: &Client, challenge: &str) -> GtcResult<String> {
     }
     let response_text = request
         .send()
-        .map_err(|err| GtcError::message(format!("failed to fetch GHCR auth token: {err}")))?
+        .map_err(|err| GtcError::message(format!(
+                    "failed to fetch GHCR auth token: {}",
+                    error_chain(&err)
+                )))?
         .error_for_status()
         .map_err(|err| {
             if err.status() == Some(reqwest::StatusCode::FORBIDDEN) {
@@ -1395,7 +1810,10 @@ fn fetch_bearer_token(client: &Client, challenge: &str) -> GtcResult<String> {
                     )
                 }
             } else {
-                GtcError::message(format!("failed to fetch GHCR auth token: {err}"))
+                GtcError::message(format!(
+                    "failed to fetch GHCR auth token: {}",
+                    error_chain(&err)
+                ))
             }
         })?
         .text()
@@ -1502,6 +1920,18 @@ struct BearerTokenResponse {
 // ---------------------------------------------------------------------------
 
 /// Build the URL for a gtc release tarball.
+/// The artifact this manifest names for `target`, if it names one.
+pub(crate) fn manifest_gtc_artifact<'a>(
+    manifest: &'a ToolchainManifest,
+    target: &str,
+) -> Option<&'a GtcArtifactRef> {
+    manifest
+        .gtc
+        .as_deref()?
+        .iter()
+        .find(|artifact| artifact.target == target)
+}
+
 pub(crate) fn gtc_release_asset_url(version: &str, target: &str) -> String {
     format!("https://github.com/greenticai/greentic/releases/download/v{version}/gtc-{target}.tgz")
 }
@@ -1538,8 +1968,39 @@ pub(crate) fn parse_checksum_for_asset(manifest_txt: &str, asset_filename: &str)
 }
 
 /// Decide whether a self-update is needed.
+///
+/// A manifest version strictly OLDER than the running gtc is refused rather
+/// than applied. This was a bare string inequality, which made a backwards
+/// manifest a silent DOWNGRADE: the dev channel pinned a stable gtc 1.1.1 while
+/// a 1.2 was running, `running != manifest_version` was true, and gtc replaced
+/// itself with the older build and reported success. Nothing said so. It went
+/// unnoticed until the channel moved to a current dev build and the same code
+/// path began 404ing instead — the visible symptom of a bug that had been
+/// quietly doing the wrong thing for far longer.
+///
+/// `force` still overrides, so a deliberate rollback remains possible.
+///
+/// A version either side cannot parse falls back to the old inequality: we
+/// cannot reason about the ordering, and refusing an update on that basis would
+/// strand whoever is running it.
 pub(crate) fn should_self_update(running: &str, manifest_version: &str, force: bool) -> bool {
-    force || running != manifest_version
+    if force {
+        return true;
+    }
+    if running == manifest_version {
+        return false;
+    }
+    !is_self_update_downgrade(running, manifest_version)
+}
+
+/// Whether moving to `manifest_version` would move gtc BACKWARDS.
+///
+/// False whenever the comparison cannot be made — see `should_self_update`.
+pub(crate) fn is_self_update_downgrade(running: &str, manifest_version: &str) -> bool {
+    match (Version::parse(running), Version::parse(manifest_version)) {
+        (Ok(running), Ok(manifest)) => manifest < running,
+        _ => false,
+    }
 }
 
 /// Whether self-update applies to this install/update at all. It runs ONLY for
@@ -1554,6 +2015,76 @@ fn self_update_applies(source: &ToolchainSource, manifest_path_override: bool) -
 
 /// Atomically replace `current_exe` with `new_bytes`, keeping a `.prev`
 /// backup of the old binary.
+/// Locate the gtc executable inside an extracted release archive.
+///
+/// Both published layouts are covered without naming either:
+///
+/// ```text
+/// gtc-<target>/gtc                       (stable)
+/// gtc-dev-v<version>-<target>/gtc-dev    (dev)
+/// ```
+///
+/// A candidate is a regular file called `gtc` or `gtc-<something>` that is not
+/// one of the documents shipped beside it. Ambiguity is an error rather than a
+/// guess: picking the wrong file here installs it as gtc.
+fn find_extracted_gtc_binary(root: &Path) -> GtcResult<PathBuf> {
+    fn looks_like_the_binary(name: &str) -> bool {
+        if !(name == "gtc" || name.starts_with("gtc-")) {
+            return false;
+        }
+        // Everything shipped alongside it carries an extension; the binary does
+        // not. Checked explicitly so a future sibling cannot be mistaken for it.
+        !name.contains('.')
+    }
+
+    let mut found = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries = fs::read_dir(&dir)
+            .map_err(|err| GtcError::io(format!("failed to read {}", dir.display()), err))?;
+        for entry in entries {
+            let entry = entry
+                .map_err(|err| GtcError::io(format!("failed to read {}", dir.display()), err))?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(looks_like_the_binary)
+            {
+                found.push(path);
+            }
+        }
+    }
+
+    match found.len() {
+        1 => Ok(found.remove(0)),
+        0 => Err(GtcError::invalid_data(
+            "self-update archive",
+            format!("no gtc binary found under {}", root.display()),
+        )),
+        _ => {
+            found.sort();
+            Err(GtcError::invalid_data(
+                "self-update archive",
+                format!(
+                    "expected one gtc binary under {}, found {}: {}",
+                    root.display(),
+                    found.len(),
+                    found
+                        .iter()
+                        .filter_map(|p| p.file_name().and_then(|n| n.to_str()))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            ))
+        }
+    }
+}
+
 pub(crate) fn swap_running_binary(current_exe: &Path, new_bytes: &[u8]) -> GtcResult<()> {
     use std::io::Write;
 
@@ -1617,7 +2148,17 @@ pub(crate) fn try_self_update(
     let version = &resolved.manifest.version;
 
     if !should_self_update(running, version, force) {
-        println!("gtc {running} is already current; skipping self-update");
+        if is_self_update_downgrade(running, version) {
+            // Not "already current" — saying that here would describe a refusal
+            // as a no-op and hide the thing worth knowing: the channel points
+            // somewhere older than what is installed.
+            println!(
+                "gtc {running} is newer than the {version} this channel pins; refusing to \
+                 self-update backwards (pass --force to override)"
+            );
+        } else {
+            println!("gtc {running} is already current; skipping self-update");
+        }
         return Ok(false);
     }
 
@@ -1629,7 +2170,13 @@ pub(crate) fn try_self_update(
 
     #[cfg(not(windows))]
     {
-        let tarball_url = gtc_release_asset_url(version, target);
+        // Prefer the artifact the manifest NAMES; fall back to reconstructing
+        // the stable-lane asset name only when it names none.
+        let named = manifest_gtc_artifact(&resolved.manifest, target);
+        let tarball_url = match named {
+            Some(artifact) => artifact.url.clone(),
+            None => gtc_release_asset_url(version, target),
+        };
 
         if dry_run {
             println!("would self-update gtc {running} -> {version} from {tarball_url}");
@@ -1646,22 +2193,30 @@ pub(crate) fn try_self_update(
             "application/octet-stream",
         )?;
 
-        // Fetch checksums manifest and verify tarball integrity in memory
-        // (sha256_bytes lives in this module — no need to round-trip via disk).
-        let asset_filename = format!("gtc-{target}.tgz");
-        let checksums_url = gtc_checksums_url(version);
-        if debug {
-            eprintln!("self-update: fetching checksums from {checksums_url}");
-        }
-        let checksums_bytes =
-            super::install::fetch_https_bytes(&checksums_url, "", locale, "text/plain")?;
-        let checksums_txt = String::from_utf8_lossy(&checksums_bytes);
-        let expected_hash =
-            parse_checksum_for_asset(&checksums_txt, &asset_filename).ok_or_else(|| {
-                GtcError::message(format!(
-                    "no checksum found for {asset_filename} in release checksums"
-                ))
-            })?;
+        // Verify integrity in memory (sha256_bytes lives in this module — no need
+        // to round-trip via disk). A named artifact carries its own digest; only
+        // the reconstructed path has to go and find a checksums manifest, which
+        // is a second convention that misses on the dev lane for the same reason
+        // the asset name does — those releases ship per-asset `.sha256` sidecars
+        // and no combined file at all.
+        let expected_hash = match named {
+            Some(artifact) => artifact.sha256.clone(),
+            None => {
+                let asset_filename = format!("gtc-{target}.tgz");
+                let checksums_url = gtc_checksums_url(version);
+                if debug {
+                    eprintln!("self-update: fetching checksums from {checksums_url}");
+                }
+                let checksums_bytes =
+                    super::install::fetch_https_bytes(&checksums_url, "", locale, "text/plain")?;
+                let checksums_txt = String::from_utf8_lossy(&checksums_bytes);
+                parse_checksum_for_asset(&checksums_txt, &asset_filename).ok_or_else(|| {
+                    GtcError::message(format!(
+                        "no checksum found for {asset_filename} in release checksums"
+                    ))
+                })?
+            }
+        };
         let actual_hash = sha256_bytes(&tarball_bytes);
         let expected_prefixed = format!("sha256:{expected_hash}");
         if actual_hash != expected_prefixed {
@@ -1676,8 +2231,17 @@ pub(crate) fn try_self_update(
             .map_err(|err| GtcError::io("failed to create self-update extract directory", err))?;
         super::archive::extract_targz_bytes(&tarball_bytes, extract_dir.path())?;
 
-        // Read the inner binary.
-        let inner_binary_path = extract_dir.path().join(format!("gtc-{target}")).join("gtc");
+        // Find the inner binary rather than rebuilding its path.
+        //
+        // This was `gtc-{target}/gtc`, the stable layout — and the dev lane
+        // ships `gtc-dev-v<version>-<target>/gtc-dev`, differing in BOTH the
+        // directory and the file name. Same mistake as the asset name one level
+        // up: a convention hardcoded in the consumer while two publishers use
+        // different ones. Fixing the download alone left self-update failing
+        // here instead, one step later and just as quietly — a failed
+        // self-update also skips the installed-toolchain write, so the machine
+        // keeps reporting whatever release it recorded last.
+        let inner_binary_path = find_extracted_gtc_binary(extract_dir.path())?;
         let binary_bytes = fs::read(&inner_binary_path).map_err(|err| {
             GtcError::io(
                 format!(
@@ -1718,6 +2282,7 @@ mod tests {
                     crate_name: "greentic-dev".to_string(),
                     bins: vec!["greentic-dev".to_string()],
                     version: "0.5.9".to_string(),
+                    artifacts: None,
                 },
                 ToolchainPackage {
                     crate_name: "greentic-runner".to_string(),
@@ -1726,10 +2291,12 @@ mod tests {
                         "greentic-runner-cli".to_string(),
                     ],
                     version: "0.5.10".to_string(),
+                    artifacts: None,
                 },
             ],
             extension_packs: None,
             components: None,
+            gtc: None,
         }
     }
 
@@ -1745,6 +2312,57 @@ mod tests {
         let manifest: ToolchainManifest = serde_json::from_str(raw).expect("manifest");
         validate_toolchain_manifest(&manifest).expect("valid");
         assert_eq!(manifest.packages[0].crate_name, "greentic-dev");
+    }
+
+    #[test]
+    fn parses_a_package_that_names_release_artifacts() {
+        let raw = format!(
+            r#"{{
+            "schema":"greentic.toolchain-manifest.v1",
+            "toolchain":"gtc",
+            "version":"1.2.34087396714",
+            "channel":"dev",
+            "packages":[{{
+                "crate":"greentic-start-dev",
+                "bins":["greentic-start-dev"],
+                "version":"1.2.34207645334",
+                "artifacts":[{{
+                    "target":"x86_64-unknown-linux-gnu",
+                    "url":"https://github.com/greenticai/greentic-start/releases/download/v1.2.34207645334/greentic-start-dev-v1.2.34207645334-x86_64-unknown-linux-gnu.tgz",
+                    "sha256":"{}"
+                }}]
+            }}]
+        }}"#,
+            "a".repeat(64)
+        );
+        let manifest: ToolchainManifest = serde_json::from_str(&raw).expect("manifest");
+        validate_toolchain_manifest(&manifest).expect("valid");
+        let artifact = artifact_for_target(
+            manifest.packages[0].artifacts.as_deref(),
+            "x86_64-unknown-linux-gnu",
+        )
+        .expect("artifact for linux");
+        assert!(artifact.url.ends_with("x86_64-unknown-linux-gnu.tgz"));
+    }
+
+    #[test]
+    fn a_manifest_without_artifacts_round_trips_without_growing_the_field() {
+        let manifest = pinned_manifest();
+        let json = serde_json::to_string(&manifest).expect("serialize");
+        assert!(!json.contains("artifacts"), "{json}");
+        let back: ToolchainManifest = serde_json::from_str(&json).expect("parse");
+        assert_eq!(back, manifest);
+    }
+
+    #[test]
+    fn rejects_a_package_whose_artifacts_are_malformed() {
+        let mut manifest = pinned_manifest();
+        manifest.packages[0].artifacts = Some(vec![PackageArtifactRef {
+            target: "x86_64-unknown-linux-gnu".to_string(),
+            url: "https://example.invalid/pkg.tgz".to_string(),
+            sha256: "not-a-digest".to_string(),
+        }]);
+        assert!(validate_toolchain_manifest(&manifest).is_err());
     }
 
     #[test]
@@ -1782,6 +2400,7 @@ mod tests {
             crate_name: "greentic-dev".to_string(),
             bins: vec!["greentic-dev".to_string()],
             version: "0.5.10".to_string(),
+            artifacts: None,
         });
         assert!(validate_toolchain_manifest(&manifest).is_err());
     }
@@ -1812,6 +2431,7 @@ mod tests {
             crate_name: "greentic-start".to_string(),
             bins: vec!["greentic-start".to_string()],
             version: "0.5.8".to_string(),
+            artifacts: None,
         };
         assert_eq!(
             toolchain_binstall_args(&package, "greentic-start"),
@@ -1837,6 +2457,7 @@ mod tests {
             crate_name: "greentic-flow".to_string(),
             bins: vec!["greentic-flow".to_string()],
             version: "latest".to_string(),
+            artifacts: None,
         };
         assert_eq!(
             toolchain_binstall_args(&package, "greentic-flow"),
@@ -2207,6 +2828,142 @@ mod tests {
         assert!(parse_cargo_search_version("blank-output", "greentic-flow").is_none());
     }
 
+    fn current_thread_runtime() -> tokio::runtime::Runtime {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime")
+    }
+
+    const NO_BACKOFF: RetryPolicy = RetryPolicy {
+        attempts: 3,
+        base_delay: Duration::ZERO,
+    };
+
+    // Verbatim from greentic-e2e run 34075162802, macOS x64.
+    const REFUSED_PULL: &str = "failed to pull `ghcr.io/greenticai/packs/deployer/greentic.deploy.juju-machine:0.5.22`: Not authorized: url https://ghcr.io/v2/greenticai/packs/deployer/greentic.deploy.juju-machine/manifests/0.5.22";
+    const MISSING_MANIFEST: &str = "failed to pull `ghcr.io/greenticai/packs/deployer/greentic.deploy.juju-machine:0.5.22`: Image manifest not found: ghcr.io/greenticai/packs/deployer/greentic.deploy.juju-machine:0.5.22";
+
+    #[test]
+    fn transient_pull_errors_are_classified_by_variant_and_signature() {
+        assert!(is_transient_pull_error(&DistError::Pack(
+            REFUSED_PULL.into()
+        )));
+        assert!(is_transient_pull_error(&DistError::Pack(
+            "failed to pull `x`: Server error: url https://ghcr.io/v2/x, code: 503, message: upstream".into()
+        )));
+        assert!(is_transient_pull_error(&DistError::Pack(
+            "failed to pull `x`: error sending request for url (https://ghcr.io/v2/x)".into()
+        )));
+        assert!(is_transient_pull_error(&DistError::Network(
+            "connection reset by peer".into()
+        )));
+        assert!(is_transient_pull_error(&DistError::Unauthorized {
+            target: "ghcr.io/greenticai/x".into()
+        }));
+    }
+
+    #[test]
+    fn deterministic_pull_errors_are_not_retried() {
+        assert!(!is_transient_pull_error(&DistError::Pack(
+            MISSING_MANIFEST.into()
+        )));
+        assert!(!is_transient_pull_error(&DistError::Pack(
+            "failed to pull `x`: OCI distribution spec violation: Expected HTTP Status 200 OK, got 202 Accepted instead".into()
+        )));
+        assert!(!is_transient_pull_error(&DistError::NotFound {
+            reference: "ghcr.io/greenticai/x:9.9.9".into()
+        }));
+        assert!(!is_transient_pull_error(&DistError::InvalidRef {
+            reference: "not a ref".into()
+        }));
+        assert!(!is_transient_pull_error(&DistError::Offline {
+            reference: "ghcr.io/greenticai/x:1.0.0".into()
+        }));
+    }
+
+    // Counts invocations, because the retry's failure mode is not "too few"
+    // but "too many": a predicate widened to cover deterministic failures would
+    // still reach the right verdict, just three times slower.
+    type PullOutcome = std::future::Ready<Result<&'static str, DistError>>;
+
+    fn failing_then_ok(
+        fail_first: u32,
+    ) -> (
+        std::rc::Rc<std::cell::Cell<u32>>,
+        impl FnMut() -> PullOutcome,
+    ) {
+        let calls = std::rc::Rc::new(std::cell::Cell::new(0));
+        let seen = calls.clone();
+        let pull = move || {
+            let n = seen.get() + 1;
+            seen.set(n);
+            if n <= fail_first {
+                std::future::ready(Err(DistError::Pack(REFUSED_PULL.into())))
+            } else {
+                std::future::ready(Ok("pulled"))
+            }
+        };
+        (calls, pull)
+    }
+
+    #[test]
+    fn a_refused_pull_is_retried_then_succeeds() {
+        let runtime = current_thread_runtime();
+        let (calls, pull) = failing_then_ok(2);
+        let got = pull_with_retry(&runtime, "x:1.0.0", NO_BACKOFF, pull).expect("third attempt");
+        assert_eq!(got, "pulled");
+        assert_eq!(calls.get(), 3);
+    }
+
+    #[test]
+    fn a_persistently_refused_pull_fails_after_the_budget_and_says_so() {
+        let runtime = current_thread_runtime();
+        let (calls, pull) = failing_then_ok(9);
+        let failure =
+            pull_with_retry(&runtime, "x:1.0.0", NO_BACKOFF, pull).expect_err("budget spent");
+        assert_eq!(calls.get(), 3);
+        assert_eq!(failure.attempts, 3);
+        let message = failure.describe("ghcr.io/greenticai/x:1.0.0");
+        assert!(
+            message.starts_with("failed to prefetch ghcr.io/greenticai/x:1.0.0 after 3 attempts: "),
+            "{message}"
+        );
+        assert!(message.contains("Not authorized"), "{message}");
+    }
+
+    #[test]
+    fn a_missing_manifest_is_tried_exactly_once() {
+        let runtime = current_thread_runtime();
+        let calls = std::cell::Cell::new(0);
+        let pull = || {
+            calls.set(calls.get() + 1);
+            std::future::ready(Err::<(), _>(DistError::Pack(MISSING_MANIFEST.into())))
+        };
+        let failure =
+            pull_with_retry(&runtime, "x:1.0.0", NO_BACKOFF, pull).expect_err("deterministic");
+        assert_eq!(calls.get(), 1);
+        assert_eq!(failure.attempts, 1);
+        let message = failure.describe("ghcr.io/greenticai/x:1.0.0");
+        assert!(
+            message.starts_with("failed to prefetch ghcr.io/greenticai/x:1.0.0: "),
+            "{message}"
+        );
+        assert!(!message.contains("attempts"), "{message}");
+    }
+
+    #[test]
+    fn a_zero_attempt_policy_still_pulls_once() {
+        let runtime = current_thread_runtime();
+        let (calls, pull) = failing_then_ok(0);
+        let policy = RetryPolicy {
+            attempts: 0,
+            base_delay: Duration::ZERO,
+        };
+        pull_with_retry(&runtime, "x:1.0.0", policy, pull).expect("one attempt");
+        assert_eq!(calls.get(), 1);
+    }
+
     #[test]
     fn mock_prefetch_source_ref_returns_path_when_env_points_at_index() {
         let dir = tempdir().expect("tempdir");
@@ -2301,6 +3058,11 @@ mod tests {
                         .long("skip-self-update")
                         .action(clap::ArgAction::SetTrue),
                 )
+                .arg(
+                    clap::Arg::new("airgap")
+                        .long("airgap")
+                        .action(clap::ArgAction::SetTrue),
+                )
         };
 
         let release_matches = cmd()
@@ -2345,11 +3107,120 @@ mod tests {
 
         let channel_matches = cmd().try_get_matches_from(["install"]).expect("matches");
         let channel_options =
-            ToolchainInstallOptions::from_matches(&channel_matches, "dev").expect("options");
+            ToolchainInstallOptions::from_matches(&channel_matches, "stable").expect("options");
         assert!(matches!(
             channel_options.source,
-            ToolchainSource::Channel(ref channel) if channel == "dev"
+            ToolchainSource::Channel(ref channel) if channel == "stable"
         ));
+        // A channel whose gtc releases carry STABLE asset names must not pick
+        // up the self-update skip. This used `dev` as the stand-in until dev
+        // started skipping in its own right — see
+        // `the_dev_channel_skips_self_update_like_airgapped`.
+        assert!(!channel_options.skip_self_update);
+
+        // `--airgap` resolves the airgapped channel even though the caller
+        // passed a different default, and suppresses self-update.
+        let airgap_matches = cmd()
+            .try_get_matches_from(["install", "--airgap"])
+            .expect("matches");
+        let airgap_options =
+            ToolchainInstallOptions::from_matches(&airgap_matches, "stable").expect("options");
+        assert!(matches!(
+            airgap_options.source,
+            ToolchainSource::Channel(ref channel) if channel == AIRGAP_CHANNEL
+        ));
+        assert!(airgap_options.skip_self_update);
+
+        // Reaching the same channel the long way must behave identically —
+        // operators use this before a gtc carrying `--airgap` reaches them.
+        let explicit_matches = cmd()
+            .try_get_matches_from(["install", "--channel", "airgapped"])
+            .expect("matches");
+        let explicit_options =
+            ToolchainInstallOptions::from_matches(&explicit_matches, "stable").expect("options");
+        assert!(explicit_options.skip_self_update);
+    }
+
+    /// The dev lane publishes gtc as `gtc-dev-v<version>-<target>.tgz`, which
+    /// `gtc_release_asset_url` cannot build — so a self-update on this channel
+    /// fetches a 404. The airgapped channel already skips for exactly this
+    /// reason; dev has the same property.
+    ///
+    /// It went unnoticed while the dev channel manifest pinned a STABLE gtc
+    /// release (1.1.1): that URL resolved, so self-update "worked" — by
+    /// downgrading. Pointing the channel at a current dev build made the 404
+    /// visible.
+    #[test]
+    fn only_airgap_skips_self_update_unconditionally() {
+        // Air-gap has no reachable release at all, so no manifest can change it.
+        assert!(ToolchainSource::Channel(AIRGAP_CHANNEL.to_string()).skips_self_update());
+
+        // Dev no longer blanket-skips. It is gated on the manifest naming an
+        // artifact instead — same outcome while none does, but it stops being a
+        // permanent surrender of self-update on that lane.
+        assert!(!ToolchainSource::Channel("dev".to_string()).skips_self_update());
+        assert!(ToolchainSource::Channel("dev".to_string()).requires_named_artifact());
+        assert!(
+            ToolchainSource::Release {
+                release: "1.2.32336074206".to_string(),
+                channel: "dev".to_string(),
+            }
+            .requires_named_artifact()
+        );
+
+        // Lanes whose releases carry stable-named assets reconstruct as before.
+        assert!(!ToolchainSource::Channel("stable".to_string()).skips_self_update());
+        assert!(!ToolchainSource::Channel("stable".to_string()).requires_named_artifact());
+        assert!(!ToolchainSource::Channel("latest".to_string()).requires_named_artifact());
+    }
+
+    #[test]
+    fn a_named_artifact_is_found_by_target_and_missing_otherwise() {
+        let json = r#"{"schema":"s","toolchain":"gtc","version":"1.2.3","packages":[]}"#;
+        let mut manifest: ToolchainManifest = serde_json::from_str(json).expect("decode");
+        assert!(manifest_gtc_artifact(&manifest, "x86_64-unknown-linux-gnu").is_none());
+
+        manifest.gtc = Some(vec![GtcArtifactRef {
+            target: "x86_64-unknown-linux-gnu".to_string(),
+            url: "https://github.com/greenticai/greentic/releases/download/v1.2.3/gtc-dev-v1.2.3-x86_64-unknown-linux-gnu.tgz".to_string(),
+            sha256: "a".repeat(64),
+        }]);
+
+        let hit = manifest_gtc_artifact(&manifest, "x86_64-unknown-linux-gnu").expect("named");
+        // The whole point: the URL is the publisher's, not one we rebuilt.
+        assert!(
+            hit.url
+                .contains("gtc-dev-v1.2.3-x86_64-unknown-linux-gnu.tgz")
+        );
+        assert!(manifest_gtc_artifact(&manifest, "aarch64-apple-darwin").is_none());
+    }
+
+    #[test]
+    fn a_manifest_without_the_gtc_field_still_decodes() {
+        // Every manifest published so far. Absent must stay absent, not error.
+        let json = r#"{"schema":"s","toolchain":"gtc","version":"1.1.13","packages":[]}"#;
+        let manifest: ToolchainManifest = serde_json::from_str(json).expect("decode");
+        assert!(manifest.gtc.is_none());
+        assert!(manifest_gtc_artifact(&manifest, "x86_64-unknown-linux-gnu").is_none());
+    }
+
+    #[test]
+    fn airgap_channel_detection_is_scoped_to_that_channel() {
+        assert!(ToolchainSource::Channel(AIRGAP_CHANNEL.to_string()).targets_airgap_channel());
+        assert!(
+            ToolchainSource::Release {
+                release: "1.0.4".to_string(),
+                channel: AIRGAP_CHANNEL.to_string(),
+            }
+            .targets_airgap_channel()
+        );
+        // Neighbouring channels must not inherit the skip.
+        assert!(!ToolchainSource::Channel("stable".to_string()).targets_airgap_channel());
+        assert!(!ToolchainSource::Channel("latest".to_string()).targets_airgap_channel());
+        assert!(!ToolchainSource::Channel("airgap".to_string()).targets_airgap_channel());
+        assert!(
+            !ToolchainSource::LocalManifest(PathBuf::from("/tmp/m.json")).targets_airgap_channel()
+        );
     }
 
     #[test]
@@ -2502,6 +3373,96 @@ abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789  gtc-x86_64-unk
     #[test]
     fn should_self_update_returns_true_when_force_on_equal() {
         assert!(should_self_update("1.1.0", "1.1.0", true));
+    }
+
+    #[test]
+    fn should_self_update_refuses_a_downgrade() {
+        // The exact shape that shipped: a dev channel pinning stable 1.1.1
+        // while a 1.2 dev build is running. The old string inequality said
+        // "update", and gtc replaced itself with the older binary.
+        assert!(!should_self_update("1.2.32336074206", "1.1.1", false));
+        assert!(!should_self_update("1.2.0", "1.1.13", false));
+    }
+
+    #[test]
+    fn should_self_update_still_moves_forward() {
+        assert!(should_self_update("1.2.0", "1.2.32336074206", false));
+        assert!(should_self_update("1.1.13", "1.2.0", false));
+    }
+
+    #[test]
+    fn force_overrides_a_downgrade_so_rollback_stays_possible() {
+        assert!(should_self_update("1.2.0", "1.1.13", true));
+    }
+
+    #[test]
+    fn an_unparseable_version_falls_back_to_the_old_inequality() {
+        // Neither ordering is knowable, so refusing would strand the caller.
+        assert!(should_self_update("not-a-version", "1.1.0", false));
+        assert!(should_self_update("1.1.0", "not-a-version", false));
+        assert!(!is_self_update_downgrade("not-a-version", "1.1.0"));
+    }
+
+    fn lay_out(root: &Path, dir: &str, files: &[&str]) {
+        let d = root.join(dir);
+        fs::create_dir_all(&d).expect("mkdir");
+        for f in files {
+            fs::write(d.join(f), b"x").expect("write");
+        }
+    }
+
+    #[test]
+    fn finds_the_binary_in_the_stable_layout() {
+        let tmp = tempdir().expect("tempdir");
+        lay_out(
+            tmp.path(),
+            "gtc-x86_64-unknown-linux-gnu",
+            &["gtc", "README.md", "LICENSE.txt"],
+        );
+        let found = find_extracted_gtc_binary(tmp.path()).expect("found");
+        assert_eq!(found.file_name().unwrap(), "gtc");
+    }
+
+    #[test]
+    fn finds_the_binary_in_the_dev_layout() {
+        // The layout that broke self-update: BOTH the directory and the file
+        // name differ from the stable one.
+        let tmp = tempdir().expect("tempdir");
+        lay_out(
+            tmp.path(),
+            "gtc-dev-v1.2.32730887183-x86_64-unknown-linux-gnu",
+            &["gtc-dev"],
+        );
+        let found = find_extracted_gtc_binary(tmp.path()).expect("found");
+        assert_eq!(found.file_name().unwrap(), "gtc-dev");
+    }
+
+    #[test]
+    fn documents_shipped_beside_the_binary_are_not_mistaken_for_it() {
+        let tmp = tempdir().expect("tempdir");
+        lay_out(
+            tmp.path(),
+            "gtc-rnd-v1.2.0-aarch64-apple-darwin",
+            &["gtc-1.2.0-checksums.txt", "gtc-rnd", "gtc.spdx.json"],
+        );
+        let found = find_extracted_gtc_binary(tmp.path()).expect("found");
+        assert_eq!(found.file_name().unwrap(), "gtc-rnd");
+    }
+
+    #[test]
+    fn an_archive_with_no_binary_is_an_error_not_a_silent_miss() {
+        let tmp = tempdir().expect("tempdir");
+        lay_out(tmp.path(), "gtc-x86_64-unknown-linux-gnu", &["README.md"]);
+        assert!(find_extracted_gtc_binary(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn two_candidates_are_refused_rather_than_guessed() {
+        // Installing the wrong file here would replace gtc with it.
+        let tmp = tempdir().expect("tempdir");
+        lay_out(tmp.path(), "a", &["gtc"]);
+        lay_out(tmp.path(), "b", &["gtc-dev"]);
+        assert!(find_extracted_gtc_binary(tmp.path()).is_err());
     }
 
     #[test]

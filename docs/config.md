@@ -54,6 +54,11 @@ recognizes directly through `GtcConfig`.
   Override the `greentic-deployer` binary path.
 - `GREENTIC_SETUP_BIN`
   Override the `greentic-setup` binary path.
+- `GREENTIC_PLATFORM_BIN`
+  Override the `greentic-deploy-platform` binary path — the companion behind
+  `gtc platform`. Unlike the others it is not installed by `gtc install`; it
+  ships as a release binary of the greentic-deploy-platform repository, so this
+  is how you point `gtc` at a local build of it.
 
 Cloud-provider credentials and generic process environment values such as `PATH`
 are intentionally not listed here. They are still supported, but they are treated

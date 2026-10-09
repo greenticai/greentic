@@ -82,8 +82,10 @@ Target selection changes only where that prepared bundle runs:
 
 - `gtc start <bundle>` runs the prepared bundle locally.
 - `gtc start <bundle> --target aws` deploys that prepared bundle to AWS.
-- `gtc start <bundle> --target gcp` deploys that prepared bundle to GCP.
 - `gtc start <bundle> --target azure` deploys that prepared bundle to Azure.
+- `gtc start <bundle> --target gcp` deploys a **published** bundle to Cloud Run
+  through env-packs — it does not prepare the bundle locally. See
+  [GCP Cloud Run Start](#gcp-cloud-run-start).
 
 Packs own their setup-derived runtime config. If setup generates non-secret
 pack-owned files, those files should be written into the bundle workspace under
@@ -110,9 +112,52 @@ In this mode, `gtc` prints:
 This is the clearest path when you want local execution rather than deployment
 through a cloud or deployer-backed path.
 
+## GCP Cloud Run Start
+
+`--target gcp` does not use the Terraform/IaC layer that `aws` and `azure` use.
+It is an **env-packs** deploy, the same mechanism as a local start: `gtc`
+synthesizes a `greentic.env-manifest.v1` binding the environment's deployer slot
+to `greentic.deployer.gcp-cloudrun`, then runs `op env up`. No Terraform, no
+provider pack, and no `.greentic/deployment-targets.json` entry.
+
+Because Cloud Run pulls the bundle over the network at container boot, the bundle
+must already be published as an `oci://` artifact — a local path is unreachable
+from it, and `oci://` is the only scheme the env-apply engine will fetch:
+
+```bash
+oras push ghcr.io/YOU/YOUR-BUNDLE:v1 ./YOUR-BUNDLE.gtbundle
+gtc start oci://ghcr.io/YOU/YOUR-BUNDLE:v1 --target gcp
+```
+
+An `oci://` bundle ref is used as its own deploy source, so nothing else is
+needed. To deploy a copy published elsewhere, name it explicitly with
+`--deploy-bundle-source oci://…`.
+
+Project and region are read from `GOOGLE_CLOUD_PROJECT` / `CLOUDSDK_CORE_PROJECT`
+and `GOOGLE_CLOUD_REGION` / `CLOUDSDK_RUN_REGION` / `CLOUDSDK_COMPUTE_REGION`,
+falling back to `gcloud config`. Neither has a default — a guessed region decides
+latency, egress cost and data residency. Access mode is `public`, which `gtc`
+prints before deploying.
+
+Credentials are the ambient Application Default Credentials
+(`gcloud auth application-default login`); `gtc` never takes a key file.
+
+Teardown goes back through env-packs — `gtc stop <bundle> --target gcp --destroy`
+runs `op env destroy`, which deletes the cloud resources before removing local
+state. This destroys the whole environment, not one bundle: Cloud Run has no
+per-bundle teardown verb.
+
+> **The operator must carry the Cloud Run deployer.** `gtc op` delegates to
+> `greentic-operator`, and the `deploy-gcp-cloudrun` feature is only on the
+> develop lane. A stable operator binds the kind, plans a green apply, and then
+> refuses at reconcile with `op env up is only supported for the
+> greentic.deployer.k8s deployer` — after the store has been mutated. Check with
+> `gtc op env doctor <env>`: the kind appears under `unknown_kinds` when the
+> binary cannot execute it.
+
 ## Deployer-Backed Start
 
-If the selected target is not `runtime`, `gtc` switches into deployer-backed
+If the selected target is `aws` or `azure`, `gtc` switches into deployer-backed
 behavior.
 
 Current supported target values are:

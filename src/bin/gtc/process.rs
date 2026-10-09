@@ -13,9 +13,10 @@ use super::toolchain::{
 };
 use super::{
     BUNDLE_BIN, COMPONENT_BIN, DEPLOYER_BIN, DEV_BIN, DW_BIN, FLOW_BIN, OP_BIN, PACK_BIN,
-    RUNNER_BIN, SECRETS_BIN, SETUP_BIN, START_BIN,
+    PLATFORM_BIN, RUNNER_BIN, SECRETS_BIN, SETUP_BIN, START_BIN,
 };
-use crate::i18n_support::{t, t_or};
+use crate::i18n_support::{t, t_or, tf_or};
+use crate::min_versions::{self, VersionVerdict};
 
 pub(super) fn run_binary_checked(
     binary: &str,
@@ -204,6 +205,7 @@ fn passthrough_in_dir_with_env(
                     DEV_BIN => print_missing_dev_message(locale),
                     OP_BIN => print_missing_op_message(locale),
                     SETUP_BIN => eprintln!("{}", t(locale, "gtc.err.bin_missing_setup")),
+                    PLATFORM_BIN => print_missing_platform_message(locale, &command),
                     _ => eprintln!("{}", t(locale, "gtc.err.exec_failed")),
                 }
             } else {
@@ -238,15 +240,22 @@ pub(super) fn run_doctor(locale: &str) -> i32 {
         let command = resolve_binary_command(binary);
         match ProcessCommand::new(&command).arg("--version").output() {
             Ok(output) => {
-                let status_label = if output.status.success() {
-                    t(locale, "gtc.doctor.ok")
-                } else {
-                    t(locale, "gtc.doctor.warn")
-                };
                 let version = first_non_empty_line(&String::from_utf8_lossy(&output.stdout))
                     .or_else(|| first_non_empty_line(&String::from_utf8_lossy(&output.stderr)))
                     .unwrap_or_else(|| t(locale, "gtc.doctor.version_unavailable").into_owned());
-                println!("{binary}: {status_label} ({version}) [{}]", command);
+                if !output.status.success() {
+                    println!(
+                        "{binary}: {} ({version}) [{}]",
+                        t(locale, "gtc.doctor.warn"),
+                        command
+                    );
+                } else if report_minimum_version(binary, &version, &command, locale) {
+                    // The binary runs, but it is older than the pack format
+                    // needs. This FAILS doctor on purpose: reporting it while
+                    // still exiting 0 would reproduce the original bug, where
+                    // every gate said pass and the flow died at its second node.
+                    failed = true;
+                }
             }
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 failed = true;
@@ -300,6 +309,77 @@ pub(super) fn run_doctor(locale: &str) -> i32 {
     print_knowledge_memory_readiness(locale);
 
     if failed { 1 } else { 0 }
+}
+
+/// Prints one companion binary's doctor line, judged against the
+/// minimum-version table in [`crate::min_versions`].
+///
+/// Returns `true` when the binary is present and BELOW its declared floor —
+/// the one verdict that fails `gtc doctor`.
+///
+/// Three statuses are printed, and only the third fails the run:
+///
+/// * `OK` — no floor is declared for this binary, or it meets the one that is.
+///   These two are deliberately the same status: from the operator's side there
+///   is nothing to do about either.
+/// * `UNKNOWN` — a floor is declared and `--version` printed nothing this can
+///   parse. A locally built or `GREENTIC_*_BIN`-overridden companion prints
+///   exactly that, which is legitimate, so it must not fail the run; but "we
+///   could not check" is not "we checked and it is fine", and the original bug
+///   is what collapsing those two produces.
+/// * `OUTDATED` — a floor is declared and this binary is below it.
+///
+/// The version line reported is the binary's raw `--version` output, unchanged,
+/// so this stays readable next to the pre-existing lines.
+fn report_minimum_version(binary: &str, version: &str, command: &str, locale: &str) -> bool {
+    match min_versions::verdict(binary, version) {
+        VersionVerdict::NoMinimum | VersionVerdict::Satisfied => {
+            println!(
+                "{binary}: {} ({version}) [{command}]",
+                t(locale, "gtc.doctor.ok")
+            );
+            false
+        }
+        VersionVerdict::Unreadable { minimum } => {
+            println!(
+                "{binary}: {} ({version}) [{command}]",
+                t_or(locale, "gtc.doctor.min_version.unknown", "UNKNOWN")
+            );
+            println!(
+                "  {}",
+                tf_or(
+                    locale,
+                    "gtc.doctor.min_version.unreadable",
+                    "could not read a version from this binary, so the {minimum} minimum this \
+                     toolchain needs could not be checked. If the flow fails at run time with \
+                     `component '<name>' not found in pack`, this binary is the first thing to \
+                     upgrade.",
+                    &[("minimum", minimum)],
+                )
+            );
+            false
+        }
+        VersionVerdict::TooOld { installed, minimum } => {
+            println!(
+                "{binary}: {} ({version}) [{command}]",
+                t_or(locale, "gtc.doctor.min_version.outdated", "OUTDATED")
+            );
+            println!(
+                "  {}",
+                tf_or(
+                    locale,
+                    "gtc.doctor.min_version.needs",
+                    "needs {minimum} or newer; found {installed}.",
+                    &[("minimum", minimum), ("installed", &installed)],
+                )
+            );
+            if let Some(row) = min_versions::minimum_for(binary) {
+                println!("  {}", row.reason);
+                println!("  {}", row.upgrade_hint);
+            }
+            true
+        }
+    }
 }
 
 /// Prints the "Knowledge & Memory readiness" section of `gtc doctor`.
@@ -546,6 +626,46 @@ fn print_missing_op_message(locale: &str) {
     );
 }
 
+/// `greentic-deploy-platform` is not part of the installed toolchain set, so a
+/// missing one is a normal state rather than a broken install. Saying where it
+/// comes from is the whole message: the generic "exec failed" line names a
+/// binary the operator has never heard of and gives them nothing to act on.
+///
+/// `sought` is the name that was actually looked for, not the logical constant.
+/// Under `gtc-dev` those differ — the launcher's `-dev` suffix propagates to
+/// every companion — and naming the constant there would tell the operator to
+/// install the one file that cannot satisfy the lookup.
+fn print_missing_platform_message(locale: &str, sought: &str) {
+    let sought = Path::new(sought)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or(sought);
+    eprintln!(
+        "{}",
+        tf_or(
+            locale,
+            "gtc.err.bin_missing_platform",
+            "{binary} not found. It is released from the greentic-deploy-platform repository: \
+             copy it next to gtc (or into ~/.cargo/bin), or point GREENTIC_PLATFORM_BIN at a \
+             local build.",
+            &[("binary", sought)],
+        )
+    );
+    if sought.ends_with("-dev") {
+        eprintln!(
+            "{}",
+            tf_or(
+                locale,
+                "gtc.err.bin_missing_platform_dev",
+                "This launcher is gtc-dev, so it looked for the dev-channel build \
+                 ({binary}) and not greentic-deploy-platform. The release attaches both \
+                 names; installing only the unsuffixed one leaves gtc-dev unable to find it.",
+                &[("binary", sought)],
+            )
+        );
+    }
+}
+
 fn resolve_binary_command(binary: &str) -> String {
     let invocation = env::args().next();
     let command = if let Some(path) = resolve_companion_binary_from_parts(
@@ -666,6 +786,7 @@ fn is_greentic_companion_binary(binary: &str) -> bool {
             | BUNDLE_BIN
             | COMPONENT_BIN
             | DEPLOYER_BIN
+            | PLATFORM_BIN
             | FLOW_BIN
             | PACK_BIN
             | RUNNER_BIN
@@ -729,6 +850,7 @@ fn companion_binary_env_override(binary: &str) -> Option<std::ffi::OsString> {
         BUNDLE_BIN => cfg.bundle_bin_override(),
         COMPONENT_BIN => cfg.component_bin_override(),
         DEPLOYER_BIN => cfg.deployer_bin_override(),
+        PLATFORM_BIN => cfg.platform_bin_override(),
         FLOW_BIN => cfg.flow_bin_override(),
         PACK_BIN => cfg.pack_bin_override(),
         RUNNER_BIN => cfg.runner_bin_override(),

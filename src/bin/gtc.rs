@@ -4,6 +4,8 @@ mod admin;
 mod answer_resolver;
 #[path = "gtc/archive.rs"]
 mod archive;
+#[path = "gtc/channel_links.rs"]
+mod channel_links;
 #[path = "gtc/cli.rs"]
 mod cli;
 #[path = "gtc/commands.rs"]
@@ -14,10 +16,16 @@ mod deploy;
 mod docs_cmd;
 #[path = "gtc/extensions.rs"]
 mod extensions;
+#[path = "gtc/http_download.rs"]
+mod http_download;
 #[path = "gtc/i18n.rs"]
 mod i18n_support;
 #[path = "gtc/install.rs"]
 mod install;
+#[path = "gtc/min_versions.rs"]
+mod min_versions;
+#[path = "gtc/package_artifact.rs"]
+mod package_artifact;
 #[path = "gtc/process.rs"]
 mod process;
 #[path = "gtc/prompt.rs"]
@@ -54,6 +62,9 @@ use cli::build_cli;
 #[allow(unused_imports)]
 use commands::default_install_channel_for_invocation;
 use commands::run;
+#[cfg(test)]
+#[allow(unused_imports)]
+use commands::start_cloudrun_rewrite;
 #[cfg(test)]
 #[allow(unused_imports)]
 use commands::start_k8s_rewrite;
@@ -106,6 +117,10 @@ const DEV_BIN: &str = "greentic-dev";
 const OP_BIN: &str = "greentic-operator";
 const BUNDLE_BIN: &str = "greentic-bundle";
 const DEPLOYER_BIN: &str = "greentic-deployer";
+/// Installs the Greentic platform itself — admin, designer, tenant-manager,
+/// edge and their datastore. Distinct from DEPLOYER_BIN, which deploys a
+/// bundle onto a platform that already exists.
+const PLATFORM_BIN: &str = "greentic-deploy-platform";
 const SETUP_BIN: &str = "greentic-setup";
 const START_BIN: &str = "greentic-start";
 const COMPONENT_BIN: &str = "greentic-component";
