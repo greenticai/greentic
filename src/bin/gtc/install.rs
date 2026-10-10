@@ -2155,6 +2155,7 @@ mod tests {
         assert_eq!(fs::read(installed).expect("read"), b"tool-bytes");
     }
 
+    #[cfg(unix)]
     /// Install a tool whose artifact is served over HTTP: the first attempt is
     /// cut short (so the retry path runs), the second serves `served`, and the
     /// manifest pins the digest of `pinned`.
