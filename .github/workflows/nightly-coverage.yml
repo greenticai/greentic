@@ -30,7 +30,19 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
+      # The action downloads the binary from GitHub releases; a transient 5xx
+      # (HTTP 504) can outlast its internal curl retries, so retry once more.
       - name: Install cargo-binstall
+        id: binstall_a
+        continue-on-error: true
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: Wait before retrying cargo-binstall install
+        if: steps.binstall_a.outcome == 'failure'
+        run: sleep 30
+
+      - name: Install cargo-binstall (retry)
+        if: steps.binstall_a.outcome == 'failure'
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install coverage toolchain
@@ -47,9 +59,27 @@ jobs:
           # rust-cache restores ~/.cargo/.crates.toml but prunes ~/.cargo/bin of
           # binstall-installed binaries, so binstall says "already installed"
           # while the binary is gone. --force sidesteps that.
-          cargo binstall -y --force --disable-strategies compile cargo-llvm-cov
-          cargo binstall -y --force --disable-strategies compile cargo-nextest
-          cargo binstall -y --force --disable-strategies compile greentic-dev
+          # Release asset downloads can hit transient 5xx (e.g. HTTP 504), so
+          # retry each install up to 3 times (20s, then 40s backoff) and fail
+          # with the last exit code if every attempt fails.
+          binstall_retry() {
+            local attempt=1 rc=0 delay=20
+            while true; do
+              cargo binstall -y --force --disable-strategies compile "$@" && return 0
+              rc=$?
+              if [ "$attempt" -ge 3 ]; then
+                echo "cargo binstall $* failed after $attempt attempts (exit $rc)" >&2
+                return "$rc"
+              fi
+              echo "cargo binstall $* failed (exit $rc); retrying in ${delay}s" >&2
+              sleep "$delay"
+              delay=$((delay * 2))
+              attempt=$((attempt + 1))
+            done
+          }
+          binstall_retry cargo-llvm-cov
+          binstall_retry cargo-nextest
+          binstall_retry greentic-dev
           command -v cargo-llvm-cov
           command -v cargo-nextest
           command -v greentic-dev
